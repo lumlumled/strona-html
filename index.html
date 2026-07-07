@@ -3,8 +3,34 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Moja strona</title>
+  <title>LumLum Standup Log</title>
   <style>
+    :root {
+      --surface-1: #fcfcfb;
+      --page: #f9f9f7;
+      --text-primary: #0b0b0b;
+      --text-secondary: #52514e;
+      --text-muted: #898781;
+      --border: rgba(11, 11, 11, 0.10);
+      --accent: #2a78d6;
+      --accent-soft: #eaf1fb;
+      --good: #0ca30c;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-1: #1a1a19;
+        --page: #0d0d0d;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted: #898781;
+        --border: rgba(255, 255, 255, 0.10);
+        --accent: #3987e5;
+        --accent-soft: #17263a;
+        --good: #0ca30c;
+      }
+    }
+
     *, *::before, *::after {
       box-sizing: border-box;
       margin: 0;
@@ -12,59 +38,443 @@
     }
 
     body {
-      font-family: system-ui, sans-serif;
-      background: #f5f5f5;
-      color: #1a1a1a;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--page);
+      color: var(--text-primary);
       min-height: 100vh;
+      padding: 2rem 1rem 4rem;
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
-      gap: 2rem;
+      gap: 1.25rem;
     }
 
-    h1 {
-      font-size: 2.5rem;
+    .wrap {
+      width: 100%;
+      max-width: 44rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    header.top {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    header.top h1 {
+      font-size: 1.5rem;
       font-weight: 700;
-      letter-spacing: -0.5px;
+      letter-spacing: -0.3px;
     }
 
-    button {
-      padding: 0.75rem 2rem;
-      font-size: 1rem;
+    .meta {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.15rem 0.6rem;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
       font-weight: 600;
-      background: #2563eb;
-      color: #fff;
-      border: none;
-      border-radius: 8px;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    #status {
+      color: #d03b3b;
+      min-height: 1.2em;
+      font-size: 0.9rem;
+    }
+
+    .card {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.25rem 1.4rem;
+    }
+
+    .card h2 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 0.6rem;
+    }
+
+    .card p {
+      font-size: 0.95rem;
+      line-height: 1.55;
+      color: var(--text-primary);
+      white-space: pre-line;
+    }
+
+    .card.comment {
+      border-left: 3px solid var(--accent);
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+      gap: 0.9rem;
+    }
+
+    .stat-tile {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+
+    .stat-tile .value {
+      font-size: 1.6rem;
+      font-weight: 600;
+      color: var(--accent);
+      font-variant-numeric: proportional-nums;
+    }
+
+    .stat-tile .value .backlog {
+      font-size: 1rem;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+
+    .stat-tile .label {
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+    }
+
+    .cases {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .case-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .case-card .row-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .case-card .name {
+      font-weight: 600;
+      font-size: 0.98rem;
+    }
+
+    .case-card .status-tag {
+      font-size: 0.78rem;
+      color: var(--accent);
+      background: var(--accent-soft);
+      padding: 0.1rem 0.55rem;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+
+    .case-card .contact {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
+    .case-card .opis {
+      font-size: 0.88rem;
+      color: var(--text-primary);
+      line-height: 1.45;
+    }
+
+    .case-card .foot {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .case-card .foot a {
+      color: var(--accent);
+    }
+
+    details.kategoria {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.6rem 1rem;
+    }
+
+    details.kategoria summary {
       cursor: pointer;
-      transition: background 0.15s ease, transform 0.1s ease;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      padding: 0.3rem 0;
     }
 
-    button:hover {
-      background: #1d4ed8;
+    details.kategoria .cases {
+      margin-top: 0.6rem;
     }
 
-    button:active {
-      transform: scale(0.97);
-    }
-
-    p.lorem {
-      max-width: 40rem;
-      text-align: center;
-      line-height: 1.6;
-      color: #444;
+    .kategorie-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
     }
   </style>
 </head>
 <body>
-  <h1>Witaj na mojej stronie 👋🚀</h1>
-  <p class="lorem">
-    Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod
-    tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim
-    veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea
-    commodo consequat.
-  </p>
-  <button onclick="alert('Kliknięto!')">Kliknij mnie</button>
+  <div class="wrap">
+    <header class="top">
+      <h1>LumLum Standup Log</h1>
+      <div class="meta" id="meta"></div>
+    </header>
+
+    <p id="status"></p>
+
+    <section class="card" id="kontekst-card" style="display:none;">
+      <h2>Kontekst</h2>
+      <p id="kontekst-text"></p>
+    </section>
+
+    <section class="card comment" id="komentarz-card" style="display:none;">
+      <h2>Komentarz dzienny</h2>
+      <p id="komentarz-text"></p>
+    </section>
+
+    <section class="card" id="plan-card" style="display:none;">
+      <h2>Plan dnia</h2>
+      <div class="stat-grid" id="plan-grid"></div>
+    </section>
+
+    <section class="card" id="priorytet-card" style="display:none;">
+      <h2>Priorytet dziś</h2>
+      <div class="cases" id="priorytet-list"></div>
+    </section>
+
+    <section class="card" id="kategorie-card" style="display:none;">
+      <h2>Pozostałe kategorie</h2>
+      <div class="kategorie-wrap" id="kategorie-wrap"></div>
+    </section>
+  </div>
+
+  <script>
+    const API_BASE = window.API_BASE || 'http://localhost:3001';
+    const TABLE = 'LumLum Standup Log';
+    const TARGET_DATE = '07.07.2026';
+    const DRAFT_FIELD = 'Umowa - draft - JSON';
+
+    const KATEGORIA_LABELS = {
+      nowe: 'Nowe',
+      nieodebrane: 'Nieodebrane',
+      inne_z_feedbackiem: 'Inne z feedbackiem',
+      wyceny_z_feedbackiem: 'Wyceny z feedbackiem',
+      wyceny_historyczne: 'Wyceny historyczne',
+    };
+
+    function setStatus(message) {
+      document.getElementById('status').textContent = message || '';
+    }
+
+    function fmtKwota(v) {
+      if (!v) return '';
+      return new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN', maximumFractionDigits: 0 }).format(v);
+    }
+
+    function renderMeta(draft) {
+      const meta = document.getElementById('meta');
+      meta.innerHTML = '';
+      const parts = [draft.data, draft.wygenerowano ? `wygenerowano ${draft.wygenerowano}` : null];
+      parts.filter(Boolean).forEach((text) => {
+        const span = document.createElement('span');
+        span.textContent = text;
+        meta.appendChild(span);
+      });
+      if (draft.status) {
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        badge.textContent = draft.status;
+        meta.appendChild(badge);
+      }
+    }
+
+    function renderPlan(plan) {
+      if (!plan) return;
+      document.getElementById('plan-card').style.display = 'block';
+      const grid = document.getElementById('plan-grid');
+      grid.innerHTML = '';
+
+      const tiles = [
+        { label: 'Priorytet dziś', value: plan.priorytet_dzis_count },
+        { label: 'Nowe', value: plan.nowe_count },
+        { label: 'Wyceny z feedbackiem', value: plan.wyceny_feedback_count, backlog: plan.wyceny_feedback_backlog },
+        { label: 'Inne z feedbackiem', value: plan.inne_feedback_count, backlog: plan.inne_feedback_backlog },
+        { label: 'Nieodebrane', value: plan.nieodebrane_count },
+        { label: 'Wyceny historyczne', value: plan.wyceny_historyczne_count },
+        { label: 'Zadzwoniono dziś', value: plan.zadzwoniono_dzis },
+      ];
+
+      tiles.forEach((t) => {
+        if (t.value === undefined) return;
+        const tile = document.createElement('div');
+        tile.className = 'stat-tile';
+        const value = document.createElement('div');
+        value.className = 'value';
+        value.textContent = t.value;
+        if (t.backlog) {
+          const backlog = document.createElement('span');
+          backlog.className = 'backlog';
+          backlog.textContent = ` / ${t.backlog} w tle`;
+          value.appendChild(backlog);
+        }
+        const label = document.createElement('div');
+        label.className = 'label';
+        label.textContent = t.label;
+        tile.appendChild(value);
+        tile.appendChild(label);
+        grid.appendChild(tile);
+      });
+    }
+
+    function caseCard(c) {
+      const card = document.createElement('div');
+      card.className = 'case-card';
+
+      const top = document.createElement('div');
+      top.className = 'row-top';
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = c.imie || '(brak nazwiska)';
+      top.appendChild(name);
+      if (c.status) {
+        const tag = document.createElement('span');
+        tag.className = 'status-tag';
+        tag.textContent = c.status;
+        top.appendChild(tag);
+      }
+      card.appendChild(top);
+
+      const contactParts = [c.telefon, c.email].filter(Boolean);
+      if (contactParts.length) {
+        const contact = document.createElement('div');
+        contact.className = 'contact';
+        contact.textContent = contactParts.join(' · ');
+        card.appendChild(contact);
+      }
+
+      const opisText = c.opis || c.komentarz || c.ocena_ai;
+      if (opisText) {
+        const opis = document.createElement('div');
+        opis.className = 'opis';
+        opis.textContent = opisText;
+        card.appendChild(opis);
+      }
+
+      const footParts = [];
+      if (c.kwota) footParts.push(fmtKwota(c.kwota));
+      if (c.temperatura) footParts.push(c.temperatura);
+      if (c.data_feedbacku) footParts.push(`feedback: ${c.data_feedbacku}`);
+      if (c.dni_temu) footParts.push(`${c.dni_temu} dni temu`);
+
+      if (footParts.length || c.link_formularz) {
+        const foot = document.createElement('div');
+        foot.className = 'foot';
+        footParts.forEach((text) => {
+          const span = document.createElement('span');
+          span.textContent = text;
+          foot.appendChild(span);
+        });
+        if (c.link_formularz) {
+          const a = document.createElement('a');
+          a.href = c.link_formularz;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          a.textContent = 'formularz →';
+          foot.appendChild(a);
+        }
+        card.appendChild(foot);
+      }
+
+      return card;
+    }
+
+    function renderPriorytet(list) {
+      if (!list || !list.length) return;
+      document.getElementById('priorytet-card').style.display = 'block';
+      const container = document.getElementById('priorytet-list');
+      container.innerHTML = '';
+      list.forEach((c) => container.appendChild(caseCard(c)));
+    }
+
+    function renderKategorie(kategorie) {
+      if (!kategorie) return;
+      const entries = Object.entries(kategorie).filter(([, arr]) => Array.isArray(arr) && arr.length);
+      if (!entries.length) return;
+      document.getElementById('kategorie-card').style.display = 'block';
+      const wrap = document.getElementById('kategorie-wrap');
+      wrap.innerHTML = '';
+      entries.forEach(([key, arr]) => {
+        const details = document.createElement('details');
+        details.className = 'kategoria';
+        const summary = document.createElement('summary');
+        summary.textContent = `${KATEGORIA_LABELS[key] || key} (${arr.length})`;
+        details.appendChild(summary);
+        const list = document.createElement('div');
+        list.className = 'cases';
+        arr.forEach((c) => list.appendChild(caseCard(c)));
+        details.appendChild(list);
+        wrap.appendChild(details);
+      });
+    }
+
+    async function init() {
+      try {
+        const res = await fetch(`${API_BASE}/api/tables/${encodeURIComponent(TABLE)}`);
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `Błąd ${res.status}`);
+        }
+        const rows = await res.json();
+        const row = rows.find((r) => r['Data'] === TARGET_DATE) || rows[0];
+        if (!row) throw new Error('Brak danych w tabeli');
+
+        const draft = row[DRAFT_FIELD];
+        if (!draft) throw new Error(`Brak pola "${DRAFT_FIELD}" w wierszu`);
+
+        renderMeta(draft);
+
+        if (draft.kontekst) {
+          document.getElementById('kontekst-card').style.display = 'block';
+          document.getElementById('kontekst-text').textContent = draft.kontekst;
+        }
+
+        if (draft.komentarz_dzienny) {
+          document.getElementById('komentarz-card').style.display = 'block';
+          document.getElementById('komentarz-text').textContent = draft.komentarz_dzienny;
+        }
+
+        renderPlan(draft.plan);
+        renderPriorytet(draft.priorytet_dzis);
+        renderKategorie(draft.kategorie);
+      } catch (err) {
+        setStatus(err.message);
+      }
+    }
+
+    init();
+  </script>
 </body>
 </html>
