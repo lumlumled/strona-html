@@ -684,7 +684,10 @@
   </div>
 
   <script>
-    const API_BASE = window.API_BASE || 'http://localhost:3001';
+    // Ten sam origin co strona (lokalnie: http://localhost:3001, na Vercelu:
+    // https://twoja-domena.vercel.app) — inaczej fetch leciałby zawsze w
+    // localhost, nawet gdy strona jest wystawiona pod inną domeną.
+    const API_BASE = window.API_BASE || '';
     const TABLE = 'Standup Log Lorenzo';
     const DRAFT_FIELD = 'Umowa - draft - JSON';
 
