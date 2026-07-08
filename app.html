@@ -635,6 +635,170 @@
         margin-top: 0.45rem;
       }
     }
+
+    /* Przełącznik dokumentu: Umowa / Podsumowanie dnia */
+    .doc-toggle {
+      display: inline-flex;
+      gap: 0.25rem;
+      background: var(--accent-soft);
+      padding: 0.25rem;
+      border-radius: 999px;
+      align-self: flex-start;
+    }
+
+    .doc-pill {
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      font: inherit;
+      font-size: 0.85rem;
+      font-weight: 600;
+      padding: 0.35rem 0.95rem;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+
+    .doc-pill:hover {
+      color: var(--text-primary);
+    }
+
+    .doc-pill.is-active {
+      background: var(--accent);
+      color: var(--accent-contrast);
+    }
+
+    /* Badge stanu dokumentu (Draft / Draft — poprawka AI / Final) */
+    .badge.state-final {
+      background: var(--good);
+      color: #ffffff;
+    }
+
+    /* Composer: pływające pole poleceń AI na dole ekranu.
+       Widoczne tylko, gdy aktywny dokument jest w stanie draft/poprawka. */
+    .composer {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 60;
+      display: none;
+      justify-content: center;
+      background: var(--surface-1);
+      border-top: 1px solid var(--border);
+      padding: 0.7rem 0 calc(0.7rem + env(safe-area-inset-bottom));
+    }
+
+    .composer.visible {
+      display: flex;
+    }
+
+    /* Gdy composer jest widoczny, treść strony dostaje zapas na dole,
+       żeby ostatnia karta nie chowała się pod paskiem. */
+    body.composer-open .wrap {
+      padding-bottom: 10rem;
+    }
+
+    .composer-inner {
+      width: 80vw;
+      max-width: 80vw;
+      padding: 0 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+
+    .composer-msg {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      min-height: 0;
+    }
+
+    .composer-msg:empty {
+      display: none;
+    }
+
+    .composer-msg.error {
+      color: #d03b3b;
+    }
+
+    .composer-controls {
+      display: flex;
+      gap: 0.5rem;
+      align-items: flex-end;
+    }
+
+    .composer textarea {
+      flex: 1 1 auto;
+      resize: none;
+      min-height: 2.6rem;
+      max-height: 8rem;
+      padding: 0.65rem 0.9rem;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: var(--page);
+      color: var(--text-primary);
+      font: inherit;
+      font-size: 0.95rem;
+      line-height: 1.4;
+    }
+
+    .composer textarea:focus {
+      outline: none;
+      border-color: var(--text-muted);
+    }
+
+    .composer-btn {
+      flex: 0 0 auto;
+      height: 2.6rem;
+      min-width: 2.6rem;
+      padding: 0 0.85rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface-1);
+      color: var(--text-primary);
+      font: inherit;
+      font-size: 0.95rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+
+    .composer-btn:hover:not(:disabled) {
+      background: var(--accent-soft);
+    }
+
+    .composer-btn:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    .composer-btn.send {
+      background: var(--accent);
+      color: var(--accent-contrast);
+      border-color: var(--accent);
+      font-weight: 600;
+    }
+
+    .composer-btn.approve {
+      color: var(--good);
+      border-color: var(--good);
+      font-weight: 700;
+      font-size: 1.1rem;
+    }
+
+    .composer-btn.mic.recording {
+      background: #d03b3b;
+      border-color: #d03b3b;
+      color: #ffffff;
+      animation: mic-pulse 1.2s ease-in-out infinite;
+    }
+
+    @keyframes mic-pulse {
+      50% { opacity: 0.65; }
+    }
   </style>
 </head>
 <body>
@@ -656,6 +820,11 @@
       </div>
     </div>
 
+    <div class="doc-toggle" id="doc-toggle">
+      <button class="doc-pill is-active" data-doc="umowa" type="button">Umowa</button>
+      <button class="doc-pill" data-doc="podsumowanie" type="button">Podsumowanie dnia</button>
+    </div>
+
     <p id="status"></p>
 
     <section class="card" id="kontekst-card" style="display:none;">
@@ -669,7 +838,7 @@
     </section>
 
     <section class="card" id="plan-card" style="display:none;">
-      <h2>Plan dnia</h2>
+      <h2 id="plan-title">Plan dnia</h2>
       <div class="stat-grid" id="plan-grid"></div>
     </section>
 
@@ -683,19 +852,53 @@
     </section>
   </div>
 
+  <!-- Composer: widoczny tylko gdy aktywny dokument jest draftem -->
+  <div class="composer" id="composer">
+    <div class="composer-inner">
+      <div class="composer-msg" id="composer-msg"></div>
+      <div class="composer-controls">
+        <textarea id="composer-input" rows="1" placeholder="Napisz lub podyktuj polecenie, np. „case 3, zmień status na Sprzedane”…"></textarea>
+        <button class="composer-btn mic" id="composer-mic" type="button" title="Dyktuj (kliknij, mów, kliknij ponownie)">🎤</button>
+        <button class="composer-btn send" id="composer-send" type="button" title="Wyślij polecenie do AI">Wyślij</button>
+        <button class="composer-btn approve" id="composer-approve" type="button" title="Zatwierdź wersję finalną">✓</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     // Ten sam origin co strona (lokalnie: http://localhost:3001, na Vercelu:
     // https://twoja-domena.vercel.app) — inaczej fetch leciałby zawsze w
     // localhost, nawet gdy strona jest wystawiona pod inną domeną.
     const API_BASE = window.API_BASE || '';
     const TABLE = 'Standup Log Lorenzo';
-    const DRAFT_FIELD = 'Umowa - draft - JSON';
+
+    // Dwa tryby dokumentu; kolumny w Supabase mają asymetryczne nazwy
+    // (umowa: "draft poprawka AI", podsumowanie: samo "poprawka AI") — muszą
+    // być dokładnie takie jak w bazie.
+    const DOC_FIELDS = {
+      umowa: {
+        draft: 'Umowa - draft - JSON',
+        poprawka: 'Umowa - draft poprawka AI - JSON',
+        final: 'Umowa - final - JSON',
+      },
+      podsumowanie: {
+        draft: 'Podsumowanie dnia - draft - JSON',
+        poprawka: 'Podsumowanie dnia - poprawka AI - JSON',
+        final: 'Podsumowanie dnia - final - JSON',
+      },
+    };
+
+    const DOC_NAMES = { umowa: 'Umowa', podsumowanie: 'Podsumowanie dnia' };
+    const STATE_BADGES = { draft: 'Draft', poprawka: 'Draft — poprawka AI', final: 'Final' };
 
     const PL_WEEKDAYS = ['Nd', 'Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob'];
 
     let allRows = [];
     let windowDays = [];
     let selectedDate = null;
+    let activeDoc = 'umowa';
+    let activeState = null; // 'draft' | 'poprawka' | 'final' | null
+    let currentRow = null;  // wiersz Supabase wybranego dnia (surowe "Data" do zapisu)
 
     function formatPlDate(d) {
       const day = String(d.getDate()).padStart(2, '0');
@@ -750,9 +953,10 @@
       inne_z_feedbackiem: 'Inne z feedbackiem',
       wyceny_z_feedbackiem: 'Wyceny z feedbackiem',
       wyceny_historyczne: 'Wyceny historyczne',
+      dodane_recznie: 'Dodane ręcznie',
     };
 
-    const KATEGORIA_ORDER = ['nowe', 'wyceny_z_feedbackiem', 'inne_z_feedbackiem', 'nieodebrane', 'wyceny_historyczne'];
+    const KATEGORIA_ORDER = ['nowe', 'wyceny_z_feedbackiem', 'inne_z_feedbackiem', 'nieodebrane', 'wyceny_historyczne', 'dodane_recznie'];
 
     function setStatus(message) {
       document.getElementById('status').textContent = message || '';
@@ -778,33 +982,59 @@
         badge.textContent = draft.status;
         meta.appendChild(badge);
       }
+      if (activeState) {
+        const state = document.createElement('span');
+        state.className = 'badge' + (activeState === 'final' ? ' state-final' : '');
+        state.textContent = STATE_BADGES[activeState];
+        meta.appendChild(state);
+      }
+    }
+
+    // Etykiety kafelków: klucze umowy (plan dnia) + klucze podsumowania dnia.
+    // Kafelki renderują się dynamicznie z tego, co faktycznie jest w JSON-ie —
+    // nieznane klucze dostają etykietę z klucza (podkreślenia → spacje).
+    const PLAN_TILE_LABELS = {
+      nowe_count: 'Nowe',
+      wyceny_feedback_count: 'Wyceny z feedbackiem',
+      inne_feedback_count: 'Inne z feedbackiem',
+      nieodebrane_count: 'Nieodebrane',
+      wyceny_historyczne_count: 'Wyceny historyczne',
+      zadzwoniono_dzis: 'Zadzwoniono dziś',
+      wykonane_telefony: 'Wykonane telefony',
+      zmienione_statusy: 'Zmienione statusy',
+      zakupione_dzis: 'Zakupione dziś',
+      wyslane_wyceny: 'Wysłane wyceny',
+      nieodebrane: 'Nieodebrane',
+      przelozone_na_jutro: 'Przełożone na jutro',
+    };
+
+    function humanizeKey(key) {
+      const s = String(key).replace(/_/g, ' ');
+      return s.charAt(0).toUpperCase() + s.slice(1);
     }
 
     function renderPlan(plan) {
       if (!plan) return;
       document.getElementById('plan-card').style.display = 'block';
+      document.getElementById('plan-title').textContent =
+        activeDoc === 'podsumowanie' ? 'Podsumowanie dnia' : 'Plan dnia';
       const grid = document.getElementById('plan-grid');
       grid.innerHTML = '';
 
-      const tiles = [
-        { label: 'Nowe', value: plan.nowe_count },
-        { label: 'Wyceny z feedbackiem', value: plan.wyceny_feedback_count },
-        { label: 'Inne z feedbackiem', value: plan.inne_feedback_count },
-        { label: 'Nieodebrane', value: plan.nieodebrane_count },
-        { label: 'Wyceny historyczne', value: plan.wyceny_historyczne_count },
-        { label: 'Zadzwoniono dziś', value: plan.zadzwoniono_dzis },
-      ];
+      const known = Object.keys(PLAN_TILE_LABELS).filter((k) => plan[k] !== undefined);
+      const extra = Object.keys(plan).filter(
+        (k) => !(k in PLAN_TILE_LABELS) && (typeof plan[k] === 'number' || typeof plan[k] === 'string')
+      );
 
-      tiles.forEach((t) => {
-        if (t.value === undefined) return;
+      known.concat(extra).forEach((key) => {
         const tile = document.createElement('div');
         tile.className = 'stat-tile';
         const value = document.createElement('div');
         value.className = 'value';
-        value.textContent = t.value;
+        value.textContent = plan[key];
         const label = document.createElement('div');
         label.className = 'label';
-        label.textContent = t.label;
+        label.textContent = PLAN_TILE_LABELS[key] || humanizeKey(key);
         tile.appendChild(value);
         tile.appendChild(label);
         grid.appendChild(tile);
@@ -1036,7 +1266,12 @@
 
     function renderKategorie(kategorie) {
       if (!kategorie) return;
-      const entries = KATEGORIA_ORDER
+      // Najpierw znana kolejność, potem wszystko, czego w niej nie ma (np.
+      // kategorie utworzone przez AI) — nic nie znika z widoku.
+      const orderedKeys = KATEGORIA_ORDER.concat(
+        Object.keys(kategorie).filter((key) => !KATEGORIA_ORDER.includes(key))
+      );
+      const entries = orderedKeys
         .filter((key) => Array.isArray(kategorie[key]) && kategorie[key].length)
         .map((key) => [key, kategorie[key]]);
       if (!entries.length) return;
@@ -1074,14 +1309,35 @@
       resetSections();
       const formatted = formatPlDate(date);
       const row = allRows.find((r) => rowMatchesDate(r['Data'], date));
+      currentRow = row || null;
+
       if (!row) {
+        activeState = null;
+        updateComposer();
         setStatus(`Brak danych dla ${formatted}`);
         return;
       }
 
-      const draft = row[DRAFT_FIELD];
+      // Precedens: final → poprawka AI → draft. Final jest tylko do odczytu
+      // (composer znika); poprawka/draft pokazują pole edycji.
+      const fields = DOC_FIELDS[activeDoc];
+      let draft = null;
+      if (row[fields.final]) {
+        draft = row[fields.final];
+        activeState = 'final';
+      } else if (row[fields.poprawka]) {
+        draft = row[fields.poprawka];
+        activeState = 'poprawka';
+      } else if (row[fields.draft]) {
+        draft = row[fields.draft];
+        activeState = 'draft';
+      } else {
+        activeState = null;
+      }
+      updateComposer();
+
       if (!draft) {
-        setStatus(`Brak pola "${DRAFT_FIELD}" w wierszu dla ${formatted}`);
+        setStatus(`Brak dokumentu „${DOC_NAMES[activeDoc]}" dla ${formatted}`);
         return;
       }
 
@@ -1175,6 +1431,169 @@
         setStatus(err.message);
       }
     }
+
+    // ── Przełącznik dokumentu (Umowa / Podsumowanie dnia) ──────────────────
+    const docToggle = document.getElementById('doc-toggle');
+    docToggle.querySelectorAll('.doc-pill').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (btn.dataset.doc === activeDoc) return;
+        activeDoc = btn.dataset.doc;
+        docToggle.querySelectorAll('.doc-pill').forEach((b) => {
+          b.classList.toggle('is-active', b.dataset.doc === activeDoc);
+        });
+        if (selectedDate) loadDay(selectedDate);
+      });
+    });
+
+    // ── Composer: polecenia dla AI + zatwierdzanie do wersji finalnej ──────
+    const composer = document.getElementById('composer');
+    const composerInput = document.getElementById('composer-input');
+    const composerMsg = document.getElementById('composer-msg');
+    const micBtn = document.getElementById('composer-mic');
+    const sendBtn = document.getElementById('composer-send');
+    const approveBtn = document.getElementById('composer-approve');
+
+    let composerBusy = false;
+
+    function updateComposer() {
+      const show = activeState === 'draft' || activeState === 'poprawka';
+      composer.classList.toggle('visible', show);
+      document.body.classList.toggle('composer-open', show);
+      if (!show) setComposerMsg('');
+    }
+
+    function setComposerMsg(text, isError) {
+      composerMsg.textContent = text || '';
+      composerMsg.classList.toggle('error', Boolean(isError));
+    }
+
+    function setComposerBusy(busy, sendLabel) {
+      composerBusy = busy;
+      [composerInput, micBtn, sendBtn, approveBtn].forEach((el) => { el.disabled = busy; });
+      sendBtn.textContent = busy && sendLabel ? sendLabel : 'Wyślij';
+    }
+
+    function autoGrowInput() {
+      composerInput.style.height = 'auto';
+      composerInput.style.height = `${Math.min(composerInput.scrollHeight, 128)}px`;
+    }
+
+    async function postJson(url, payload) {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+      return body;
+    }
+
+    composerInput.addEventListener('input', autoGrowInput);
+    composerInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendBtn.click();
+      }
+    });
+
+    sendBtn.addEventListener('click', async () => {
+      const instruction = composerInput.value.trim();
+      if (!instruction || !currentRow || composerBusy) return;
+      setComposerBusy(true, 'AI pracuje…');
+      setComposerMsg('');
+      try {
+        const body = await postJson(`${API_BASE}/api/ai-edit`, {
+          doc: activeDoc,
+          dataValue: currentRow['Data'],
+          instruction,
+        });
+        if (body.message) {
+          // NIEJEDNOZNACZNE / BŁĄD — AI prosi o doprecyzowanie, nic nie zapisano.
+          setComposerMsg(body.message, true);
+        } else {
+          currentRow[DOC_FIELDS[activeDoc].poprawka] = body.json;
+          composerInput.value = '';
+          autoGrowInput();
+          loadDay(selectedDate);
+          setComposerMsg('Zapisano poprawkę AI.');
+        }
+      } catch (err) {
+        setComposerMsg(err.message, true);
+      } finally {
+        setComposerBusy(false);
+      }
+    });
+
+    approveBtn.addEventListener('click', async () => {
+      if (!currentRow || composerBusy) return;
+      if (!confirm(`Zatwierdzić wersję finalną („${DOC_NAMES[activeDoc]}") dla ${formatPlDate(selectedDate)}?`)) return;
+      setComposerBusy(true, 'Zapisuję…');
+      try {
+        const body = await postJson(`${API_BASE}/api/approve`, {
+          doc: activeDoc,
+          dataValue: currentRow['Data'],
+        });
+        currentRow[DOC_FIELDS[activeDoc].final] = body.json;
+        loadDay(selectedDate);
+      } catch (err) {
+        setComposerMsg(err.message, true);
+      } finally {
+        setComposerBusy(false);
+      }
+    });
+
+    // ── Dyktowanie: MediaRecorder → POST /api/transcribe (OpenAI) ──────────
+    // Nagranie nie jest nigdzie przechowywane — leci do transkrypcji i przepada.
+    let mediaRecorder = null;
+    let audioChunks = [];
+
+    micBtn.addEventListener('click', async () => {
+      if (composerBusy) return;
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
+        mediaRecorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+        audioChunks = [];
+        mediaRecorder.addEventListener('dataavailable', (e) => {
+          if (e.data.size) audioChunks.push(e.data);
+        });
+        mediaRecorder.addEventListener('stop', async () => {
+          stream.getTracks().forEach((t) => t.stop());
+          micBtn.classList.remove('recording');
+          const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+          if (!blob.size) return;
+          setComposerMsg('Transkrybuję…');
+          try {
+            const res = await fetch(`${API_BASE}/api/transcribe`, {
+              method: 'POST',
+              headers: { 'Content-Type': blob.type || 'audio/webm' },
+              body: blob,
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+            if (body.text) {
+              const existing = composerInput.value.replace(/\s+$/, '');
+              composerInput.value = existing ? `${existing} ${body.text}` : body.text;
+              autoGrowInput();
+              composerInput.focus();
+            }
+            setComposerMsg('');
+          } catch (err) {
+            setComposerMsg(err.message, true);
+          }
+        });
+        mediaRecorder.start();
+        micBtn.classList.add('recording');
+        setComposerMsg('Nagrywam — kliknij 🎤 ponownie, żeby zakończyć.');
+      } catch (err) {
+        setComposerMsg(`Brak dostępu do mikrofonu: ${err.message}`, true);
+      }
+    });
 
     init();
 
