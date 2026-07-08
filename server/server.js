@@ -10,6 +10,19 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
+// KRYTYCZNE dla bramki hasła: res.sendFile() domyślnie ustawia
+// "Cache-Control: public, max-age=0", co Vercel CDN traktuje jako
+// zezwolenie na cache'owanie na brzegu sieci — i wtedy serwuje tę samą
+// zapamiętaną odpowiedź (np. zalogowany widok "/") KAŻDEMU, także bez
+// ciasteczka, całkowicie omijając middleware auth poniżej. Wszystko poza
+// /assets musi być no-store.
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/assets/')) {
+    res.set('Cache-Control', 'no-store');
+  }
+  next();
+});
+
 const SITE_PASSWORD = process.env.SITE_PASSWORD;
 const COOKIE_NAME = 'lumlum_session';
 const SESSION_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 30; // 30 dni
@@ -50,7 +63,7 @@ function isAuthenticated(req) {
 }
 
 app.get('/login', (req, res) => {
-  res.sendFile(path.join(__dirname, 'login.html'));
+  res.sendFile(path.join(__dirname, 'login.html'), { cacheControl: false });
 });
 
 app.post('/login', (req, res) => {
@@ -77,7 +90,7 @@ app.get('/assets/:file', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'assets', req.params.file));
 });
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'index.html'));
+  res.sendFile(path.join(__dirname, '..', 'index.html'), { cacheControl: false });
 });
 
 function handleError(res, err, fallbackStatus = 400) {
