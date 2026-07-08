@@ -329,10 +329,19 @@
     /* Lead = <details> — mobile-first: wiersz skrótowy (summary) zwija się/rozwija,
        na wąskim ekranie łamie się do dwóch linii, na szerokim mieści się w jednej. */
     .lead {
+      position: relative;
       border: 1px solid var(--border);
       border-radius: 14px;
       overflow: hidden;
       transition: border-color 0.15s ease;
+    }
+
+    /* Gdy otwarty jest custom dropdown statusu (patrz .status-menu), musi móc
+       wystawać ponad górną krawędź karty, więc na czas otwarcia wyłączamy
+       przycinanie i podnosimy nad sąsiednie karty w liście. */
+    .lead.status-menu-open {
+      overflow: visible;
+      z-index: 40;
     }
 
     .lead.zamkniete {
@@ -357,18 +366,21 @@
       display: none;
     }
 
+    /* Strzałka jako czysty kształt CSS (nie glif fontu) — glif "▸" ma
+       niesymetryczne metryki i przy rotacji sprawiał wrażenie, że lata wokół
+       przesuniętego punktu zamiast obracać się w miejscu. Trójkąt zbudowany
+       z obramowania ma symetryczny bounding-box, więc obrót wokół jego
+       środka (domyślny transform-origin) zawsze wygląda wycentrowany. */
     .lead summary .chevron {
       flex: 0 0 auto;
-      width: 1.8rem;
-      height: 1.8rem;
+      width: 2.15rem;
+      height: 2.15rem;
       border-radius: 999px;
       background: var(--accent-soft);
-      color: var(--text-secondary);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 1.3rem;
-      transition: transform 0.15s ease, background 0.15s ease;
+      transition: background 0.15s ease;
       margin-right: 0.3rem;
     }
 
@@ -376,7 +388,17 @@
       background: var(--border);
     }
 
-    .lead[open] summary .chevron {
+    .lead summary .chevron::before {
+      content: '';
+      width: 0;
+      height: 0;
+      border-style: solid;
+      border-width: 0.36rem 0 0.36rem 0.5rem;
+      border-color: transparent transparent transparent var(--text-secondary);
+      transition: transform 0.15s ease;
+    }
+
+    .lead[open] summary .chevron::before {
       transform: rotate(90deg);
     }
 
@@ -422,16 +444,14 @@
       transform: translate(-50%, -50%) rotate(45deg);
     }
 
-    .lead summary .name-phone {
-      flex: 1 1 auto;
-      min-width: 8rem;
-      display: flex;
-      align-items: baseline;
-      gap: 0.35rem;
-      overflow: hidden;
-    }
-
-    .lead summary .name-phone .name {
+    /* Imię i nazwisko (desktop) nie rozciąga się (brak flex-grow), więc numer
+       telefonu zaraz za nim ląduje dosłownie zaraz za tekstem — bez martwego
+       odstępu. max-width to tylko zabezpieczenie na wypadek bardzo długiego/
+       dwuczłonowego nazwiska (wtedy się przycina wielokropkiem). */
+    .lead summary .name {
+      flex: 0 0 auto;
+      width: auto;
+      max-width: 13rem;
       font-weight: 600;
       font-size: 0.95rem;
       white-space: nowrap;
@@ -439,12 +459,21 @@
       text-overflow: ellipsis;
     }
 
-    .lead summary .name-phone .phone-sep {
+    /* Domyślnie (desktop/szerokie ekrany) contact-row jest "przezroczysty"
+       (display: contents) — telefon i data feedbacku stają się bezpośrednimi
+       elementami flex w summary, więc telefon zostaje tuż za imieniem
+       i nazwiskiem, tak jak wcześniej. Dopiero na mobile (media query niżej)
+       zamieniamy go w realny box, żeby złapać telefon+datę w jeden wiersz. */
+    .lead summary .contact-row {
+      display: contents;
+    }
+
+    .lead summary .contact-row .phone-sep {
       color: var(--text-muted);
       flex: 0 0 auto;
     }
 
-    .lead summary .name-phone .phone {
+    .lead summary .contact-row .phone {
       font-size: 0.85rem;
       color: var(--text-secondary);
       white-space: nowrap;
@@ -452,7 +481,7 @@
       text-decoration: none;
     }
 
-    .lead summary .name-phone .phone:hover {
+    .lead summary .contact-row .phone:hover {
       text-decoration: underline;
     }
 
@@ -486,14 +515,17 @@
       gap: 0.3rem;
     }
 
-    .lead summary .tags {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
+    /* Status: custom dropdown zamiast natywnego <select>, żeby móc w pełni
+       kontrolować pozycję rozwijanej listy (patrz .status-menu niżej). */
+    .status-wrap {
+      position: relative;
       flex: 0 0 auto;
     }
 
     .lead summary .status-tag {
+      position: relative;
+      appearance: none;
+      -webkit-appearance: none;
       font: inherit;
       font-size: 0.76rem;
       font-weight: 600;
@@ -503,8 +535,69 @@
       padding: 0.1rem 1.3rem 0.1rem 0.55rem;
       border-radius: 999px;
       white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: left;
+      /* Stała szerokość dla wszystkich statusów — dopasowana do najdłuższej
+         etykiety ("Po pierwszym telefonie"), żeby pigułka nigdy nie kurczyła
+         się do szerokości sąsiadów i nie wyglądała nierówno w rzędzie. */
+      width: 11.5rem;
       flex: 0 0 auto;
       cursor: pointer;
+    }
+
+    .lead summary .status-tag::after {
+      content: '';
+      position: absolute;
+      right: 0.6rem;
+      top: 50%;
+      width: 0.35rem;
+      height: 0.35rem;
+      border-right: 1.5px solid currentColor;
+      border-bottom: 1.5px solid currentColor;
+      transform: translateY(-75%) rotate(45deg);
+      opacity: 0.7;
+      pointer-events: none;
+    }
+
+    /* Rozwijana lista statusów — przyczepiona krawędzią dolną do górnej
+       krawędzi całej wyceny (.lead), niezależnie od tego, gdzie w karcie
+       (na dole, w wierszu 3) znajduje się sam przycisk statusu. */
+    .status-menu {
+      display: none;
+      flex-direction: column;
+      gap: 0.25rem;
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 100%;
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.4rem;
+      box-shadow: 0 -8px 20px rgba(0, 0, 0, 0.16);
+      z-index: 41;
+    }
+
+    .status-menu.open {
+      display: flex;
+    }
+
+    .status-option {
+      font: inherit;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-align: left;
+      white-space: nowrap;
+      border: none;
+      border-radius: 999px;
+      padding: 0.4rem 0.75rem;
+      cursor: pointer;
+    }
+
+    .status-option.is-selected {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
     }
 
     .lead summary .feedback-date {
@@ -512,6 +605,12 @@
       color: var(--text-muted);
       white-space: nowrap;
       flex: 0 0 auto;
+      /* Domyślnie (desktop) odpycha datę feedbacku (razem ze statusem, bo idą
+         zaraz po niej) w prawą część wiersza — tylko telefon miał się
+         przykleić do imienia, data i status zostają na swoim, oddzielonym
+         miejscu zamiast lgnąć tuż za numerem telefonu. Na mobile (media
+         query niżej) zerujemy to, bo tam data ma stać tuż przy telefonie. */
+      margin-left: auto;
     }
 
     .lead summary .feedback-date .label {
@@ -535,6 +634,8 @@
     .lead summary .feedback-date-input::-webkit-calendar-picker-indicator {
       cursor: pointer;
       opacity: 0.65;
+      margin-left: -0.35rem;
+      padding: 1px;
     }
 
     .lead summary .form-link {
@@ -548,7 +649,6 @@
       align-items: center;
       justify-content: center;
       font-size: 0.85rem;
-      margin-left: auto;
     }
 
     .lead summary .form-link.form-link--empty {
@@ -694,10 +794,59 @@
         text-align: center;
       }
 
-      .lead summary .tags {
-        order: 10;
+      /* Wymuszony, stały układ 3 "pięter" w wierszu wyceny — niezależnie od
+         długości imienia/telefonu, żeby się nie rozsypywał w różnych kombinacjach:
+         1) lp + checkbox + imię (+ link do formularza), 2) telefon + data feedbacku, 3) status. */
+      .lead summary {
+        align-items: center;
+      }
+
+      .lead summary .chevron { order: 1; }
+      .lead summary .lp { order: 2; }
+      .lead summary .close-checkbox { order: 3; }
+      .lead summary .name {
+        order: 4;
+        flex: 1 1 auto;
+        width: auto;
+        min-width: 6rem;
+      }
+
+      .lead summary .form-link {
+        order: 5;
+        margin-left: auto;
+      }
+
+      .lead summary .contact-row {
+        display: flex;
+        align-items: baseline;
+        flex-wrap: wrap;
+        gap: 0.3rem 0.7rem;
+        order: 6;
+        flex-basis: 100%;
+        width: 100%;
+        margin-top: 0.45rem;
+      }
+
+      /* Na mobile telefon stoi sam w swoim wierszu (bez imienia obok),
+         więc myślnik-separator przed numerem jest tu zbędny. */
+      .lead summary .contact-row .phone-sep {
+        display: none;
+      }
+
+      /* Na mobile data ma stać tuż przy telefonie w tym samym wierszu, więc
+         zerujemy odpychające auto-margin z wersji desktopowej. */
+      .lead summary .contact-row .feedback-date {
+        margin-left: 0;
+      }
+
+      .lead summary .status-wrap {
+        order: 7;
         flex-basis: 100%;
         margin-top: 0.45rem;
+      }
+
+      .lead summary .status-tag {
+        width: 100%;
       }
     }
 
@@ -1035,6 +1184,11 @@
     let activeState = null; // 'draft' | 'poprawka' | 'final' | null
     let currentRow = null;  // wiersz Supabase wybranego dnia (surowe "Data" do zapisu)
 
+    // Ten sam case (po lp) bywa renderowany w dwóch miejscach naraz —
+    // w "Priorytet dziś" i w swojej kategorii. Rejestr pozwala zsynchronizować
+    // zaznaczenie "zamknięte" (i przesunięcie na dół listy) w obu miejscach.
+    let leadInstancesByLp = new Map();
+
     function formatPlDate(d) {
       const day = String(d.getDate()).padStart(2, '0');
       const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -1355,15 +1509,50 @@
       return document.createTextNode(String(raw));
     }
 
-    function leadItem(c) {
+    function closeAllStatusMenus() {
+      document.querySelectorAll('.status-menu.open').forEach((el) => el.classList.remove('open'));
+      document.querySelectorAll('.lead.status-menu-open').forEach((el) => el.classList.remove('status-menu-open'));
+    }
+    document.addEventListener('click', closeAllStatusMenus);
+
+    // Zamknięte case'y spadają na sam dół swojej listy (Priorytet dziś albo
+    // dana kategoria) — zawsze wg oryginalnej kolejności w obrębie każdej
+    // z tych dwóch grup (otwarte, potem zamknięte).
+    function resortContainer(container) {
+      const items = Array.from(container.children);
+      items.sort((a, b) => {
+        const aClosed = a.classList.contains('zamkniete') ? 1 : 0;
+        const bClosed = b.classList.contains('zamkniete') ? 1 : 0;
+        if (aClosed !== bClosed) return aClosed - bClosed;
+        return Number(a.dataset.order) - Number(b.dataset.order);
+      });
+      items.forEach((el) => container.appendChild(el));
+    }
+
+    // Ten sam case zamyka się we wszystkich miejscach, w których jest
+    // wyrenderowany naraz (Priorytet dziś + jego kategoria) — i w każdym
+    // z nich spada na dół swojej listy.
+    function setLeadClosed(lp, closed) {
+      const instances = leadInstancesByLp.get(lp);
+      if (!instances) return;
+      const containers = new Set();
+      instances.forEach(({ lead, checkbox }) => {
+        checkbox.checked = closed;
+        lead.classList.toggle('zamkniete', closed);
+        if (lead.parentNode) containers.add(lead.parentNode);
+      });
+      containers.forEach((container) => resortContainer(container));
+    }
+
+    function leadItem(c, orderIndex) {
       const lead = document.createElement('details');
       lead.className = 'lead' + (c.zamkniete ? ' zamkniete' : '');
+      lead.dataset.order = orderIndex || 0;
 
       const summary = document.createElement('summary');
 
       const chevron = document.createElement('span');
       chevron.className = 'chevron';
-      chevron.textContent = '▸';
       summary.appendChild(chevron);
 
       if (c.lp !== undefined) {
@@ -1380,38 +1569,38 @@
       checkbox.title = 'Zamknięte (tylko lokalnie, nie zapisuje się do Supabase)';
       checkbox.addEventListener('click', (e) => e.stopPropagation());
       checkbox.addEventListener('change', () => {
-        lead.classList.toggle('zamkniete', checkbox.checked);
+        setLeadClosed(c.lp, checkbox.checked);
       });
       summary.appendChild(checkbox);
 
-      const namePhone = document.createElement('span');
-      namePhone.className = 'name-phone';
+      if (c.lp !== undefined) {
+        if (!leadInstancesByLp.has(c.lp)) leadInstancesByLp.set(c.lp, []);
+        leadInstancesByLp.get(c.lp).push({ lead, checkbox });
+      }
 
       const name = document.createElement('span');
       name.className = 'name';
       name.textContent = c.imie || '(brak nazwiska)';
-      namePhone.appendChild(name);
+      summary.appendChild(name);
+
+      const contactRow = document.createElement('span');
+      contactRow.className = 'contact-row';
 
       if (c.telefon) {
         const sep = document.createElement('span');
         sep.className = 'phone-sep';
         sep.textContent = '–';
-        namePhone.appendChild(sep);
+        contactRow.appendChild(sep);
 
         const phone = document.createElement('a');
         phone.className = 'phone';
         phone.href = `tel:${c.telefon.replace(/\s+/g, '')}`;
         phone.textContent = c.telefon;
         phone.addEventListener('click', (e) => e.stopPropagation());
-        namePhone.appendChild(phone);
+        contactRow.appendChild(phone);
 
-        namePhone.appendChild(makeCopyButton(c.telefon));
+        contactRow.appendChild(makeCopyButton(c.telefon));
       }
-
-      summary.appendChild(namePhone);
-
-      const tags = document.createElement('span');
-      tags.className = 'tags';
 
       if (c.data_feedbacku) {
         const feedbackDate = document.createElement('span');
@@ -1440,39 +1629,71 @@
           }
         });
         feedbackDate.appendChild(dateInput);
-        tags.appendChild(feedbackDate);
+        contactRow.appendChild(feedbackDate);
       }
+
+      if (contactRow.children.length) summary.appendChild(contactRow);
 
       if (c.status) {
-        const tag = document.createElement('select');
-        tag.className = 'status-tag';
+        const statusWrap = document.createElement('span');
+        statusWrap.className = 'status-wrap';
+
+        const trigger = document.createElement('button');
+        trigger.type = 'button';
+        trigger.className = 'status-tag';
+        trigger.textContent = c.status;
+        applyStatusColor(trigger, c.status);
+
+        const menu = document.createElement('div');
+        menu.className = 'status-menu';
+
         const options = STATUS_OPTIONS.includes(c.status) ? STATUS_OPTIONS : [...STATUS_OPTIONS, c.status];
         options.forEach((opt) => {
-          const optionEl = document.createElement('option');
-          optionEl.value = opt;
-          optionEl.textContent = opt;
-          tag.appendChild(optionEl);
+          const optionBtn = document.createElement('button');
+          optionBtn.type = 'button';
+          optionBtn.className = 'status-option' + (opt === c.status ? ' is-selected' : '');
+          optionBtn.textContent = opt;
+          applyStatusColor(optionBtn, opt);
+          optionBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            closeAllStatusMenus();
+            if (opt === c.status) return;
+            const previous = c.status;
+            trigger.textContent = opt;
+            applyStatusColor(trigger, opt);
+            menu.querySelectorAll('.status-option').forEach((el) => {
+              el.classList.toggle('is-selected', el === optionBtn);
+            });
+            try {
+              await saveLeadField(c.lp, 'status', opt);
+              c.status = opt;
+            } catch (err) {
+              c.status = previous;
+              trigger.textContent = previous;
+              applyStatusColor(trigger, previous);
+              menu.querySelectorAll('.status-option').forEach((el) => {
+                el.classList.toggle('is-selected', el.textContent === previous);
+              });
+              alert(`Nie zapisano statusu: ${err.message}`);
+            }
+          });
+          menu.appendChild(optionBtn);
         });
-        tag.value = c.status;
-        applyStatusColor(tag, c.status);
-        tag.addEventListener('click', (e) => e.stopPropagation());
-        tag.addEventListener('change', async () => {
-          const previous = c.status;
-          const newStatus = tag.value;
-          try {
-            await saveLeadField(c.lp, 'status', newStatus);
-            c.status = newStatus;
-            applyStatusColor(tag, newStatus);
-          } catch (err) {
-            tag.value = previous;
-            applyStatusColor(tag, previous);
-            alert(`Nie zapisano statusu: ${err.message}`);
+
+        trigger.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const willOpen = !menu.classList.contains('open');
+          closeAllStatusMenus();
+          if (willOpen) {
+            menu.classList.add('open');
+            lead.classList.add('status-menu-open');
           }
         });
-        tags.appendChild(tag);
-      }
 
-      if (tags.children.length) summary.appendChild(tags);
+        statusWrap.appendChild(trigger);
+        statusWrap.appendChild(menu);
+        summary.appendChild(statusWrap);
+      }
 
       const formLink = document.createElement(c.link_formularz ? 'a' : 'span');
       formLink.className = 'form-link' + (c.link_formularz ? '' : ' form-link--empty');
@@ -1489,6 +1710,8 @@
         formLink.title = 'Brak formularza';
       }
       summary.appendChild(formLink);
+
+      lead.addEventListener('toggle', closeAllStatusMenus);
 
       lead.appendChild(summary);
 
@@ -1541,7 +1764,8 @@
       document.getElementById('priorytet-section').style.display = 'block';
       const container = document.getElementById('priorytet-list');
       container.innerHTML = '';
-      list.forEach((c) => container.appendChild(leadItem(c)));
+      list.forEach((c, i) => container.appendChild(leadItem(c, i)));
+      resortContainer(container);
     }
 
     function renderKategorie(kategorie) {
@@ -1570,13 +1794,15 @@
         details.appendChild(summary);
         const list = document.createElement('div');
         list.className = 'cases';
-        arr.forEach((c) => list.appendChild(leadItem(c)));
+        arr.forEach((c, i) => list.appendChild(leadItem(c, i)));
+        resortContainer(list);
         details.appendChild(list);
         wrap.appendChild(details);
       });
     }
 
     function resetSections() {
+      leadInstancesByLp.clear();
       document.getElementById('meta').innerHTML = '';
       document.getElementById('kontekst-card').style.display = 'none';
       document.getElementById('komentarz-card').style.display = 'none';
