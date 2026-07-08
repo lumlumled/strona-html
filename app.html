@@ -520,18 +520,6 @@
     .status-wrap {
       position: relative;
       flex: 0 0 auto;
-      /* Kotwica prawej grupy (data feedbacku / status / link do formularza)
-         powtórzona tu, bo data feedbacku bywa nieobecna — bez własnej kotwicy
-         status i link wylądowałyby zaraz za telefonem zamiast przy prawej
-         krawędzi. Kilka auto-marginesów z rzędu nie szkodzi: działa tylko
-         pierwszy obecny (patrz .feedback-date i .form-link niżej). */
-      margin-left: auto;
-    }
-
-    /* Żywy widok "Nowe" renderuje status jako gołą pigułkę bez .status-wrap
-       (nie da się jej edytować) — potrzebuje tej samej kotwicy z osobna. */
-    .lead summary > .status-tag {
-      margin-left: auto;
     }
 
     .lead summary .status-tag {
@@ -617,18 +605,23 @@
       color: var(--text-muted);
       white-space: nowrap;
       flex: 0 0 auto;
-      /* Domyślnie (desktop) odpycha datę feedbacku (razem ze statusem, bo idą
-         zaraz po niej) w prawą część wiersza — tylko telefon miał się
-         przykleić do imienia, data i status zostają na swoim, oddzielonym
-         miejscu zamiast lgnąć tuż za numerem telefonu. Na mobile (media
-         query niżej) zerujemy to, bo tam data ma stać tuż przy telefonie. */
-      margin-left: auto;
       /* Label + wartość (input lub zwykły tekst w widoku "Nowe") mają różne
          własne metryki linii — inline-flex + center trzyma je w jednej,
          wspólnej osi z sąsiednimi pigułkami (status, link), zamiast polegać
          na wyrównaniu bazowym tekstu. */
       display: inline-flex;
       align-items: center;
+    }
+
+    /* Kotwica prawej grupy (data feedbacku / status / link do formularza) —
+       przydzielana w JS dokładnie jednemu, najwcześniejszemu z obecnych
+       elementów (patrz leadItem()). Nie dawać margin-left:auto osobno na
+       .feedback-date/.status-wrap/.form-link "na wszelki wypadek" — kilka
+       auto-marginesów z rzędu w tym samym flexboksie dzieli między siebie
+       wolną przestrzeń zamiast działać jak jedna kotwica, co rozjeżdża
+       wiersz gdy jakiegoś pola brakuje. */
+    .lead summary .right-anchor {
+      margin-left: auto;
     }
 
     .lead summary .feedback-date .label {
@@ -667,9 +660,6 @@
       align-items: center;
       justify-content: center;
       font-size: 0.85rem;
-      /* Ostatnia linia obrony kotwiczenia prawej grupy do krawędzi — na
-         wypadek leada bez daty feedbacku i bez statusu naraz. */
-      margin-left: auto;
     }
 
     .lead summary .form-link.form-link--empty {
@@ -1623,8 +1613,9 @@
         contactRow.appendChild(makeCopyButton(c.telefon));
       }
 
+      let feedbackDate = null;
       if (c.data_feedbacku) {
-        const feedbackDate = document.createElement('span');
+        feedbackDate = document.createElement('span');
         feedbackDate.className = 'feedback-date' + (isOverdueDate(c.data_feedbacku) ? ' is-overdue' : '');
         const label = document.createElement('span');
         label.className = 'label';
@@ -1661,6 +1652,7 @@
 
       if (contactRow.children.length) summary.appendChild(contactRow);
 
+      let statusEl = null;
       if (c.status && c.lp === undefined) {
         // Żywy lead spoza wygenerowanej Umowy — pigułka statusu bez
         // rozwijanego menu (nie ma jak zapisać zmiany przez /api/lead-field).
@@ -1669,6 +1661,7 @@
         statusTag.textContent = c.status;
         applyStatusColor(statusTag, c.status);
         summary.appendChild(statusTag);
+        statusEl = statusTag;
       } else if (c.status) {
         const statusWrap = document.createElement('span');
         statusWrap.className = 'status-wrap';
@@ -1728,6 +1721,7 @@
         statusWrap.appendChild(trigger);
         statusWrap.appendChild(menu);
         summary.appendChild(statusWrap);
+        statusEl = statusWrap;
       }
 
       const formLink = document.createElement(c.link_formularz ? 'a' : 'span');
@@ -1745,6 +1739,15 @@
         formLink.title = 'Brak formularza';
       }
       summary.appendChild(formLink);
+
+      // Kotwica prawej grupy (data feedbacku / status / link do formularza):
+      // dokładnie JEDEN z nich — ten najwcześniejszy z obecnych — dostaje
+      // margin-left:auto, żeby cała grupa trzymała się prawej krawędzi.
+      // Zrobione w JS, nie w czystym CSS: margin-left:auto na kilku
+      // elementach z rzędu w tym samym flexboksie NIE działa tak, że tylko
+      // pierwszy się aktywuje — przeglądarka dzieli wolną przestrzeń między
+      // WSZYSTKIMI naraz, co rozjeżdża wiersz, gdy któregoś pola brakuje.
+      (feedbackDate || statusEl || formLink).classList.add('right-anchor');
 
       lead.addEventListener('toggle', closeAllStatusMenus);
 
