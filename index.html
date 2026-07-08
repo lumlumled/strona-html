@@ -4,30 +4,37 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>LumLum Standup Log</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
+    /* Paleta i typografia dopasowane do stylu lumlum.co: monochromatyczna
+       czerń/biel, font Inter, mocno zaokrąglone rogi, pigułkowe znaczniki. */
     :root {
-      --surface-1: #fcfcfb;
-      --page: #f9f9f7;
-      --text-primary: #0b0b0b;
+      --surface-1: #ffffff;
+      --page: #f5f5f4;
+      --text-primary: #111111;
       --text-secondary: #52514e;
-      --text-muted: #898781;
-      --border: rgba(11, 11, 11, 0.10);
-      --accent: #2a78d6;
-      --accent-soft: #eaf1fb;
+      --text-muted: #8a8984;
+      --border: rgba(17, 17, 17, 0.12);
+      --accent: #111111;
+      --accent-contrast: #ffffff;
+      --accent-soft: #ececea;
       --good: #0ca30c;
     }
 
     @media (prefers-color-scheme: dark) {
       :root {
-        --surface-1: #1a1a19;
-        --page: #0d0d0d;
+        --surface-1: #161616;
+        --page: #0a0a0a;
         --text-primary: #ffffff;
         --text-secondary: #c3c2b7;
-        --text-muted: #898781;
-        --border: rgba(255, 255, 255, 0.10);
-        --accent: #3987e5;
-        --accent-soft: #17263a;
-        --good: #0ca30c;
+        --text-muted: #8a8984;
+        --border: rgba(255, 255, 255, 0.14);
+        --accent: #ffffff;
+        --accent-contrast: #0a0a0a;
+        --accent-soft: #262626;
+        --good: #16c116;
       }
     }
 
@@ -38,7 +45,7 @@
     }
 
     body {
-      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif;
       background: var(--page);
       color: var(--text-primary);
       min-height: 100vh;
@@ -50,8 +57,8 @@
     }
 
     .wrap {
-      width: 100%;
-      max-width: 44rem;
+      width: 80vw;
+      max-width: 80vw;
       display: flex;
       flex-direction: column;
       gap: 1.25rem;
@@ -99,7 +106,7 @@
     .card {
       background: var(--surface-1);
       border: 1px solid var(--border);
-      border-radius: 14px;
+      border-radius: 18px;
       padding: 1.25rem 1.4rem;
     }
 
@@ -157,63 +164,170 @@
       gap: 0.75rem;
     }
 
-    .case-card {
+    /* Lead = <details> — mobile-first: wiersz skrótowy (summary) zwija się/rozwija,
+       na wąskim ekranie łamie się do dwóch linii, na szerokim mieści się w jednej. */
+    .lead {
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 0.85rem 1rem;
-      display: flex;
-      flex-direction: column;
-      gap: 0.35rem;
+      border-radius: 14px;
+      overflow: hidden;
     }
 
-    .case-card .row-top {
+    .lead.zamkniete {
+      opacity: 0.5;
+    }
+
+    .lead summary {
+      list-style: none;
+      cursor: pointer;
       display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      gap: 0.75rem;
+      align-items: center;
       flex-wrap: wrap;
+      gap: 0.4rem 0.7rem;
+      padding: 0.75rem 0.9rem;
     }
 
-    .case-card .name {
-      font-weight: 600;
-      font-size: 0.98rem;
+    .lead summary::-webkit-details-marker {
+      display: none;
     }
 
-    .case-card .status-tag {
+    .lead summary .chevron {
+      flex: 0 0 auto;
+      width: 1.9rem;
+      height: 1.9rem;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      transition: transform 0.15s ease;
+      margin-right: 0.3rem;
+    }
+
+    .lead[open] summary .chevron {
+      transform: rotate(180deg);
+    }
+
+    .lead summary .lp {
       font-size: 0.78rem;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      flex: 0 0 auto;
+    }
+
+    .lead summary .close-checkbox {
+      width: 1.05rem;
+      height: 1.05rem;
+      border-radius: 4px;
+      accent-color: var(--accent);
+      flex: 0 0 auto;
+    }
+
+    .lead summary .name {
+      font-weight: 600;
+      font-size: 0.95rem;
+      flex: 1 1 auto;
+      min-width: 8rem;
+    }
+
+    .lead summary .status-tag {
+      font-size: 0.76rem;
       color: var(--accent);
       background: var(--accent-soft);
       padding: 0.1rem 0.55rem;
       border-radius: 999px;
       white-space: nowrap;
+      flex: 0 0 auto;
     }
 
-    .case-card .contact {
+    .lead summary .phone {
       font-size: 0.85rem;
       color: var(--text-secondary);
+      white-space: nowrap;
+      flex: 0 0 auto;
     }
 
-    .case-card .opis {
-      font-size: 0.88rem;
-      color: var(--text-primary);
-      line-height: 1.45;
-    }
-
-    .case-card .foot {
-      display: flex;
-      gap: 1rem;
-      flex-wrap: wrap;
+    .lead summary .feedback-date {
       font-size: 0.8rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+
+    .lead summary .feedback-date .label {
       color: var(--text-muted);
     }
 
-    .case-card .foot a {
+    .lead summary .form-link {
+      flex: 0 0 auto;
+      width: 1.9rem;
+      height: 1.9rem;
+      border-radius: 999px;
+      background: var(--accent);
+      color: var(--accent-contrast);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      margin-left: auto;
+    }
+
+    .lead-body {
+      border-top: 1px solid var(--border);
+      padding: 0.8rem 0.9rem 0.9rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.7rem;
+    }
+
+    .lead-body .opis-text {
+      font-size: 0.9rem;
+      line-height: 1.5;
+      color: var(--text-primary);
+    }
+
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+      gap: 0.6rem 1.1rem;
+    }
+
+    .field-grid + .field-grid {
+      margin-top: 0.2rem;
+      padding-top: 0.6rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .field-grid .field.wide {
+      grid-column: 1 / -1;
+    }
+
+    .field {
+      min-width: 0;
+    }
+
+    .field .label {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .field .value {
+      font-size: 0.86rem;
+      color: var(--text-primary);
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+
+    .field .value a {
       color: var(--accent);
     }
 
     details.kategoria {
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: 14px;
       padding: 0.6rem 1rem;
     }
 
@@ -349,66 +463,149 @@
       });
     }
 
-    function caseCard(c) {
-      const card = document.createElement('div');
-      card.className = 'case-card';
+    // Stały, powtarzalny zestaw pól dla każdego leada, w ustalonej kolejności.
+    // Widoczne od razu w wierszu: imię/nazwisko, telefon, status, link do formularza.
+    // Wszystko poniżej chowa się w rozwijanym szczególe (<details>).
+    // Grupa 1: informacje kontaktowe.
+    const CONTACT_FIELDS = [
+      { key: 'email', label: 'Email' },
+      { key: 'ostatni_kontakt', label: 'Ostatni kontakt' },
+      { key: 'ilosc_telefonow', label: 'Ilość telefonów' },
+      { key: 'temperatura', label: 'Temperatura' },
+      { key: 'ocena_ai', label: 'Ocena AI', wide: true },
+    ];
 
-      const top = document.createElement('div');
-      top.className = 'row-top';
+    // Grupa 2: informacje transakcyjne — ta sama stylistyka co grupa kontaktowa.
+    const DEAL_FIELDS = [
+      { key: 'data_wyceny', label: 'Data wyceny' },
+      { key: 'kwota', label: 'Kwota', currency: true },
+      { key: 'produkty', label: 'Produkty' },
+      { key: 'zadzwonil_dzis', label: 'Zadzwonił dziś', bool: true },
+    ];
+
+    function fieldValueNode(spec, raw) {
+      if (spec.link) {
+        if (!raw) return document.createTextNode('—');
+        const a = document.createElement('a');
+        a.href = raw;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = 'Otwórz ↗';
+        return a;
+      }
+      if (spec.bool) return document.createTextNode(raw ? 'Tak' : 'Nie');
+      if (spec.currency) return document.createTextNode(raw || raw === 0 ? fmtKwota(raw) || '0 zł' : '—');
+      if (raw === undefined || raw === null || raw === '') return document.createTextNode('—');
+      return document.createTextNode(String(raw));
+    }
+
+    function leadItem(c) {
+      const lead = document.createElement('details');
+      lead.className = 'lead' + (c.zamkniete ? ' zamkniete' : '');
+
+      const summary = document.createElement('summary');
+
+      const chevron = document.createElement('span');
+      chevron.className = 'chevron';
+      chevron.textContent = '▾';
+      summary.appendChild(chevron);
+
+      if (c.lp !== undefined) {
+        const lp = document.createElement('span');
+        lp.className = 'lp';
+        lp.textContent = c.lp;
+        summary.appendChild(lp);
+      }
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'close-checkbox';
+      checkbox.checked = Boolean(c.zamkniete);
+      checkbox.title = 'Zamknięte (tylko lokalnie, nie zapisuje się do Supabase)';
+      checkbox.addEventListener('click', (e) => e.stopPropagation());
+      checkbox.addEventListener('change', () => {
+        lead.classList.toggle('zamkniete', checkbox.checked);
+      });
+      summary.appendChild(checkbox);
+
       const name = document.createElement('span');
       name.className = 'name';
       name.textContent = c.imie || '(brak nazwiska)';
-      top.appendChild(name);
+      summary.appendChild(name);
+
       if (c.status) {
         const tag = document.createElement('span');
         tag.className = 'status-tag';
         tag.textContent = c.status;
-        top.appendChild(tag);
-      }
-      card.appendChild(top);
-
-      const contactParts = [c.telefon, c.email].filter(Boolean);
-      if (contactParts.length) {
-        const contact = document.createElement('div');
-        contact.className = 'contact';
-        contact.textContent = contactParts.join(' · ');
-        card.appendChild(contact);
+        summary.appendChild(tag);
       }
 
-      const opisText = c.opis || c.komentarz || c.ocena_ai;
-      if (opisText) {
+      const phone = document.createElement('span');
+      phone.className = 'phone';
+      phone.textContent = c.telefon || '—';
+      summary.appendChild(phone);
+
+      if (c.data_feedbacku) {
+        const feedbackDate = document.createElement('span');
+        feedbackDate.className = 'feedback-date';
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.textContent = 'Data feedbacku: ';
+        feedbackDate.appendChild(label);
+        feedbackDate.appendChild(document.createTextNode(c.data_feedbacku));
+        summary.appendChild(feedbackDate);
+      }
+
+      if (c.link_formularz) {
+        const a = document.createElement('a');
+        a.className = 'form-link';
+        a.href = c.link_formularz;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = '↗';
+        a.title = 'Otwórz formularz';
+        // Nie chcemy, żeby kliknięcie w link jednocześnie zwijało/rozwijało wiersz.
+        a.addEventListener('click', (e) => e.stopPropagation());
+        summary.appendChild(a);
+      }
+
+      lead.appendChild(summary);
+
+      const body = document.createElement('div');
+      body.className = 'lead-body';
+
+      if (c.opis || c.komentarz) {
         const opis = document.createElement('div');
-        opis.className = 'opis';
-        opis.textContent = opisText;
-        card.appendChild(opis);
+        opis.className = 'opis-text';
+        opis.textContent = c.opis || c.komentarz;
+        body.appendChild(opis);
       }
 
-      const footParts = [];
-      if (c.kwota) footParts.push(fmtKwota(c.kwota));
-      if (c.temperatura) footParts.push(c.temperatura);
-      if (c.data_feedbacku) footParts.push(`feedback: ${c.data_feedbacku}`);
-      if (c.dni_temu) footParts.push(`${c.dni_temu} dni temu`);
-
-      if (footParts.length || c.link_formularz) {
-        const foot = document.createElement('div');
-        foot.className = 'foot';
-        footParts.forEach((text) => {
-          const span = document.createElement('span');
-          span.textContent = text;
-          foot.appendChild(span);
+      function fieldGrid(fields) {
+        const grid = document.createElement('div');
+        grid.className = 'field-grid';
+        fields.forEach((spec) => {
+          const field = document.createElement('div');
+          field.className = 'field' + (spec.wide ? ' wide' : '');
+          const label = document.createElement('div');
+          label.className = 'label';
+          label.textContent = spec.label;
+          const value = document.createElement('div');
+          value.className = 'value';
+          value.appendChild(fieldValueNode(spec, c[spec.key]));
+          field.appendChild(label);
+          field.appendChild(value);
+          grid.appendChild(field);
         });
-        if (c.link_formularz) {
-          const a = document.createElement('a');
-          a.href = c.link_formularz;
-          a.target = '_blank';
-          a.rel = 'noopener';
-          a.textContent = 'formularz →';
-          foot.appendChild(a);
-        }
-        card.appendChild(foot);
+        return grid;
       }
 
-      return card;
+      body.appendChild(fieldGrid(CONTACT_FIELDS));
+      body.appendChild(fieldGrid(DEAL_FIELDS));
+
+      lead.appendChild(body);
+
+      return lead;
     }
 
     function renderPriorytet(list) {
@@ -416,7 +613,7 @@
       document.getElementById('priorytet-card').style.display = 'block';
       const container = document.getElementById('priorytet-list');
       container.innerHTML = '';
-      list.forEach((c) => container.appendChild(caseCard(c)));
+      list.forEach((c) => container.appendChild(leadItem(c)));
     }
 
     function renderKategorie(kategorie) {
@@ -434,7 +631,7 @@
         details.appendChild(summary);
         const list = document.createElement('div');
         list.className = 'cases';
-        arr.forEach((c) => list.appendChild(caseCard(c)));
+        arr.forEach((c) => list.appendChild(leadItem(c)));
         details.appendChild(list);
         wrap.appendChild(details);
       });
