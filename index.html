@@ -97,6 +97,12 @@
       transform: scale(0.7);
     }
 
+    .top-row {
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+
     header.top {
       display: flex;
       flex-direction: column;
@@ -107,6 +113,7 @@
       font-size: 1.5rem;
       font-weight: 700;
       letter-spacing: -0.3px;
+      white-space: nowrap;
     }
 
     .meta {
@@ -115,6 +122,118 @@
       align-items: center;
       color: var(--text-secondary);
       font-size: 0.9rem;
+    }
+
+    /* Desktop: tytuł, data i selektor dni w jednym, węższym rzędzie —
+       na mobile zostaje układ kolumnowy (sprawdzony, ma zostać bez zmian). */
+    @media (min-width: 641px) {
+      .top-row {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1.5rem;
+      }
+
+      header.top {
+        flex-direction: row;
+        align-items: baseline;
+        gap: 0.9rem;
+      }
+
+      .day-strip {
+        flex: 0 0 auto;
+      }
+
+      .day-tabs {
+        flex: 0 0 auto;
+      }
+
+      .day-tab {
+        flex: 0 0 auto;
+        width: 2.5rem;
+      }
+    }
+
+    .day-strip {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    .day-strip .day-nav {
+      flex: 0 0 auto;
+      width: 1.7rem;
+      height: 1.7rem;
+      border-radius: 999px;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 0.9rem;
+      line-height: 1;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+
+    .day-strip .day-nav:hover {
+      background: var(--accent-soft);
+      color: var(--text-primary);
+    }
+
+    .day-tabs {
+      flex: 1 1 auto;
+      display: flex;
+      gap: 0.3rem;
+    }
+
+    .day-tab {
+      flex: 1 1 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.05rem;
+      padding: 0.3rem 0.35rem;
+      border-radius: 10px;
+      background: transparent;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+
+    .day-tab:hover {
+      background: var(--accent-soft);
+    }
+
+    .day-tab .weekday {
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .day-tab .day-num {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .day-tab.is-today .day-num {
+      color: var(--accent);
+    }
+
+    .day-tab.is-selected {
+      background: var(--accent);
+    }
+
+    .day-tab.is-selected .weekday {
+      color: var(--accent-contrast);
+      opacity: 0.75;
+    }
+
+    .day-tab.is-selected .day-num {
+      color: var(--accent-contrast);
     }
 
     .badge {
@@ -524,10 +643,18 @@
   </header>
 
   <div class="wrap">
-    <header class="top">
-      <h1>Backlog</h1>
-      <div class="meta" id="meta"></div>
-    </header>
+    <div class="top-row">
+      <header class="top">
+        <h1>Backlog</h1>
+        <div class="meta" id="meta"></div>
+      </header>
+
+      <div class="day-strip" id="day-strip">
+        <button class="day-nav" id="day-prev" type="button" aria-label="Poprzedni tydzień">‹</button>
+        <div class="day-tabs" id="day-tabs"></div>
+        <button class="day-nav" id="day-next" type="button" aria-label="Następny tydzień">›</button>
+      </div>
+    </div>
 
     <p id="status"></p>
 
@@ -558,9 +685,61 @@
 
   <script>
     const API_BASE = window.API_BASE || 'http://localhost:3001';
-    const TABLE = 'LumLum Standup Log';
-    const TARGET_DATE = '07.07.2026';
+    const TABLE = 'Standup Log Lorenzo';
     const DRAFT_FIELD = 'Umowa - draft - JSON';
+
+    const PL_WEEKDAYS = ['Nd', 'Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob'];
+
+    let allRows = [];
+    let windowDays = [];
+    let selectedDate = null;
+
+    function formatPlDate(d) {
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      return `${day}.${month}.${d.getFullYear()}`;
+    }
+
+    function isSameDate(a, b) {
+      return a.toDateString() === b.toDateString();
+    }
+
+    // Kolumna "Data" w Supabase bywała zapisywana zarówno jako "DD.MM.YYYY",
+    // jak i ISO "YYYY-MM-DD" (zaobserwowane obie formy w danych na żywo) —
+    // dopasowanie musi rozpoznawać obie, zamiast polegać na jednym stringu.
+    function rowMatchesDate(rowValue, date) {
+      const str = String(rowValue || '').trim();
+      let m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(str);
+      if (m) {
+        return Number(m[1]) === date.getDate() && Number(m[2]) === date.getMonth() + 1 && Number(m[3]) === date.getFullYear();
+      }
+      m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(str);
+      if (m) {
+        return Number(m[3]) === date.getDate() && Number(m[2]) === date.getMonth() + 1 && Number(m[1]) === date.getFullYear();
+      }
+      return false;
+    }
+
+    function addPlainDays(date, n) {
+      const d = new Date(date);
+      d.setDate(d.getDate() + n);
+      return d;
+    }
+
+    function isWeekend(date) {
+      const day = date.getDay();
+      return day === 0 || day === 6;
+    }
+
+    function getMonday(date) {
+      const day = date.getDay();
+      const diff = day === 0 ? -6 : 1 - day;
+      return addPlainDays(date, diff);
+    }
+
+    function buildWeekdayWindow(monday) {
+      return [0, 1, 2, 3, 4].map((n) => addPlainDays(monday, n));
+    }
 
     const KATEGORIA_LABELS = {
       nowe: 'Nowe',
@@ -584,7 +763,7 @@
     function renderMeta(draft) {
       const meta = document.getElementById('meta');
       meta.innerHTML = '';
-      const parts = [draft.data, draft.wygenerowano ? `wygenerowano ${draft.wygenerowano}` : null];
+      const parts = [draft.data];
       parts.filter(Boolean).forEach((text) => {
         const span = document.createElement('span');
         span.textContent = text;
@@ -879,6 +1058,95 @@
       });
     }
 
+    function resetSections() {
+      document.getElementById('meta').innerHTML = '';
+      document.getElementById('kontekst-card').style.display = 'none';
+      document.getElementById('komentarz-card').style.display = 'none';
+      document.getElementById('plan-card').style.display = 'none';
+      document.getElementById('priorytet-section').style.display = 'none';
+      document.getElementById('kategorie-section').style.display = 'none';
+    }
+
+    function loadDay(date) {
+      resetSections();
+      const formatted = formatPlDate(date);
+      const row = allRows.find((r) => rowMatchesDate(r['Data'], date));
+      if (!row) {
+        setStatus(`Brak danych dla ${formatted}`);
+        return;
+      }
+
+      const draft = row[DRAFT_FIELD];
+      if (!draft) {
+        setStatus(`Brak pola "${DRAFT_FIELD}" w wierszu dla ${formatted}`);
+        return;
+      }
+
+      setStatus('');
+      renderMeta(draft);
+
+      if (draft.kontekst) {
+        document.getElementById('kontekst-card').style.display = 'block';
+        document.getElementById('kontekst-text').textContent = draft.kontekst;
+      }
+
+      if (draft.komentarz_dzienny) {
+        document.getElementById('komentarz-card').style.display = 'block';
+        renderKomentarz(draft.komentarz_dzienny);
+      }
+
+      renderPlan(draft.plan);
+      renderPriorytet(draft.priorytet_dzis);
+      renderKategorie(draft.kategorie);
+    }
+
+    function renderDayStrip() {
+      const tabs = document.getElementById('day-tabs');
+      tabs.innerHTML = '';
+      const today = new Date();
+      windowDays.forEach((date) => {
+        const tab = document.createElement('div');
+        tab.className = 'day-tab';
+        if (isSameDate(date, today)) tab.classList.add('is-today');
+        if (isSameDate(date, selectedDate)) tab.classList.add('is-selected');
+
+        const weekday = document.createElement('div');
+        weekday.className = 'weekday';
+        weekday.textContent = PL_WEEKDAYS[date.getDay()];
+        tab.appendChild(weekday);
+
+        const dayNum = document.createElement('div');
+        dayNum.className = 'day-num';
+        dayNum.textContent = date.getDate();
+        tab.appendChild(dayNum);
+
+        tab.addEventListener('click', () => {
+          selectedDate = date;
+          renderDayStrip();
+          loadDay(selectedDate);
+        });
+
+        tabs.appendChild(tab);
+      });
+    }
+
+    function shiftWeek(delta) {
+      const offset = windowDays.findIndex((d) => isSameDate(d, selectedDate));
+      const newMonday = addPlainDays(windowDays[0], delta * 7);
+      windowDays = buildWeekdayWindow(newMonday);
+      selectedDate = windowDays[offset === -1 ? 0 : offset];
+      renderDayStrip();
+      loadDay(selectedDate);
+    }
+
+    function goToPrevWeek() {
+      shiftWeek(-1);
+    }
+
+    function goToNextWeek() {
+      shiftWeek(1);
+    }
+
     async function init() {
       try {
         const res = await fetch(`${API_BASE}/api/tables/${encodeURIComponent(TABLE)}`);
@@ -886,28 +1154,20 @@
           const body = await res.json().catch(() => ({}));
           throw new Error(body.error || `Błąd ${res.status}`);
         }
-        const rows = await res.json();
-        const row = rows.find((r) => r['Data'] === TARGET_DATE) || rows[0];
-        if (!row) throw new Error('Brak danych w tabeli');
+        allRows = await res.json();
 
-        const draft = row[DRAFT_FIELD];
-        if (!draft) throw new Error(`Brak pola "${DRAFT_FIELD}" w wierszu`);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        selectedDate = isWeekend(today)
+          ? (today.getDay() === 6 ? addPlainDays(today, -1) : addPlainDays(today, 1))
+          : today;
+        windowDays = buildWeekdayWindow(getMonday(selectedDate));
 
-        renderMeta(draft);
+        document.getElementById('day-prev').addEventListener('click', goToPrevWeek);
+        document.getElementById('day-next').addEventListener('click', goToNextWeek);
 
-        if (draft.kontekst) {
-          document.getElementById('kontekst-card').style.display = 'block';
-          document.getElementById('kontekst-text').textContent = draft.kontekst;
-        }
-
-        if (draft.komentarz_dzienny) {
-          document.getElementById('komentarz-card').style.display = 'block';
-          renderKomentarz(draft.komentarz_dzienny);
-        }
-
-        renderPlan(draft.plan);
-        renderPriorytet(draft.priorytet_dzis);
-        renderKategorie(draft.kategorie);
+        renderDayStrip();
+        loadDay(selectedDate);
       } catch (err) {
         setStatus(err.message);
       }
