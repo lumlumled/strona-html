@@ -1610,31 +1610,45 @@
         label.textContent = 'Data feedbacku: ';
         feedbackDate.appendChild(label);
 
-        const dateInput = document.createElement('input');
-        dateInput.type = 'date';
-        dateInput.className = 'feedback-date-input';
-        dateInput.value = toIsoDate(c.data_feedbacku);
-        dateInput.addEventListener('click', (e) => e.stopPropagation());
-        dateInput.addEventListener('change', async () => {
-          if (!dateInput.value) return;
-          const plDate = fromIsoDate(dateInput.value);
-          const previous = c.data_feedbacku;
-          try {
-            await saveLeadField(c.lp, 'data_feedbacku', plDate);
-            c.data_feedbacku = plDate;
-            feedbackDate.classList.toggle('is-overdue', isOverdueDate(plDate));
-          } catch (err) {
-            dateInput.value = toIsoDate(previous);
-            alert(`Nie zapisano daty feedbacku: ${err.message}`);
-          }
-        });
-        feedbackDate.appendChild(dateInput);
+        if (c.lp !== undefined) {
+          const dateInput = document.createElement('input');
+          dateInput.type = 'date';
+          dateInput.className = 'feedback-date-input';
+          dateInput.value = toIsoDate(c.data_feedbacku);
+          dateInput.addEventListener('click', (e) => e.stopPropagation());
+          dateInput.addEventListener('change', async () => {
+            if (!dateInput.value) return;
+            const plDate = fromIsoDate(dateInput.value);
+            const previous = c.data_feedbacku;
+            try {
+              await saveLeadField(c.lp, 'data_feedbacku', plDate);
+              c.data_feedbacku = plDate;
+              feedbackDate.classList.toggle('is-overdue', isOverdueDate(plDate));
+            } catch (err) {
+              dateInput.value = toIsoDate(previous);
+              alert(`Nie zapisano daty feedbacku: ${err.message}`);
+            }
+          });
+          feedbackDate.appendChild(dateInput);
+        } else {
+          // Żywy lead spoza wygenerowanej Umowy (bez lp) — nie ma jak
+          // zapisać zmiany przez /api/lead-field, więc tylko podgląd.
+          feedbackDate.appendChild(document.createTextNode(c.data_feedbacku));
+        }
         contactRow.appendChild(feedbackDate);
       }
 
       if (contactRow.children.length) summary.appendChild(contactRow);
 
-      if (c.status) {
+      if (c.status && c.lp === undefined) {
+        // Żywy lead spoza wygenerowanej Umowy — pigułka statusu bez
+        // rozwijanego menu (nie ma jak zapisać zmiany przez /api/lead-field).
+        const statusTag = document.createElement('span');
+        statusTag.className = 'status-tag';
+        statusTag.textContent = c.status;
+        applyStatusColor(statusTag, c.status);
+        summary.appendChild(statusTag);
+      } else if (c.status) {
         const statusWrap = document.createElement('span');
         statusWrap.className = 'status-wrap';
 
@@ -1785,6 +1799,7 @@
       entries.forEach(([key, arr]) => {
         const details = document.createElement('details');
         details.className = 'kategoria';
+        details.dataset.key = key;
         const summary = document.createElement('summary');
         const chevron = document.createElement('span');
         chevron.className = 'kategoria-chevron';
@@ -1801,6 +1816,77 @@
       });
     }
 
+    // Żywy widok "Nowe": leady ze statusem Nowy z ostatnich 7 dni, czytane
+    // na bieżąco z Supabase (nie z raz-dziennie generowanej Umowy), żeby nowy
+    // lead był widoczny od razu, bez czekania na jutrzejszą Umowę. Renderowane
+    // bez numeru LP (leadItem sam to obsługuje, gdy c.lp === undefined) —
+    // wizualnie oddziela to, co jest w dzisiejszym oficjalnym planie, od tego,
+    // co właśnie wpadło.
+    function normalizePhone(v) {
+      return String(v || '').replace(/\D/g, '');
+    }
+
+    async function fetchLiveNowe() {
+      try {
+        const res = await fetch(`${API_BASE}/api/leady/nowe`);
+        if (!res.ok) return [];
+        return await res.json();
+      } catch {
+        return [];
+      }
+    }
+
+    function ensureNoweDetails() {
+      const wrap = document.getElementById('kategorie-wrap');
+      let details = wrap.querySelector('[data-key="nowe"]');
+      if (!details) {
+        details = document.createElement('details');
+        details.className = 'kategoria';
+        details.dataset.key = 'nowe';
+        details.open = true;
+        const summary = document.createElement('summary');
+        const chevron = document.createElement('span');
+        chevron.className = 'kategoria-chevron';
+        chevron.textContent = '▸';
+        summary.appendChild(chevron);
+        details.appendChild(summary);
+        const list = document.createElement('div');
+        list.className = 'cases';
+        details.appendChild(list);
+        wrap.insertBefore(details, wrap.firstChild);
+      }
+      return details;
+    }
+
+    function setKategoriaCount(details, label, count) {
+      const summary = details.querySelector('summary');
+      Array.from(summary.childNodes).forEach((node) => {
+        if (!(node.nodeType === 1 && node.classList.contains('kategoria-chevron'))) {
+          node.remove();
+        }
+      });
+      summary.appendChild(document.createTextNode(`${label} (${count})`));
+    }
+
+    async function mergeLiveNowe(kategorieNowe, date) {
+      // Tylko dla dzisiejszego dnia — dla dni historycznych "co właśnie
+      // wpadło" nie ma znaczenia, Umowa z tamtego dnia jest zamknięta.
+      if (!isSameDate(date, new Date())) return;
+      const live = await fetchLiveNowe();
+      if (!live.length) return;
+
+      const known = new Set((kategorieNowe || []).map((c) => normalizePhone(c.telefon)));
+      const fresh = live.filter((c) => !known.has(normalizePhone(c.telefon)));
+      if (!fresh.length) return;
+
+      document.getElementById('kategorie-section').style.display = 'block';
+      const details = ensureNoweDetails();
+      const list = details.querySelector('.cases');
+      fresh.forEach((c, i) => list.insertBefore(leadItem(c, -1 - i), list.firstChild));
+      resortContainer(list);
+      setKategoriaCount(details, KATEGORIA_LABELS.nowe, (kategorieNowe || []).length + fresh.length);
+    }
+
     function resetSections() {
       leadInstancesByLp.clear();
       document.getElementById('meta').innerHTML = '';
@@ -1809,6 +1895,10 @@
       document.getElementById('plan-card').style.display = 'none';
       document.getElementById('priorytet-section').style.display = 'none';
       document.getElementById('kategorie-section').style.display = 'none';
+      // Czyszczone jawnie (nie tylko ukrywane): mergeLiveNowe potrafi dopisać
+      // żywe leady nawet gdy renderKategorie się nie wykona (brak wiersza/
+      // draftu na dany dzień) — bez tego zostałaby tu treść z poprzedniego dnia.
+      document.getElementById('kategorie-wrap').innerHTML = '';
     }
 
     function loadDay(date) {
@@ -1821,6 +1911,7 @@
         activeState = null;
         updateComposer();
         setStatus(`Brak danych dla ${formatted}`);
+        if (activeDoc === 'umowa') mergeLiveNowe(null, date);
         return;
       }
 
@@ -1844,6 +1935,7 @@
 
       if (!draft) {
         setStatus(`Brak dokumentu „${DOC_NAMES[activeDoc]}" dla ${formatted}`);
+        if (activeDoc === 'umowa') mergeLiveNowe(null, date);
         return;
       }
 
@@ -1863,6 +1955,7 @@
       renderPlan(draft.plan);
       renderPriorytet(draft.priorytet_dzis);
       renderKategorie(draft.kategorie);
+      if (activeDoc === 'umowa') mergeLiveNowe(draft.kategorie && draft.kategorie.nowe, date);
     }
 
     function renderDayStrip() {

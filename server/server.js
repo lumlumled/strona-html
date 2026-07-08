@@ -77,7 +77,13 @@ app.post('/login', (req, res) => {
   res.redirect('/login?error=1');
 });
 
+// Endpointy wołane przez zewnętrzne serwisy (webhook Zadarmy, Vercel Cron)
+// nie mają ciasteczka sesji — mają własną autoryzację (podpis Zadarmy /
+// CRON_SECRET), więc pomijają bramkę hasła.
+const PUBLIC_API_PREFIXES = ['/api/webhooks/', '/api/cron/'];
+
 app.use((req, res, next) => {
+  if (PUBLIC_API_PREFIXES.some((p) => req.path.startsWith(p))) return next();
   if (isAuthenticated(req)) return next();
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Wymagane zalogowanie' });
   return res.redirect('/login');
@@ -369,47 +375,245 @@ app.post('/api/lead-field', async (req, res) => {
   }
 });
 
+// OpenAI rozpoznaje format audio po rozszerzeniu nazwy pliku, nie po
+// nagłówku Content-Type — nazwa musi pasować do faktycznego formatu.
+const AUDIO_EXT_BY_TYPE = {
+  'audio/webm': 'webm',
+  'audio/ogg': 'ogg',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/wave': 'wav',
+  'audio/mp4': 'm4a',
+  'audio/m4a': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'audio/mpeg': 'mp3',
+  'audio/mp3': 'mp3',
+  'audio/flac': 'flac',
+};
+
+async function transcribeAudioBuffer(buffer, contentType) {
+  const ext = AUDIO_EXT_BY_TYPE[contentType] || 'mp3';
+  const form = new FormData();
+  form.append('file', new Blob([buffer], { type: contentType }), `audio.${ext}`);
+  form.append('model', OPENAI_TRANSCRIBE_MODEL);
+  form.append('language', 'pl');
+
+  const aiRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+    body: form,
+  });
+  if (!aiRes.ok) {
+    const body = await aiRes.text();
+    throw new Error(`OpenAI ${aiRes.status}: ${body.slice(0, 300)}`);
+  }
+  const data = await aiRes.json();
+  return data.text || '';
+}
+
 // Audio przychodzi jako surowe body (nie multipart) i NIE jest nigdzie
 // zapisywane — leci prosto do transkrypcji OpenAI i przepada.
 app.post('/api/transcribe', express.raw({ type: 'audio/*', limit: '8mb' }), async (req, res) => {
   try {
     requireOpenAiKey();
     if (!req.body || !req.body.length) return res.status(400).json({ error: 'Brak nagrania' });
-
-    // OpenAI rozpoznaje format audio po rozszerzeniu nazwy pliku, nie po
-    // nagłówku Content-Type — nazwa musi pasować do faktycznego formatu.
     const contentType = (req.headers['content-type'] || 'audio/webm').split(';')[0].trim();
-    const EXT_BY_TYPE = {
-      'audio/webm': 'webm',
-      'audio/ogg': 'ogg',
-      'audio/wav': 'wav',
-      'audio/x-wav': 'wav',
-      'audio/wave': 'wav',
-      'audio/mp4': 'm4a',
-      'audio/m4a': 'm4a',
-      'audio/x-m4a': 'm4a',
-      'audio/mpeg': 'mp3',
-      'audio/mp3': 'mp3',
-      'audio/flac': 'flac',
-    };
-    const ext = EXT_BY_TYPE[contentType] || 'webm';
+    const text = await transcribeAudioBuffer(req.body, contentType);
+    res.json({ text });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
 
-    const form = new FormData();
-    form.append('file', new Blob([req.body], { type: contentType }), `audio.${ext}`);
-    form.append('model', OPENAI_TRANSCRIBE_MODEL);
-    form.append('language', 'pl');
-
-    const aiRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+// ── Webhook Zadarmy (przychodzące/wychodzące/nieodebrane) ───────────────────
+// Rejestrowany bezpośrednio w Zadarma, NIE przez Make — patrz plan migracji,
+// etap "cutover". Kształt payloadu potwierdzony na PRAWDZIWYCH webhookach
+// (nie z dokumentacji): tablica z jednym obiektem, pola caller_id/called_did
+// (przychodzące) albo caller_id/dst (wychodzące), is_recorded:boolean,
+// record_url gotowy do pobrania bez dodatkowej autoryzacji, BRAK pola
+// signature (ten webhook nic nie podpisuje) i BRAK pola disposition —
+// "odebrane vs nieodebrane" wnioskujemy z obecności record_url/duration.
+// Zabezpieczenie: sekretny token w query stringu URL-a zarejestrowanego w
+// Zadarmie (?token=...), sprawdzany tu zamiast podpisu HMAC.
+async function summarizeCall(transcript, fallbackLabel) {
+  if (!OPENAI_API_KEY) return transcript ? transcript.slice(0, 200) : fallbackLabel;
+  try {
+    const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
-      body: form,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_API_KEY}` },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        messages: [
+          {
+            role: 'system',
+            content: 'Podsumuj rozmowę handlową w maks. 2 zdaniach po polsku, konkretnie (co klient powiedział, na czym stoi sprawa). Zero wstępów.',
+          },
+          { role: 'user', content: transcript || `(brak transkrypcji, status połączenia: ${fallbackLabel})` },
+        ],
+      }),
     });
-    if (!aiRes.ok) {
-      const body = await aiRes.text();
-      throw new Error(`OpenAI ${aiRes.status}: ${body.slice(0, 300)}`);
+    if (!aiRes.ok) return transcript ? transcript.slice(0, 200) : fallbackLabel;
+    const body = await aiRes.json();
+    return body.choices?.[0]?.message?.content?.trim() || (transcript || fallbackLabel);
+  } catch {
+    return transcript ? transcript.slice(0, 200) : fallbackLabel;
+  }
+}
+
+function normalizePhoneDigits(v) {
+  return String(v || '').replace(/\D/g, '');
+}
+
+async function findLeadByPhone(supabase, phoneDigits) {
+  if (!phoneDigits) return null;
+  const { data, error } = await supabase
+    .from(LEADY_B2C_TABLE)
+    .select('*')
+    .eq('Phone number', Number(phoneDigits))
+    .limit(1);
+  if (error) throw error;
+  return data[0] || null;
+}
+
+const AUTOMATION_LOG_TABLE = 'Logi automatyzacji';
+
+async function logOperation(supabase, automatyzacja, status, szczegoly) {
+  // supabase-js NIE rzuca wyjątku dla typowych błędów zapytania (np. brak
+  // tabeli) — zwraca { error } bez throw. Trzeba sprawdzić jawnie, inaczej
+  // to try/catch nigdy się nie uruchomi i błąd przepadnie po cichu.
+  try {
+    const { error } = await supabase.from(AUTOMATION_LOG_TABLE).insert({ automatyzacja, status, szczegoly });
+    if (error) {
+      console.warn(`Nie zapisano logu automatyzacji "${automatyzacja}" (tabela istnieje?):`, error.message);
     }
-    const data = await aiRes.json();
-    res.json({ text: data.text || '' });
+  } catch (err) {
+    console.warn(`Nie zapisano logu automatyzacji "${automatyzacja}":`, err.message);
+  }
+}
+
+app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
+  const supabase = getClient();
+  try {
+    if (req.query.token !== process.env.ZADARMA_WEBHOOK_TOKEN) {
+      return res.status(403).json({ error: 'Nieprawidłowy token' });
+    }
+
+    const call = Array.isArray(req.body) ? req.body[0] : req.body;
+    if (!call) return res.status(400).json({ error: 'Puste zdarzenie' });
+
+    const ownNumber = normalizePhoneDigits(process.env.ZADARMA_OWN_NUMBER);
+    const candidates = [call.caller_id, call.called_did, call.dst]
+      .map(normalizePhoneDigits)
+      .filter((d) => d && d !== ownNumber);
+    const customerDigits = candidates[0] || '';
+
+    let lead = await findLeadByPhone(supabase, customerDigits);
+
+    const answered = Boolean(call.record_url);
+    let transcript = '';
+    if (answered) {
+      try {
+        const audioRes = await fetch(call.record_url);
+        const buffer = Buffer.from(await audioRes.arrayBuffer());
+        transcript = await transcribeAudioBuffer(buffer, 'audio/mpeg');
+      } catch (err) {
+        console.warn('Nie udało się pobrać/transkrybować nagrania:', err.message);
+      }
+    }
+
+    const label = answered ? 'answered' : 'no_answer';
+    const opis = await summarizeCall(transcript, label);
+    const statusBefore = lead ? lead['Deal stage'] : null;
+
+    const { error: insertErr } = await supabase.from(LOG_ZMIAN_TABLE).insert({
+      zrodlo: 'zadarma_webhook',
+      telefon: customerDigits || null,
+      status_przed: statusBefore,
+      status_po: statusBefore,
+      opis,
+      czas_trwania_s: Number(call.duration) || 0,
+      disposition: label,
+      pbx_call_id: call.pbx_call_id || null,
+    });
+    if (insertErr) console.error('Błąd zapisu Log zmian:', insertErr.message);
+
+    if (lead) {
+      const { error: updateErr } = await supabase
+        .from(LEADY_B2C_TABLE)
+        .update({
+          'Ilość telefonów': (Number(lead['Ilość telefonów']) || 0) + 1,
+          'Ostatni kontakt': call.callstart || null,
+          'Treść rozmowy': transcript || lead['Treść rozmowy'] || null,
+        })
+        .eq('Phone number', lead['Phone number']);
+      if (updateErr) console.error('Błąd update Leady B2C:', updateErr.message);
+    }
+
+    await logOperation(supabase, 'zadarma_webhook', 'ok', {
+      pbx_call_id: call.pbx_call_id,
+      telefon: customerDigits,
+      dopasowano_leada: Boolean(lead),
+      transkrypcja: Boolean(transcript),
+    });
+    res.json({ status: 'ok' });
+  } catch (err) {
+    await logOperation(supabase, 'zadarma_webhook', 'error', { message: err.message, body: req.body });
+    handleError(res, err, 502);
+  }
+});
+
+// Żywy widok "Nowe" — leady ze statusem Nowy z ostatnich 7 dni, czytane
+// bezpośrednio z Supabase "Leady B2C" (nie z raz-dziennie generowanej Umowy),
+// żeby świeży lead był widoczny w panelu natychmiast. Kolumna "Date" w tej
+// tabeli bywa zapisana w różnych formatach (długi angielski jak
+// "March 19, 2026", ISO, DD.MM.YYYY) — stąd parsowanie w JS zamiast filtra
+// SQL po dacie.
+const LEADY_B2C_TABLE = 'Leady B2C';
+const LOG_ZMIAN_TABLE = 'Log zmian';
+
+function parseLeadDate(value) {
+  if (!value) return null;
+  const asDate = new Date(value);
+  if (!Number.isNaN(asDate.getTime())) return asDate;
+  const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(String(value).trim());
+  if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  return null;
+}
+
+app.get('/api/leady/nowe', async (req, res) => {
+  try {
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from(LEADY_B2C_TABLE)
+      .select('*')
+      .eq('Deal stage', 'Nowy');
+    if (error) throw error;
+
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const rows = (data || [])
+      .map((row) => ({ row, date: parseLeadDate(row['Date']) }))
+      .filter(({ date }) => date && date.getTime() >= cutoff)
+      .sort((a, b) => b.date - a.date)
+      .map(({ row }) => ({
+        telefon: row['Phone number'] ? `+${row['Phone number']}` : '',
+        imie: row['Name'] || '',
+        email: row['Email'] || '',
+        status: row['Deal stage'] || '',
+        opis: row['Notes'] || '',
+        data_feedbacku: row['Data Feedbacku'] || '',
+        temperatura: row['Temperatura'] || '',
+        ostatni_kontakt: row['Ostatni kontakt'] || '',
+        ilosc_telefonow: row['Ilość telefonów'] || 0,
+        produkty: row['Produkty z wyceny'] || '',
+        ocena_ai: row['Ocena AI kontaktu'] || '',
+        link_formularz: row['Link do formularza'] || '',
+        data_wyceny: row['Data wysłania wyceny'] || '',
+        id_wyceny: row['ID Wyceny'] || '',
+        kwota: row['Kwota wyceny'] || 0,
+        zadzwonil_dzis: false,
+        zamkniete: 0,
+      }));
+    res.json(rows);
   } catch (err) {
     handleError(res, err, 502);
   }
