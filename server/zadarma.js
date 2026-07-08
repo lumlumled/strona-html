@@ -40,7 +40,12 @@ function sign(method, queryString, secret) {
 // webhooka niż ten, którego tu używamy. Endpoint /api/webhooks/zadarma
 // zabezpiecza się zamiast tego sekretnym tokenem w query stringu.
 
-async function callZadarma(method, params = {}) {
+// httpMethod: 'GET' (domyślnie, params w query stringu) albo 'POST'/'PUT'
+// (params w body jako application/x-www-form-urlencoded) — algorytm podpisu
+// jest identyczny dla obu, różni się tylko to, GDZIE params faktycznie lecą
+// (dokumentacja Zadarmy: paramsStr do podpisu zawsze pochodzi z tych samych,
+// posortowanych parametrów, niezależnie od metody HTTP).
+async function callZadarma(method, params = {}, httpMethod = 'GET') {
   const key = process.env.ZADARMA_API_KEY;
   const secret = process.env.ZADARMA_API_SECRET;
   if (!key || !secret) throw new Error('Brak ZADARMA_API_KEY/ZADARMA_API_SECRET w konfiguracji serwera');
@@ -48,8 +53,18 @@ async function callZadarma(method, params = {}) {
   const entries = sortEntries(params);
   const queryString = buildQueryString(entries);
   const signature = sign(method, queryString, secret);
-  const url = API_BASE + method + (queryString ? `?${queryString}` : '');
-  const res = await fetch(url, { headers: { Authorization: `${key}:${signature}` } });
+  const headers = { Authorization: `${key}:${signature}` };
+
+  let url = API_BASE + method;
+  const options = { method: httpMethod, headers };
+  if (httpMethod === 'GET') {
+    url += queryString ? `?${queryString}` : '';
+  } else {
+    headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    options.body = queryString;
+  }
+
+  const res = await fetch(url, options);
   const body = await res.json();
   if (!res.ok || body.status === 'error') {
     throw new Error(`Zadarma ${method}: ${body.message || res.status}`);

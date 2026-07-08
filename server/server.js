@@ -475,6 +475,22 @@ async function findLeadByPhone(supabase, phoneDigits) {
   return data[0] || null;
 }
 
+// Wyceny B2C nie ma kolumn do śledzenia kontaktu (Ilość telefonów/Ostatni
+// kontakt/Treść rozmowy) jak Leady B2C — celowo, to czysty odzwierciedlenie
+// arkusza synchronizowane przez Make. To dopasowanie służy WYŁĄCZNIE do
+// oznaczenia w Log zmian, że telefon należy do wyceny, a nie do leada —
+// żadnego zapisu zwrotnego do tej tabeli.
+async function findWycenaByPhone(supabase, phoneDigits) {
+  if (!phoneDigits) return null;
+  const { data, error } = await supabase
+    .from(WYCENY_B2C_TABLE)
+    .select('*')
+    .eq('Telefon', Number(phoneDigits))
+    .limit(1);
+  if (error) throw error;
+  return data[0] || null;
+}
+
 const AUTOMATION_LOG_TABLE = 'Logi automatyzacji';
 
 async function logOperation(supabase, automatyzacja, status, szczegoly) {
@@ -508,6 +524,9 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     const customerDigits = candidates[0] || '';
 
     let lead = await findLeadByPhone(supabase, customerDigits);
+    // Wyceny B2C sprawdzane tylko gdy telefon nie pasuje do żadnego leada —
+    // Leady B2C ma pierwszeństwo, bo to tam dzieje się faktyczna obsługa CRM.
+    const wycena = lead ? null : await findWycenaByPhone(supabase, customerDigits);
 
     const answered = Boolean(call.record_url);
     let transcript = '';
@@ -523,7 +542,7 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
 
     const label = answered ? 'answered' : 'no_answer';
     const opis = await summarizeCall(transcript, label);
-    const statusBefore = lead ? lead['Deal stage'] : null;
+    const statusBefore = lead ? lead['Deal stage'] : wycena ? wycena['Status'] : null;
 
     const { error: insertErr } = await supabase.from(LOG_ZMIAN_TABLE).insert({
       zrodlo: 'zadarma_webhook',
@@ -534,6 +553,8 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       czas_trwania_s: Number(call.duration) || 0,
       disposition: label,
       pbx_call_id: call.pbx_call_id || null,
+      dopasowano_tabela: lead ? LEADY_B2C_TABLE : wycena ? WYCENY_B2C_TABLE : null,
+      dopasowano_id: lead ? String(lead['ID'] ?? '') : wycena ? wycena['ID'] : null,
     });
     if (insertErr) console.error('Błąd zapisu Log zmian:', insertErr.message);
 
@@ -553,6 +574,7 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       pbx_call_id: call.pbx_call_id,
       telefon: customerDigits,
       dopasowano_leada: Boolean(lead),
+      dopasowano_wycene: Boolean(wycena),
       transkrypcja: Boolean(transcript),
     });
     res.json({ status: 'ok' });
@@ -570,6 +592,7 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
 // SQL po dacie.
 const LEADY_B2C_TABLE = 'Leady B2C';
 const LOG_ZMIAN_TABLE = 'Log zmian';
+const WYCENY_B2C_TABLE = 'Wyceny B2C';
 
 function parseLeadDate(value) {
   if (!value) return null;
