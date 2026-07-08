@@ -40,7 +40,7 @@ curl http://localhost:3001/api/tables/nazwa_twojej_tabeli
 
 ## 4. Frontend
 
-Otwórz `index.html` w przeglądarce, wpisz nazwę tabeli (dokładnie taką, jak w Supabase Table Editor) i kliknij **Załaduj**. Aplikacja pokaże wiersze, pozwoli je edytować/usuwać oraz dodać nowe.
+Wejdź na `http://localhost:3001/` w przeglądarce (serwer sam serwuje stronę z pliku `app.html` — nie otwiera się go bezpośrednio) — poprosi o hasło (`SITE_PASSWORD` z `.env`), a po zalogowaniu pokaże dane z tabeli wskazanej na sztywno w kodzie `app.html`.
 
 Uwaga: backend zakłada, że każda tabela ma kolumnę `id` jako klucz główny (standard w Supabase) — jest ona używana do edycji i usuwania konkretnego wiersza.
 

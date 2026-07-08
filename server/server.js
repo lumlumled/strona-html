@@ -84,13 +84,20 @@ app.use((req, res, next) => {
 });
 
 // Bez express.static — na Vercelu jest ignorowany (statyki trzeba serwować
-// z public/**, a to zepsułoby bramkę hasła dla index.html). sendFile działa
+// z public/**, a to zepsułoby bramkę hasła dla strony). sendFile działa
 // wszędzie tak samo, więc zamiast tego jest zwykły route.
+//
+// Plik nazywa się app.html, NIE index.html: Vercel sprawdza filesystem
+// PRZED rewrites (potwierdzone w ich dokumentacji — "precedence is given
+// to the filesystem prior to rewrites being applied"). Gdyby leżał w
+// katalogu głównym jako index.html, Vercel serwowałby go bezpośrednio dla
+// "/" jako statyk, z pominięciem naszej funkcji i całej bramki hasła —
+// dokładnie to się działo, dopóki plik nie został przemianowany.
 app.get('/assets/:file', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'assets', req.params.file));
 });
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'index.html'), { cacheControl: false });
+  res.sendFile(path.join(__dirname, '..', 'app.html'), { cacheControl: false });
 });
 
 function handleError(res, err, fallbackStatus = 400) {
