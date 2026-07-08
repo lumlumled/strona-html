@@ -11,6 +11,7 @@
     /* Paleta i typografia dopasowane do stylu lumlum.co: monochromatyczna
        czerń/biel, font Inter, mocno zaokrąglone rogi, pigułkowe znaczniki. */
     :root {
+      color-scheme: light dark;
       --surface-1: #ffffff;
       --page: #f5f5f4;
       --text-primary: #111111;
@@ -21,7 +22,7 @@
       --accent-contrast: #ffffff;
       --accent-soft: #ececea;
       --good: #0ca30c;
-      --feedback-future: #b5433f;
+      --feedback-overdue: #b5433f;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -36,7 +37,7 @@
         --accent-contrast: #0a0a0a;
         --accent-soft: #262626;
         --good: #16c116;
-        --feedback-future: #e08585;
+        --feedback-overdue: #e08585;
       }
     }
 
@@ -448,6 +449,41 @@
       color: var(--text-secondary);
       white-space: nowrap;
       flex: 0 0 auto;
+      text-decoration: none;
+    }
+
+    .lead summary .name-phone .phone:hover {
+      text-decoration: underline;
+    }
+
+    .copy-btn {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.3rem;
+      height: 1.3rem;
+      padding: 0;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+
+    .copy-btn:hover {
+      background: var(--accent-soft);
+      color: var(--text-primary);
+    }
+
+    .copy-btn.copied {
+      color: var(--good);
+    }
+
+    .field .value.with-copy {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
     }
 
     .lead summary .tags {
@@ -458,13 +494,17 @@
     }
 
     .lead summary .status-tag {
+      font: inherit;
       font-size: 0.76rem;
+      font-weight: 600;
       color: var(--accent);
       background: var(--accent-soft);
-      padding: 0.1rem 0.55rem;
+      border: none;
+      padding: 0.1rem 1.3rem 0.1rem 0.55rem;
       border-radius: 999px;
       white-space: nowrap;
       flex: 0 0 auto;
+      cursor: pointer;
     }
 
     .lead summary .feedback-date {
@@ -478,8 +518,23 @@
       color: inherit;
     }
 
-    .lead summary .feedback-date.is-future {
-      color: var(--feedback-future);
+    .lead summary .feedback-date.is-overdue {
+      color: var(--feedback-overdue);
+    }
+
+    .lead summary .feedback-date-input {
+      border: none;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      font-size: inherit;
+      padding: 0;
+      cursor: pointer;
+    }
+
+    .lead summary .feedback-date-input::-webkit-calendar-picker-indicator {
+      cursor: pointer;
+      opacity: 0.65;
     }
 
     .lead summary .form-link {
@@ -619,6 +674,16 @@
     }
 
     @media (max-width: 640px) {
+      .wrap {
+        width: 100%;
+        max-width: 100%;
+      }
+
+      .composer-inner {
+        width: 100%;
+        max-width: 100%;
+      }
+
       .stat-grid {
         grid-template-columns: repeat(3, 1fr);
         gap: 1.2rem 0.5rem;
@@ -684,7 +749,7 @@
       z-index: 60;
       display: none;
       justify-content: center;
-      background: var(--surface-1);
+      background: var(--accent-soft);
       border-top: 1px solid var(--border);
       padding: 0.7rem 0 calc(0.7rem + env(safe-area-inset-bottom));
     }
@@ -725,38 +790,73 @@
     .composer-controls {
       display: flex;
       gap: 0.5rem;
-      align-items: flex-end;
+      align-items: center;
+    }
+
+    /* Jedna zaokrąglona "kapsuła" mieszcząca pole tekstowe + mikrofon + wyślij,
+       zamiast osobnego pola na białym/szarym tle obok pigułkowych przycisków. */
+    .composer-box {
+      flex: 1 1 auto;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 0.35rem 0.35rem 0.35rem 0.9rem;
+    }
+
+    .composer-box:focus-within {
+      border-color: var(--text-muted);
     }
 
     .composer textarea {
       flex: 1 1 auto;
       resize: none;
-      min-height: 2.6rem;
+      min-height: 1.5rem;
       max-height: 8rem;
-      padding: 0.65rem 0.9rem;
-      border-radius: 14px;
-      border: 1px solid var(--border);
-      background: var(--page);
+      padding: 0.5rem 0;
+      border: none;
+      background: transparent;
       color: var(--text-primary);
       font: inherit;
       font-size: 0.95rem;
       line-height: 1.4;
+      /* Safari renderuje natywne tło pod textarea niezależnie od background
+         powyżej, dopóki appearance nie jest wyłączone — inaczej pole wygląda
+         na białe mimo ciemnego tła karty. */
+      appearance: none;
+      -webkit-appearance: none;
+      scrollbar-width: thin;
+      scrollbar-color: var(--text-muted) transparent;
     }
 
     .composer textarea:focus {
       outline: none;
-      border-color: var(--text-muted);
+    }
+
+    .composer textarea::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .composer textarea::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .composer textarea::-webkit-scrollbar-thumb {
+      background: var(--text-muted);
+      border-radius: 999px;
     }
 
     .composer-btn {
       flex: 0 0 auto;
-      height: 2.6rem;
-      min-width: 2.6rem;
-      padding: 0 0.85rem;
+      height: 2.2rem;
+      min-width: 2.2rem;
+      padding: 0 0.75rem;
       border-radius: 999px;
-      border: 1px solid var(--border);
-      background: var(--surface-1);
-      color: var(--text-primary);
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
       font: inherit;
       font-size: 0.95rem;
       display: flex;
@@ -768,6 +868,7 @@
 
     .composer-btn:hover:not(:disabled) {
       background: var(--accent-soft);
+      color: var(--text-primary);
     }
 
     .composer-btn:disabled {
@@ -778,13 +879,21 @@
     .composer-btn.send {
       background: var(--accent);
       color: var(--accent-contrast);
-      border-color: var(--accent);
       font-weight: 600;
     }
 
+    .composer-btn.send:hover:not(:disabled) {
+      background: var(--accent);
+      opacity: 0.88;
+    }
+
     .composer-btn.approve {
+      flex: 0 0 auto;
+      height: 2.6rem;
+      min-width: 2.6rem;
+      border: 1px solid var(--border);
+      background: var(--surface-1);
       color: var(--good);
-      border-color: var(--good);
       font-weight: 700;
       font-size: 1.1rem;
     }
@@ -798,6 +907,25 @@
 
     @keyframes mic-pulse {
       50% { opacity: 0.65; }
+    }
+
+    .composer-btn.send {
+      gap: 0.45rem;
+    }
+
+    .btn-spinner {
+      width: 13px;
+      height: 13px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      border: 2px solid currentColor;
+      border-top-color: transparent;
+      opacity: 0.85;
+      animation: btn-spin 0.7s linear infinite;
+    }
+
+    @keyframes btn-spin {
+      to { transform: rotate(360deg); }
     }
   </style>
 </head>
@@ -857,9 +985,16 @@
     <div class="composer-inner">
       <div class="composer-msg" id="composer-msg"></div>
       <div class="composer-controls">
-        <textarea id="composer-input" rows="1" placeholder="Napisz lub podyktuj polecenie, np. „case 3, zmień status na Sprzedane”…"></textarea>
-        <button class="composer-btn mic" id="composer-mic" type="button" title="Dyktuj (kliknij, mów, kliknij ponownie)">🎤</button>
-        <button class="composer-btn send" id="composer-send" type="button" title="Wyślij polecenie do AI">Wyślij</button>
+        <div class="composer-box">
+          <textarea id="composer-input" rows="1" placeholder="Napisz lub podyktuj polecenie, np. „case 3, zmień status na Sprzedane”…"></textarea>
+          <button class="composer-btn mic" id="composer-mic" type="button" title="Dyktuj (kliknij, mów, kliknij ponownie)">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+              <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/>
+              <path d="M19 11a1 1 0 0 0-2 0 5 5 0 0 1-10 0 1 1 0 0 0-2 0 7 7 0 0 0 6 6.92V20H9a1 1 0 0 0 0 2h6a1 1 0 0 0 0-2h-2v-2.08A7 7 0 0 0 19 11z"/>
+            </svg>
+          </button>
+          <button class="composer-btn send" id="composer-send" type="button" title="Wyślij polecenie do AI">Wyślij</button>
+        </div>
         <button class="composer-btn approve" id="composer-approve" type="button" title="Zatwierdź wersję finalną">✓</button>
       </div>
     </div>
@@ -958,6 +1093,70 @@
 
     const KATEGORIA_ORDER = ['nowe', 'wyceny_z_feedbackiem', 'inne_z_feedbackiem', 'nieodebrane', 'wyceny_historyczne', 'dodane_recznie'];
 
+    // Kolory statusów odwzorowane z CRM-u (Google Sheets) — przybliżone,
+    // nie muszą być piksel w piksel identyczne.
+    const STATUS_COLORS = {
+      'błędne dane': '#e4e3e0',
+      'lekko zainteresowany': '#cfceca',
+      'nie odebrał': '#1a56db',
+      'nowy': '#a8c8f0',
+      'po pierwszym tel': '#f5b995',
+      'po pierwszym telefonie': '#f5b995',
+      'przyszłościowy': '#f0b23d',
+      'sprzedane': '#a9d9a0',
+      'stracony': '#7a1220',
+      'wycena wysłana': '#b13fc0',
+      'zadzwonić jeszcze raz': '#f0993d',
+    };
+
+    function contrastTextColor(hex) {
+      const c = hex.replace('#', '');
+      const r = parseInt(c.substring(0, 2), 16);
+      const g = parseInt(c.substring(2, 4), 16);
+      const b = parseInt(c.substring(4, 6), 16);
+      const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      return luminance > 0.6 ? '#111111' : '#ffffff';
+    }
+
+    function applyStatusColor(el, status) {
+      const key = status.trim().toLowerCase();
+      const matchKey = STATUS_COLORS[key] ? key : Object.keys(STATUS_COLORS).find((k) => key.startsWith(k));
+      const bg = matchKey && STATUS_COLORS[matchKey];
+      if (!bg) return;
+      el.style.background = bg;
+      el.style.color = contrastTextColor(bg);
+    }
+
+    // Lista do ręcznej zmiany statusu (dropdown) — te same statusy co w CRM-ie.
+    const STATUS_OPTIONS = [
+      'Błędne dane',
+      'Lekko zainteresowany',
+      'Nie odebrał',
+      'Nowy',
+      'Po pierwszym telefonie',
+      'Przyszłościowy',
+      'Sprzedane',
+      'Stracony',
+      'Wycena wysłana',
+      'Zadzwonić jeszcze raz',
+    ];
+
+    // Ręczna edycja pojedynczego pola case'a (status / data feedbacku) —
+    // niezależna od trybu draft/poprawka/final, zapisuje się natychmiast.
+    async function saveLeadField(lp, field, value) {
+      if (!currentRow || !activeState) throw new Error('Brak aktywnego dokumentu');
+      const body = await postJson(`${API_BASE}/api/lead-field`, {
+        doc: activeDoc,
+        dataValue: currentRow['Data'],
+        state: activeState,
+        lp,
+        field,
+        value,
+      });
+      const column = DOC_FIELDS[activeDoc][activeState];
+      if (column) currentRow[column] = body.json;
+    }
+
     function setStatus(message) {
       document.getElementById('status').textContent = message || '';
     }
@@ -1049,7 +1248,7 @@
       { key: 'ostatni_kontakt', label: 'Ostatni kontakt' },
       { key: 'ilosc_telefonow', label: 'Ilość telefonów' },
       { key: 'temperatura', label: 'Temperatura' },
-      { key: 'email', label: 'Email', wide: true, nowrap: true },
+      { key: 'email', label: 'Email', wide: true, nowrap: true, copy: true },
       { key: 'ocena_ai', label: 'Ocena AI', wide: true },
     ];
 
@@ -1068,12 +1267,25 @@
       return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
     }
 
-    function isFutureDate(str) {
+    function isOverdueDate(str) {
       const d = parsePlDate(str);
       if (!d) return false;
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      return d.getTime() > today.getTime();
+      return d.getTime() < today.getTime();
+    }
+
+    function toIsoDate(str) {
+      const d = parsePlDate(str);
+      if (!d) return '';
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${d.getFullYear()}-${mm}-${dd}`;
+    }
+
+    function fromIsoDate(iso) {
+      const [y, m, d] = iso.split('-');
+      return `${d}.${m}.${y}`;
     }
 
     function cleanFormularzLink(url) {
@@ -1104,6 +1316,23 @@
       });
     }
 
+    function makeCopyButton(value) {
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'copy-btn';
+      copyBtn.type = 'button';
+      copyBtn.title = 'Kopiuj';
+      copyBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+      copyBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        navigator.clipboard.writeText(value).then(() => {
+          copyBtn.classList.add('copied');
+          setTimeout(() => copyBtn.classList.remove('copied'), 1200);
+        });
+      });
+      return copyBtn;
+    }
+
     function fieldValueNode(spec, raw) {
       if (spec.link) {
         if (!raw) return document.createTextNode('—');
@@ -1117,6 +1346,12 @@
       if (spec.bool) return document.createTextNode(raw ? 'Tak' : 'Nie');
       if (spec.currency) return document.createTextNode(raw || raw === 0 ? fmtKwota(raw) || '0 zł' : '—');
       if (raw === undefined || raw === null || raw === '') return document.createTextNode('—');
+      if (spec.copy) {
+        const wrap = document.createDocumentFragment();
+        wrap.appendChild(document.createTextNode(String(raw)));
+        wrap.appendChild(makeCopyButton(String(raw)));
+        return wrap;
+      }
       return document.createTextNode(String(raw));
     }
 
@@ -1163,10 +1398,14 @@
         sep.textContent = '–';
         namePhone.appendChild(sep);
 
-        const phone = document.createElement('span');
+        const phone = document.createElement('a');
         phone.className = 'phone';
+        phone.href = `tel:${c.telefon.replace(/\s+/g, '')}`;
         phone.textContent = c.telefon;
+        phone.addEventListener('click', (e) => e.stopPropagation());
         namePhone.appendChild(phone);
+
+        namePhone.appendChild(makeCopyButton(c.telefon));
       }
 
       summary.appendChild(namePhone);
@@ -1176,19 +1415,60 @@
 
       if (c.data_feedbacku) {
         const feedbackDate = document.createElement('span');
-        feedbackDate.className = 'feedback-date' + (isFutureDate(c.data_feedbacku) ? ' is-future' : '');
+        feedbackDate.className = 'feedback-date' + (isOverdueDate(c.data_feedbacku) ? ' is-overdue' : '');
         const label = document.createElement('span');
         label.className = 'label';
         label.textContent = 'Data feedbacku: ';
         feedbackDate.appendChild(label);
-        feedbackDate.appendChild(document.createTextNode(c.data_feedbacku));
+
+        const dateInput = document.createElement('input');
+        dateInput.type = 'date';
+        dateInput.className = 'feedback-date-input';
+        dateInput.value = toIsoDate(c.data_feedbacku);
+        dateInput.addEventListener('click', (e) => e.stopPropagation());
+        dateInput.addEventListener('change', async () => {
+          if (!dateInput.value) return;
+          const plDate = fromIsoDate(dateInput.value);
+          const previous = c.data_feedbacku;
+          try {
+            await saveLeadField(c.lp, 'data_feedbacku', plDate);
+            c.data_feedbacku = plDate;
+            feedbackDate.classList.toggle('is-overdue', isOverdueDate(plDate));
+          } catch (err) {
+            dateInput.value = toIsoDate(previous);
+            alert(`Nie zapisano daty feedbacku: ${err.message}`);
+          }
+        });
+        feedbackDate.appendChild(dateInput);
         tags.appendChild(feedbackDate);
       }
 
       if (c.status) {
-        const tag = document.createElement('span');
+        const tag = document.createElement('select');
         tag.className = 'status-tag';
-        tag.textContent = c.status;
+        const options = STATUS_OPTIONS.includes(c.status) ? STATUS_OPTIONS : [...STATUS_OPTIONS, c.status];
+        options.forEach((opt) => {
+          const optionEl = document.createElement('option');
+          optionEl.value = opt;
+          optionEl.textContent = opt;
+          tag.appendChild(optionEl);
+        });
+        tag.value = c.status;
+        applyStatusColor(tag, c.status);
+        tag.addEventListener('click', (e) => e.stopPropagation());
+        tag.addEventListener('change', async () => {
+          const previous = c.status;
+          const newStatus = tag.value;
+          try {
+            await saveLeadField(c.lp, 'status', newStatus);
+            c.status = newStatus;
+            applyStatusColor(tag, newStatus);
+          } catch (err) {
+            tag.value = previous;
+            applyStatusColor(tag, previous);
+            alert(`Nie zapisano statusu: ${err.message}`);
+          }
+        });
         tags.appendChild(tag);
       }
 
@@ -1239,7 +1519,7 @@
           label.className = 'label';
           label.textContent = spec.label;
           const value = document.createElement('div');
-          value.className = 'value' + (spec.nowrap ? ' nowrap' : '');
+          value.className = 'value' + (spec.nowrap ? ' nowrap' : '') + (spec.copy && c[spec.key] ? ' with-copy' : '');
           value.appendChild(fieldValueNode(spec, c[spec.key]));
           field.appendChild(label);
           field.appendChild(value);
@@ -1470,7 +1750,17 @@
     function setComposerBusy(busy, sendLabel) {
       composerBusy = busy;
       [composerInput, micBtn, sendBtn, approveBtn].forEach((el) => { el.disabled = busy; });
-      sendBtn.textContent = busy && sendLabel ? sendLabel : 'Wyślij';
+      if (busy && sendLabel) {
+        sendBtn.innerHTML = '';
+        const spinner = document.createElement('span');
+        spinner.className = 'btn-spinner';
+        const label = document.createElement('span');
+        label.textContent = sendLabel;
+        sendBtn.appendChild(spinner);
+        sendBtn.appendChild(label);
+      } else {
+        sendBtn.textContent = 'Wyślij';
+      }
     }
 
     function autoGrowInput() {
@@ -1500,7 +1790,7 @@
     sendBtn.addEventListener('click', async () => {
       const instruction = composerInput.value.trim();
       if (!instruction || !currentRow || composerBusy) return;
-      setComposerBusy(true, 'AI pracuje…');
+      setComposerBusy(true, 'AI mini');
       setComposerMsg('');
       try {
         const body = await postJson(`${API_BASE}/api/ai-edit`, {
@@ -1589,7 +1879,7 @@
         });
         mediaRecorder.start();
         micBtn.classList.add('recording');
-        setComposerMsg('Nagrywam — kliknij 🎤 ponownie, żeby zakończyć.');
+        setComposerMsg('Nagrywam — kliknij ikonę mikrofonu ponownie, żeby zakończyć.');
       } catch (err) {
         setComposerMsg(`Brak dostępu do mikrofonu: ${err.message}`, true);
       }

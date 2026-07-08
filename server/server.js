@@ -170,6 +170,9 @@ Jeśli polecenie dotyczy case'a który jest w \`priorytet_dzis\` ORAZ w swojej k
 "zmień komentarz dzienny na [tekst]" → zastąp pole \`komentarz_dzienny\` na poziomie głównym
 "dopisz do komentarza dziennego [tekst]" → dopisz zdanie na końcu
 
+**Dodanie komentarza do case'a:**
+"case 19, dodaj komentarz: [tekst]" / "dodaj komentarz do case'u 19, [tekst]" → wstaw na sam początek pola \`opis\` tego case'a fragment w formacie \`Komentarz od nas - [tekst] | \` (myślnik po "nas", spacja, pipe na końcu ze spacjami dookoła), a zaraz po nim dotychczasową treść \`opis\` bez zmian. Nie usuwaj i nie nadpisuj reszty opisu.
+
 **Oznaczenie na jutro:**
 "case 3 na jutro" → dodaj pole \`na_jutro: true\` do obiektu case'a
 
@@ -311,6 +314,56 @@ app.post('/api/approve', async (req, res) => {
 
     await updateRowByData(supabase, dataValue, { [fields.final]: final });
     res.json({ json: final });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// Ręczna edycja pojedynczego pola case'a (status / data feedbacku) z listy —
+// bez AI, zapisuje się od razu do tej wersji dokumentu, którą aktualnie widać
+// (draft / poprawka / final), niezależnie od przepływu draft→poprawka→final.
+const LEAD_FIELD_ALLOWLIST = ['status', 'data_feedbacku'];
+
+function updateLeadInJson(json, lp, field, value) {
+  let updated = false;
+  const applyToArray = (arr) => {
+    if (!Array.isArray(arr)) return;
+    arr.forEach((item) => {
+      if (item && Number(item.lp) === Number(lp)) {
+        item[field] = value;
+        updated = true;
+      }
+    });
+  };
+  applyToArray(json.priorytet_dzis);
+  if (json.kategorie && typeof json.kategorie === 'object') {
+    Object.values(json.kategorie).forEach(applyToArray);
+  }
+  return updated;
+}
+
+app.post('/api/lead-field', async (req, res) => {
+  try {
+    const { doc, dataValue, state, lp, field, value } = req.body || {};
+    const fields = DOCS[doc];
+    if (!fields) return res.status(400).json({ error: 'Nieznany typ dokumentu' });
+    if (!LEAD_FIELD_ALLOWLIST.includes(field)) return res.status(400).json({ error: 'Niedozwolone pole' });
+    const column = fields[state];
+    if (!column) return res.status(400).json({ error: 'Nieznany stan dokumentu' });
+    if (!dataValue || lp === undefined || lp === null) return res.status(400).json({ error: 'Brak daty lub numeru LP' });
+
+    const supabase = getClient();
+    const row = await getRowByData(supabase, dataValue);
+    if (!row) return res.status(404).json({ error: `Brak wiersza dla daty ${dataValue}` });
+
+    const json = row[column];
+    if (!json) return res.status(404).json({ error: 'Brak dokumentu do edycji' });
+
+    const updated = updateLeadInJson(json, lp, field, value);
+    if (!updated) return res.status(404).json({ error: `Nie znaleziono case'a LP ${lp}` });
+
+    await updateRowByData(supabase, dataValue, { [column]: json });
+    res.json({ json });
   } catch (err) {
     handleError(res, err, 502);
   }
