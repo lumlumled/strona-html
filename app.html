@@ -520,6 +520,18 @@
     .status-wrap {
       position: relative;
       flex: 0 0 auto;
+      /* Kotwica prawej grupy (data feedbacku / status / link do formularza)
+         powtórzona tu, bo data feedbacku bywa nieobecna — bez własnej kotwicy
+         status i link wylądowałyby zaraz za telefonem zamiast przy prawej
+         krawędzi. Kilka auto-marginesów z rzędu nie szkodzi: działa tylko
+         pierwszy obecny (patrz .feedback-date i .form-link niżej). */
+      margin-left: auto;
+    }
+
+    /* Żywy widok "Nowe" renderuje status jako gołą pigułkę bez .status-wrap
+       (nie da się jej edytować) — potrzebuje tej samej kotwicy z osobna. */
+    .lead summary > .status-tag {
+      margin-left: auto;
     }
 
     .lead summary .status-tag {
@@ -611,6 +623,12 @@
          miejscu zamiast lgnąć tuż za numerem telefonu. Na mobile (media
          query niżej) zerujemy to, bo tam data ma stać tuż przy telefonie. */
       margin-left: auto;
+      /* Label + wartość (input lub zwykły tekst w widoku "Nowe") mają różne
+         własne metryki linii — inline-flex + center trzyma je w jednej,
+         wspólnej osi z sąsiednimi pigułkami (status, link), zamiast polegać
+         na wyrównaniu bazowym tekstu. */
+      display: inline-flex;
+      align-items: center;
     }
 
     .lead summary .feedback-date .label {
@@ -649,6 +667,9 @@
       align-items: center;
       justify-content: center;
       font-size: 0.85rem;
+      /* Ostatnia linia obrony kotwiczenia prawej grupy do krawędzi — na
+         wypadek leada bez daty feedbacku i bez statusu naraz. */
+      margin-left: auto;
     }
 
     .lead summary .form-link.form-link--empty {
