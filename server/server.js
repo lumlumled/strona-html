@@ -529,8 +529,15 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     const wycena = lead ? null : await findWycenaByPhone(supabase, customerDigits);
 
     const answered = Boolean(call.record_url);
-    let transcript = '';
-    if (answered) {
+    // Make ma już własny krok transkrypcji (fallback, zostaje u niego) — jeśli
+    // dołączy gotowy tekst w polu `transcript`, używamy go zamiast drugi raz
+    // ściągać nagranie i płacić za Whisper. Własna transkrypcja tylko gdy tego
+    // pola brak (webhook prosto z Zadarmy, bez pośrednictwa Make). Pole
+    // przychodzi zakodowane base64 — surowa transkrypcja mowy potrafi zawierać
+    // znaki nowej linii/cudzysłowy, które łamałyby Make'owi ręcznie pisany
+    // "JSON string" w body (błąd "Bad control character in string literal").
+    let transcript = call.transcript ? Buffer.from(call.transcript, 'base64').toString('utf8') : '';
+    if (answered && !transcript) {
       try {
         const audioRes = await fetch(call.record_url);
         const buffer = Buffer.from(await audioRes.arrayBuffer());
