@@ -559,9 +559,12 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       : statusBefore;
     const opisBefore = lead ? lead['Notes'] : wycena ? wycena['Komentarz'] : null;
     const feedbackBefore = lead ? lead['Data Feedbacku'] : wycena ? wycena['Data Feedbacku'] : null;
-    // called_did = numer, na który zadzwonił klient (przychodzące); dst = numer,
-    // który wykręcił handlowiec (wychodzące) — patrz komentarz o kształcie payloadu wyżej.
-    const kierunek = call.called_did ? 'przychodzące' : call.dst ? 'wychodzące' : null;
+    // Wnioskowanie z called_did/dst zawodzi, gdy pośrednik (Make) mapuje oba
+    // pola naraz albo pomyli szablon gałęzi — most przez Make zna kierunek na
+    // pewno (osobny "Watch" per typ połączenia), więc jawne pole `kierunek` w
+    // payloadzie ma pierwszeństwo. called_did/dst zostaje jako fallback dla
+    // webhooka prosto z Zadarmy (bez pośrednictwa Make, tam nie ma tej dwuznaczności).
+    const kierunek = call.kierunek || (call.called_did ? 'przychodzące' : call.dst ? 'wychodzące' : null);
 
     // Telefon bez dopasowania w Leady B2C/Wyceny B2C — bez tego rozmowa
     // zostawałaby tylko w Log zmian, niewidoczna w panelu i "gubiona" przez
@@ -611,7 +614,10 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       data_feedbacku_po: feedbackBefore,
       kierunek,
       transkrypcja: transcript || null,
-      handlowiec: process.env.DEFAULT_HANDLOWIEC || null,
+      // `pracownik` w payloadzie (wpisany ręcznie w Make, per scenariusz/osoba)
+      // ma pierwszeństwo nad DEFAULT_HANDLOWIEC — ten drugi zostaje jako
+      // fallback dla webhooka prosto z Zadarmy, zanim dojdzie SIP-lookup.
+      handlowiec: call.pracownik || process.env.DEFAULT_HANDLOWIEC || null,
       czas_trwania_s: Number(call.duration) || 0,
       disposition: label,
       pbx_call_id: call.pbx_call_id || null,
