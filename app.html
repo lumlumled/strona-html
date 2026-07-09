@@ -296,6 +296,100 @@
       padding: 0.75rem 0.95rem;
     }
 
+    /* Podsumowanie dnia: jeden punkt = jeden bąbelek, kolor krawędzi + ikona
+       sygnalizują typ (nigdy sam kolor — patrz ikona tekstowa w JS). */
+    .komentarz-bubble--punkt {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.55rem;
+      border-left: 3px solid var(--border);
+    }
+
+    .komentarz-bubble--dobre {
+      border-left-color: var(--good);
+    }
+
+    .komentarz-bubble--problem {
+      border-left-color: var(--feedback-overdue);
+    }
+
+    .punkt-icon {
+      flex: 0 0 auto;
+      font-weight: 700;
+      line-height: 1.5;
+    }
+
+    .komentarz-bubble--dobre .punkt-icon {
+      color: var(--good);
+    }
+
+    .komentarz-bubble--problem .punkt-icon {
+      color: var(--feedback-overdue);
+    }
+
+    .komentarz-bubble--neutralne .punkt-icon {
+      color: var(--text-muted);
+    }
+
+    /* Segmentowany pasek (Realizacja planu / Priorytety) — zamiast suchych
+       liczb w kafelkach, część-do-całości widać na pierwszy rzut oka. */
+    .seg-bar {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .seg-bar-track {
+      display: flex;
+      width: 100%;
+      height: 10px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: var(--accent-soft);
+      gap: 2px;
+    }
+
+    .seg-bar-fill {
+      height: 100%;
+    }
+
+    .seg-bar-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.9rem;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
+    .seg-bar-legend .dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 0.35rem;
+      vertical-align: middle;
+    }
+
+    .seg-bar-legend strong {
+      color: var(--text-primary);
+    }
+
+    .stat-tile.stat-tile--win .value {
+      color: var(--good);
+    }
+
+    .seg-bar-heading-wrap {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .seg-bar-heading {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
     .card.zmiany {
       border-left: 3px solid var(--good);
     }
@@ -546,6 +640,15 @@
 
     .lead summary .contact-row .phone:hover {
       text-decoration: underline;
+    }
+
+    .na-jutro-dot {
+      flex: 0 0 auto;
+      width: 6px;
+      height: 6px;
+      margin-left: 2px;
+      border-radius: 50%;
+      background: #e8b400;
     }
 
     .copy-btn {
@@ -1446,12 +1549,13 @@
     </section>
 
     <section class="card comment" id="komentarz-card" style="display:none;">
-      <h2>Komentarz dzienny</h2>
+      <h2 id="komentarz-title">Komentarz dzienny</h2>
       <div class="komentarz-list" id="komentarz-list"></div>
     </section>
 
     <section class="card" id="plan-card" style="display:none;">
       <h2 id="plan-title">Plan dnia</h2>
+      <div id="plan-segbar" style="display:none; margin-bottom: 1rem;"></div>
       <div class="stat-grid" id="plan-grid"></div>
     </section>
 
@@ -1925,12 +2029,19 @@
       wyslane_wyceny: 'Wysłane wyceny',
       nieodebrane: 'Nieodebrane',
       przelozone_na_jutro: 'Przełożone na jutro',
+      priorytet_zamkniete: 'Priorytety zamknięte',
+      priorytet_niezamkniete: 'Priorytety niezamknięte',
     };
 
     function humanizeKey(key) {
       const s = String(key).replace(/_/g, ' ');
       return s.charAt(0).toUpperCase() + s.slice(1);
     }
+
+    // Kafelki, które podświetlamy na zielono, gdy > 0 — to "dobre wieści"
+    // dnia (sprzedaż, wysłana wycena), mają rzucać się w oczy zamiast siedzieć
+    // wizualnie tak samo jak reszta liczników.
+    const WIN_PLAN_KEYS = ['zakupione_dzis', 'wyslane_wyceny'];
 
     function renderPlan(plan) {
       if (!plan) return;
@@ -1940,10 +2051,27 @@
       const grid = document.getElementById('plan-grid');
       grid.innerHTML = '';
 
+      // Priorytety zamknięte/niezamknięte (tylko Podsumowanie dnia) idą do
+      // segmentowanego paska zamiast dwóch suchych liczb — część-do-całości
+      // widać na pierwszy rzut oka, bez czytania dwóch osobnych kafelków.
+      const segbar = document.getElementById('plan-segbar');
+      if (plan.priorytet_zamkniete !== undefined && plan.priorytet_niezamkniete !== undefined) {
+        segbar.style.display = 'block';
+        renderSegBar(segbar, [
+          { value: plan.priorytet_zamkniete, label: 'zamknięte', color: 'var(--good)' },
+          { value: plan.priorytet_niezamkniete, label: 'niezamknięte', color: 'var(--feedback-overdue)' },
+        ]);
+      } else {
+        segbar.style.display = 'none';
+      }
+
       // zadzwoniono_dzis idzie do sekcji "Realizacja planu" (żywe dane z Log
       // zmian), backlogi i priorytet_dzis_count to pomocnicze liczniki, nie
       // osobne kafelki — Plan dnia ma zostać przy dokładnie 6 kategoriach.
-      const HIDDEN_PLAN_KEYS = ['zadzwoniono_dzis', 'wyceny_feedback_backlog', 'inne_feedback_backlog', 'priorytet_dzis_count'];
+      const HIDDEN_PLAN_KEYS = [
+        'zadzwoniono_dzis', 'wyceny_feedback_backlog', 'inne_feedback_backlog', 'priorytet_dzis_count',
+        'priorytet_zamkniete', 'priorytet_niezamkniete',
+      ];
       const known = Object.keys(PLAN_TILE_LABELS).filter((k) => !HIDDEN_PLAN_KEYS.includes(k) && plan[k] !== undefined);
       const extra = Object.keys(plan).filter(
         (k) => !HIDDEN_PLAN_KEYS.includes(k) && !(k in PLAN_TILE_LABELS) && (typeof plan[k] === 'number' || typeof plan[k] === 'string')
@@ -1951,7 +2079,7 @@
 
       known.concat(extra).forEach((key) => {
         const tile = document.createElement('div');
-        tile.className = 'stat-tile';
+        tile.className = 'stat-tile' + (WIN_PLAN_KEYS.includes(key) && plan[key] > 0 ? ' stat-tile--win' : '');
         const value = document.createElement('div');
         value.className = 'value';
         value.textContent = plan[key];
@@ -2050,6 +2178,74 @@
         bubble.textContent = entry;
         list.appendChild(bubble);
       });
+    }
+
+    // Podsumowanie dnia: jeden punkt (AI już zwraca gotową listę, bez
+    // potrzeby dzielenia tekstu jak w renderKomentarz) = jeden bąbelek,
+    // kolor krawędzi + ikona tekstowa według `typ` — nigdy sam kolor.
+    const PUNKT_ICONS = { dobre: '✓', problem: '!', neutralne: '–' };
+
+    function renderPunkty(punkty) {
+      const list = document.getElementById('komentarz-list');
+      list.innerHTML = '';
+      punkty.forEach((p) => {
+        const typ = PUNKT_ICONS[p.typ] ? p.typ : 'neutralne';
+        const bubble = document.createElement('div');
+        bubble.className = `komentarz-bubble komentarz-bubble--punkt komentarz-bubble--${typ}`;
+        const icon = document.createElement('span');
+        icon.className = 'punkt-icon';
+        icon.textContent = PUNKT_ICONS[typ];
+        const text = document.createElement('span');
+        text.textContent = p.tekst;
+        bubble.appendChild(icon);
+        bubble.appendChild(text);
+        list.appendChild(bubble);
+      });
+    }
+
+    // Prosty segmentowany pasek część-do-całości (Realizacja planu /
+    // Priorytety w Podsumowaniu dnia) — szerokość segmentu proporcjonalna do
+    // wartości, zero segmentów o wartości 0 (żeby nie zostawiać martwych
+    // pasków szerokości 0 z obwódką).
+    function renderSegBar(container, segments, totalLabel) {
+      container.innerHTML = '';
+      const total = segments.reduce((sum, s) => sum + s.value, 0);
+      const wrap = document.createElement('div');
+      wrap.className = 'seg-bar';
+
+      const track = document.createElement('div');
+      track.className = 'seg-bar-track';
+      segments.filter((s) => s.value > 0).forEach((s) => {
+        const fill = document.createElement('div');
+        fill.className = 'seg-bar-fill';
+        fill.style.width = `${total ? (s.value / total) * 100 : 0}%`;
+        fill.style.background = s.color;
+        track.appendChild(fill);
+      });
+      wrap.appendChild(track);
+
+      const legend = document.createElement('div');
+      legend.className = 'seg-bar-legend';
+      segments.forEach((s) => {
+        const item = document.createElement('span');
+        const dot = document.createElement('span');
+        dot.className = 'dot';
+        dot.style.background = s.color;
+        item.appendChild(dot);
+        const strong = document.createElement('strong');
+        strong.textContent = s.value;
+        item.appendChild(strong);
+        item.appendChild(document.createTextNode(` ${s.label}`));
+        legend.appendChild(item);
+      });
+      if (totalLabel) {
+        const item = document.createElement('span');
+        item.textContent = totalLabel;
+        legend.appendChild(item);
+      }
+      wrap.appendChild(legend);
+
+      container.appendChild(wrap);
     }
 
     function makeCopyButton(value) {
@@ -2252,6 +2448,13 @@
         phone.textContent = c.telefon;
         phone.addEventListener('click', (e) => e.stopPropagation());
         contactRow.appendChild(phone);
+
+        if (c.na_jutro) {
+          const naJutroDot = document.createElement('span');
+          naJutroDot.className = 'na-jutro-dot';
+          naJutroDot.title = 'Z wczoraj — nie zamknięte';
+          contactRow.appendChild(naJutroDot);
+        }
 
         contactRow.appendChild(makeCopyButton(c.telefon));
       }
@@ -2674,8 +2877,13 @@
         document.getElementById('kontekst-text').textContent = draft.kontekst;
       }
 
-      if (draft.komentarz_dzienny) {
+      if (activeDoc === 'podsumowanie' && Array.isArray(draft.punkty) && draft.punkty.length) {
         document.getElementById('komentarz-card').style.display = 'block';
+        document.getElementById('komentarz-title').textContent = 'Co się działo dziś';
+        renderPunkty(draft.punkty);
+      } else if (draft.komentarz_dzienny) {
+        document.getElementById('komentarz-card').style.display = 'block';
+        document.getElementById('komentarz-title').textContent = 'Komentarz dzienny';
         renderKomentarz(draft.komentarz_dzienny);
       }
 
@@ -3086,11 +3294,50 @@
     // raz-dziennie generowanej Umowy) ──────────────────────────────────────
     // Czwarty kafelek (przychodzące/wychodzące) tylko na desktopie — na mobile
     // trzy podstawowe liczby wystarczają, nie ma sensu zajmować więcej miejsca.
+    // Wykres (segmentowany pasek) tylko w Podsumowaniu dnia — w Umowie ta
+    // sama karta "Realizacja planu" wraca do zwykłych kafelków z liczbami
+    // (na życzenie: wizualne wykresy mają zostać wyłącznie w podsumowaniu).
     function renderRealizacjaDzis(stats, offset) {
       document.getElementById('realizacja-card').style.display = 'block';
+      const zadzwonionoLabel = offset === 0 ? 'Zadzwoniono dziś' : 'Zadzwoniono tego dnia';
+
       const grid = document.getElementById('realizacja-grid');
       grid.innerHTML = '';
-      const zadzwonionoLabel = offset === 0 ? 'Zadzwoniono dziś' : 'Zadzwoniono tego dnia';
+
+      if (activeDoc === 'podsumowanie') {
+        // Odebrało/nie odebrało to część-do-całości (sumują się na
+        // zadzwoniono) — pasek zamiast dwóch suchych liczb pokazuje
+        // proporcję od razu, bez liczenia w głowie.
+        const barWrap = document.createElement('div');
+        barWrap.className = 'seg-bar-heading-wrap';
+        const heading = document.createElement('div');
+        heading.className = 'seg-bar-heading';
+        heading.textContent = `${zadzwonionoLabel}: ${stats.zadzwoniono}`;
+        barWrap.appendChild(heading);
+        const barContainer = document.createElement('div');
+        barWrap.appendChild(barContainer);
+        grid.appendChild(barWrap);
+        renderSegBar(barContainer, [
+          { value: stats.odebrano, label: 'odebrało', color: 'var(--good)' },
+          { value: stats.nieodebrano, label: 'nie odebrało', color: 'var(--feedback-overdue)' },
+        ]);
+
+        // Przychodzące/wychodzące to inny wymiar (kierunek, nie wynik) —
+        // zostaje zwykłym kafelkiem, nie każda liczba potrzebuje wykresu.
+        const tile = document.createElement('div');
+        tile.className = 'stat-tile desktop-only';
+        const v = document.createElement('div');
+        v.className = 'value';
+        v.textContent = `${stats.przychodzace}/${stats.wychodzace}`;
+        const l = document.createElement('div');
+        l.className = 'label';
+        l.textContent = 'Przych. / wych.';
+        tile.appendChild(v);
+        tile.appendChild(l);
+        grid.appendChild(tile);
+        return;
+      }
+
       [
         { value: stats.zadzwoniono, label: zadzwonionoLabel },
         { value: stats.odebrano, label: 'Odebrało' },

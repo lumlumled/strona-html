@@ -1019,10 +1019,21 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
         patch['Ocena AI kontaktu'] = `${analysis.jakosc_leada}${typ}${uzasadnienie}`;
       }
 
-      const { error: updateErr } = await supabase
-        .from(LEADY_B2C_TABLE)
-        .update(patch)
-        .eq('Phone number', lead['Phone number']);
+      // RPC zamiast zwykłego .update() — ustawia transaction-local flagę
+      // bypass, żeby trigger log_zmian_from_leady (patrz migracja
+      // add-log-zmian-manual-capture.js) nie zdublował wpisu, który już
+      // jawnie wstawiliśmy wyżej (insert do LOG_ZMIAN_TABLE).
+      const { error: updateErr } = await supabase.rpc('app_update_leady_after_call', {
+        p_phone: lead['Phone number'],
+        p_ilosc_telefonow: String(patch['Ilość telefonów']),
+        p_ostatni_kontakt: patch['Ostatni kontakt'],
+        p_tresc_rozmowy: patch['Treść rozmowy'],
+        p_deal_stage: patch['Deal stage'],
+        p_data_feedbacku: patch['Data Feedbacku'],
+        p_produkty: patch['Produkty z wyceny'] ?? null,
+        p_kwota: patch['Kwota wyceny'] ?? null,
+        p_ocena_ai: patch['Ocena AI kontaktu'] ?? null,
+      });
       if (updateErr) console.error('Błąd update Leady B2C:', updateErr.message);
 
       // Jeśli GPT ocenił, że temat jest zaopiekowany na dziś — oznacz ten
@@ -1474,6 +1485,33 @@ async function fetchLogZmianRange(supabase, start, end) {
   }));
 }
 
+// Wariant fetchLogZmianRange z pełną transkrypcją/opisem rozmowy — tylko dla
+// /api/cron/podsumowanie-dnia (GPT ma czytać REALNĄ treść rozmów, nie tylko
+// status_przed/status_po). Osobna funkcja zamiast rozszerzania
+// fetchLogZmianRange, żeby nie napompować promptu umowa-draft (ten czyta
+// dane z tej samej tabeli, ale nigdy nie potrzebował transkrypcji).
+async function fetchLogZmianDzisPelne(supabase, start, end) {
+  const { data, error } = await supabase
+    .from(LOG_ZMIAN_TABLE)
+    .select('*')
+    .gte('data_zmiany', start.toISOString())
+    .lt('data_zmiany', end.toISOString())
+    .order('data_zmiany', { ascending: false });
+  if (error) throw error;
+  return (data || []).map((row) => ({
+    telefon: formatPhonePlus(row['telefon']),
+    status_przed: row['status_przed'] || '',
+    status_po: row['status_po'] || '',
+    opis: row['opis'] || '',
+    // Ucięte na wypadek wyjątkowo długiej rozmowy — nadal daje modelowi
+    // realną treść (ustalenia, kwoty, zastrzeżenia), nie tylko streszczenie
+    // z `opis`, bez ryzyka rozdmuchania promptu jednym telefonem.
+    transkrypcja: (row['transkrypcja'] || '').slice(0, 2000),
+    disposition: row['disposition'] || '',
+    czas_trwania_s: row['czas_trwania_s'] || 0,
+  }));
+}
+
 async function fetchStandupLog3(supabase) {
   const { data, error } = await supabase
     .from(STANDUP_TABLE)
@@ -1626,6 +1664,49 @@ function applyZalegleFeedbacki(parsed, zalegleRaw, phoneToLp, nextLp) {
 
   parsed.kategorie = parsed.kategorie || {};
   parsed.kategorie.zalegle_feedbacki = result;
+}
+
+// Kategorie "planu dnia" w których ma sens oznaczanie zaległości z wczoraj —
+// wyceny_historyczne/zalegle_feedbacki to z definicji otwarte, ciągłe listy
+// (nie "dzisiejszy plan"), więc oznaczanie ich jako na_jutro nic by nie
+// wnosiło.
+const NA_JUTRO_KATEGORIE = ['nowe', 'wyceny_z_feedbackiem', 'inne_z_feedbackiem', 'nieodebrane'];
+
+// Telefony niezamkniętych case'ów we wczorajszej Umowie (priorytet_dzis + 4
+// kategorie wyżej) — dostają dziś widoczną flagę na_jutro (patrz
+// applyNaJutroCarryover). Case i tak pojawi się dziś niezależnie od tego
+// (kategorie budowane z żywego stanu bazy) — to tylko wizualne oznaczenie
+// "to zaległe z wczoraj" (żółta kropka w app.html).
+function collectNaJutroCandidates(umowaJson) {
+  const phones = new Set();
+  if (!umowaJson) return phones;
+  const consider = (arr) => {
+    if (!Array.isArray(arr)) return;
+    arr.forEach((item) => {
+      if (!item || item.zamkniete === 1 || !item.telefon) return;
+      const digits = normalizePhoneDigits(item.telefon);
+      if (digits) phones.add(digits);
+    });
+  };
+  consider(umowaJson.priorytet_dzis);
+  const kat = umowaJson.kategorie || {};
+  NA_JUTRO_KATEGORIE.forEach((key) => consider(kat[key]));
+  return phones;
+}
+
+function applyNaJutroCarryover(parsed, carryPhones) {
+  if (!carryPhones.size) return;
+  const mark = (arr) => {
+    if (!Array.isArray(arr)) return;
+    arr.forEach((item) => {
+      if (item && item.telefon && carryPhones.has(normalizePhoneDigits(item.telefon))) {
+        item.na_jutro = true;
+      }
+    });
+  };
+  mark(parsed.priorytet_dzis);
+  const kat = parsed.kategorie || {};
+  NA_JUTRO_KATEGORIE.forEach((key) => mark(kat[key]));
 }
 
 // Model pisząc komentarz_dzienny czasem nie zna prawdziwego lp case'a
@@ -1944,6 +2025,19 @@ app.all('/api/cron/umowa-draft', async (req, res) => {
 
     const calledSet = buildCalledTodaySet(logZmianDzis);
 
+    // Wczorajsza Umowa (final → poprawka → draft, ten sam priorytet co
+    // fetchStandupLog3) — źródło dla carryover na_jutro (patrz
+    // collectNaJutroCandidates/applyNaJutroCarryover niżej). wczoraj.start to
+    // już wyliczony instant UTC dla wczorajszej północy Warszawy, więc
+    // warsawParts go poprawnie odwraca na y/m/d wczorajszego dnia.
+    const { y: wczorajY, m: wczorajM, d: wczorajD } = warsawParts(wczoraj.start);
+    const wczorajDataIso = `${wczorajY}-${String(wczorajM).padStart(2, '0')}-${String(wczorajD).padStart(2, '0')}`;
+    const wczorajszaUmowaRow = await getRowByData(supabase, wczorajDataIso);
+    const wczorajszaUmowa = wczorajszaUmowaRow
+      ? (wczorajszaUmowaRow[DOCS.umowa.final] || wczorajszaUmowaRow[DOCS.umowa.poprawka] || wczorajszaUmowaRow[DOCS.umowa.draft])
+      : null;
+    const carryPhones = collectNaJutroCandidates(wczorajszaUmowa);
+
     // Modelowi pokazujemy tylko najbardziej przeterminowane z zaległych (do
     // ewentualnego wyłapania w priorytet_dzis) — pełną, nieobciętą listę i
     // tak wstawiamy deterministycznie niżej (applyZalegleFeedbacki), więc nie
@@ -2017,6 +2111,7 @@ app.all('/api/cron/umowa-draft', async (req, res) => {
     const wycenyStatusByPhone = buildStatusByPhone(wycenyHistoryczne);
     postProcessStatus(parsed, leadyStatusByPhone, wycenyStatusByPhone);
     postProcessCallCounts(parsed, callCountByPhone);
+    applyNaJutroCarryover(parsed, carryPhones);
 
     const { error: upsertErr } = await supabase
       .from(STANDUP_TABLE)
@@ -2075,6 +2170,141 @@ app.all('/api/cron/log-polaczen-closeout', async (req, res) => {
     res.json({ wierszy: rows?.length || 0, zaktualizowano: updated });
   } catch (err) {
     await logOperation(supabase, 'log_polaczen_closeout_cron', 'error', { message: err.message });
+    handleError(res, err, 502);
+  }
+});
+
+// ── Podsumowanie dnia (cron wieczorny) ──────────────────────────────────────
+// Umowa (final → poprawka → draft) to plan dnia; Log zmian dzisiaj (włącznie
+// z ręcznymi zmianami w CRM — patrz trigger log_zmian_from_leady/
+// log_zmian_from_wyceny, migracja add-log-zmian-manual-capture.js) to co się
+// faktycznie wydarzyło. Liczniki w `plan` liczone tu deterministycznie (ten
+// sam wzorzec co postProcessCounts w Umowie) — modelowi dajemy do napisania
+// WYŁĄCZNIE `komentarz_dzienny` (krótkie bullet pointy), bez duplikowania
+// kategorii/list leadów z Umowy (nie ma takiej potrzeby, patrz plan).
+function buildPodsumowanieSystemPrompt(dzisiaj) {
+  return `Jesteś asystentem operacyjnym LumLum (premium oświetlenie LED COB, lumlum.co).
+Piszesz krótkie podsumowanie dnia dla handlowca Lorenzzo: porównanie dzisiejszego planu (Umowa) z tym, co faktycznie się wydarzyło (Log zmian).
+Generujesz WYŁĄCZNIE czysty JSON — bez tekstu przed, bez komentarza, bez markdown, bez backtick. Dokładnie ten kształt: {"punkty": [{"tekst": "...", "typ": "dobre"}]}.
+
+## DANE WEJŚCIOWE
+
+Dzisiejsza data: ${dzisiaj}.
+
+**PRIORYTET DZIŚ** — case'y zaplanowane na dziś, pole \`zamkniete\` (1 = załatwione, 0 = nie).
+**LOG ZMIAN DZIŚ** — realne wiersze rozmów telefonicznych i zmian statusu dzisiaj: telefon, status_przed/status_po, disposition, \`opis\` (krótkie streszczenie rozmowy) i \`transkrypcja\` (pełna treść rozmowy, gdy była nagrana — najbogatsze źródło).
+
+## ZADANIE
+
+Przeczytaj \`transkrypcja\`/\`opis\` każdej rozmowy — to Twoje główne źródło, nie tylko status_przed/status_po. Wyłap z nich REALNE, konkretne szczegóły (kwoty, terminy, konkretne zastrzeżenia lub decyzje klienta) — nie ogólnikuj ("rozmowa przebiegła pozytywnie" to źle; "klient potwierdził montaż na 15.07, czeka na wycenę 2 zasilaczy" to dobrze).
+
+Zwróć \`punkty\`: tablicę 4-8 obiektów, każdy jeden konkretny fakt/wydarzenie z dziś, po polsku, max ~15-20 słów — krótko mimo bogatszego materiału źródłowego, bez wstępu/podpisu/liczników (te liczone osobno). Każdy obiekt ma:
+- \`tekst\`: samo zdanie, np. "Sebastian Ludyga — potwierdził 8 pasków, czeka na dobór sterownika od Antoniego."
+- \`typ\`: jedno z \`"dobre"\` (sukces/pozytywny postęp — sprzedaż, wysłana wycena, zamknięty case, konkretna deklaracja klienta), \`"problem"\` (coś utknęło/nie wyszło — nieodebrany telefon, brak odpowiedzi, zastrzeżenie klienta, przełożone bez konkretu), \`"neutralne"\` (fakt/ustalenie bez wydźwięku)
+
+Priorytet: najpierw najważniejsze "dobre", potem najważniejsze "problem". Jeśli oba zestawy danych są puste, zwróć jeden punkt typu "neutralne" wprost mówiący, że nic się dziś nie wydarzyło.`;
+}
+
+app.all('/api/cron/podsumowanie-dnia', async (req, res) => {
+  const supabase = getClient();
+  let dataIso = null;
+  try {
+    if (!isCronAuthorized(req)) return res.status(401).json({ error: 'Brak autoryzacji' });
+    requireOpenAiKey();
+
+    const now = new Date();
+    const dzisiaj = warsawDateStr(now);
+    const godzina = warsawTimeStr(now);
+    const { y, m, d } = warsawParts(now);
+    dataIso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+    const dzis = warsawDayRange(0);
+    const [row, logZmianDzis] = await Promise.all([
+      getRowByData(supabase, dataIso),
+      fetchLogZmianDzisPelne(supabase, dzis.start, dzis.end),
+    ]);
+    const umowa = row ? (row[DOCS.umowa.final] || row[DOCS.umowa.poprawka] || row[DOCS.umowa.draft]) : null;
+    const priorytetDzis = Array.isArray(umowa?.priorytet_dzis) ? umowa.priorytet_dzis : [];
+
+    const zamkniete = priorytetDzis.filter((i) => i && i.zamkniete === 1).length;
+    const niezamkniete = priorytetDzis.length - zamkniete;
+    const plan = {
+      // Bez wykonane_telefony: ta liczba już jest w karcie "Realizacja
+      // planu" (zawsze widocznej, żywe dane z Log zmian) tuż pod spodem —
+      // powtarzanie jej tu było zbędne.
+      zmienione_statusy: logZmianDzis.filter((r) => r.status_przed !== r.status_po).length,
+      zakupione_dzis: logZmianDzis.filter((r) => r.status_po === 'Sprzedane' && r.status_przed !== 'Sprzedane').length,
+      wyslane_wyceny: logZmianDzis.filter((r) => r.status_po === 'Wycena wysłana' && r.status_przed !== 'Wycena wysłana').length,
+      nieodebrane: logZmianDzis.filter((r) => r.disposition === 'no_answer').length,
+      priorytet_zamkniete: zamkniete,
+      priorytet_niezamkniete: niezamkniete,
+      przelozone_na_jutro: niezamkniete,
+    };
+
+    const userContent = [
+      `Dzisiejsza data: ${dzisiaj}`,
+      '',
+      'PRIORYTET DZIŚ:',
+      JSON.stringify(priorytetDzis.map((i) => ({ lp: i.lp, imie: i.imie, telefon: i.telefon, zamkniete: i.zamkniete }))),
+      '',
+      'LOG ZMIAN DZIŚ:',
+      JSON.stringify(logZmianDzis),
+    ].join('\n');
+
+    const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_API_KEY}` },
+      body: JSON.stringify({
+        model: UMOWA_MODEL,
+        response_format: { type: 'json_object' },
+        reasoning_effort: 'minimal',
+        messages: [
+          { role: 'system', content: buildPodsumowanieSystemPrompt(dzisiaj) },
+          { role: 'user', content: userContent },
+        ],
+      }),
+    });
+    if (!aiRes.ok) {
+      const body = await aiRes.text();
+      throw new Error(`OpenAI ${aiRes.status}: ${body.slice(0, 300)}`);
+    }
+    const aiBody = await aiRes.json();
+    const content = aiBody.choices?.[0]?.message?.content || '';
+    let parsedAi;
+    try {
+      parsedAi = JSON.parse(content);
+    } catch {
+      throw new Error('AI zwróciło JSON, którego nie da się sparsować');
+    }
+
+    const punkty = Array.isArray(parsedAi?.punkty)
+      ? parsedAi.punkty
+          .filter((p) => p && p.tekst)
+          .map((p) => ({ tekst: String(p.tekst), typ: ['dobre', 'problem', 'neutralne'].includes(p.typ) ? p.typ : 'neutralne' }))
+      : [];
+
+    const parsed = {
+      data: dzisiaj,
+      wygenerowano: godzina,
+      status: 'draft',
+      punkty,
+      plan,
+    };
+
+    // Zwykły update (nie upsert) po `Data` — jak w /api/ai-edit/approve.
+    // Upsert nie zadziała tu: "Umowa - draft - JSON" ma NOT NULL, a Postgres
+    // sprawdza NOT NULL na proponowanym wierszu PRZED próbą ON CONFLICT DO
+    // UPDATE (nawet gdy wiersz z tą datą już istnieje) — upsert samą kolumną
+    // podsumowania zawsze by się wywalał. Dzień bez wygenerowanej Umowy nie
+    // ma zresztą z czym porównywać, więc brak wiersza to prawdziwy błąd, nie
+    // przypadek do obsłużenia insertem.
+    if (!row) throw new Error(`Brak dzisiejszej Umowy (${dataIso}) — cron umowa-draft musi zadziałać wcześniej`);
+    await updateRowByData(supabase, dataIso, { [DOCS.podsumowanie.draft]: parsed });
+
+    await logOperation(supabase, 'podsumowanie_dnia_cron', 'ok', { data: dataIso, wygenerowano: godzina });
+    res.json({ json: parsed });
+  } catch (err) {
+    await logOperation(supabase, 'podsumowanie_dnia_cron', 'error', { data: dataIso, message: err.message });
     handleError(res, err, 502);
   }
 });
