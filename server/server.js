@@ -517,11 +517,15 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     const call = Array.isArray(req.body) ? req.body[0] : req.body;
     if (!call) return res.status(400).json({ error: 'Puste zdarzenie' });
 
+    // `numer_klienta` jawnie w payloadzie (Make wie na pewno, które pole u
+    // niego jest numerem klienta w danej gałęzi) ma pierwszeństwo — eliminacja
+    // przez porównanie z własnym numerem zostaje jako fallback dla webhooka
+    // prosto z Zadarmy, bez pośrednictwa Make.
     const ownNumber = normalizePhoneDigits(process.env.ZADARMA_OWN_NUMBER);
     const candidates = [call.caller_id, call.called_did, call.dst]
       .map(normalizePhoneDigits)
       .filter((d) => d && d !== ownNumber);
-    const customerDigits = candidates[0] || '';
+    const customerDigits = normalizePhoneDigits(call.numer_klienta) || candidates[0] || '';
 
     let lead = await findLeadByPhone(supabase, customerDigits);
     // Wyceny B2C sprawdzane tylko gdy telefon nie pasuje do żadnego leada —
