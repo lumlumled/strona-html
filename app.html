@@ -1253,10 +1253,11 @@
       inne_z_feedbackiem: 'Inne z feedbackiem',
       wyceny_z_feedbackiem: 'Wyceny z feedbackiem',
       wyceny_historyczne: 'Wyceny historyczne',
+      zalegle_feedbacki: 'Zaległe feedbacki',
       dodane_recznie: 'Dodane ręcznie',
     };
 
-    const KATEGORIA_ORDER = ['nowe', 'wyceny_z_feedbackiem', 'inne_z_feedbackiem', 'nieodebrane', 'wyceny_historyczne', 'dodane_recznie'];
+    const KATEGORIA_ORDER = ['nowe', 'wyceny_z_feedbackiem', 'inne_z_feedbackiem', 'nieodebrane', 'wyceny_historyczne', 'zalegle_feedbacki', 'dodane_recznie'];
 
     // Kolory statusów odwzorowane z CRM-u (Google Sheets) — przybliżone,
     // nie muszą być piksel w piksel identyczne.
@@ -1363,6 +1364,7 @@
       inne_feedback_count: 'Inne z feedbackiem',
       nieodebrane_count: 'Nieodebrane',
       wyceny_historyczne_count: 'Wyceny historyczne',
+      zalegle_feedbacki_count: 'Zaległe feedbacki',
       zadzwoniono_dzis: 'Zadzwoniono dziś',
       wykonane_telefony: 'Wykonane telefony',
       zmienione_statusy: 'Zmienione statusy',
@@ -1423,7 +1425,7 @@
       { key: 'id_wyceny', label: 'ID wyceny' },
       { key: 'kwota', label: 'Kwota', currency: true },
       { key: 'produkty', label: 'Produkty' },
-      { key: 'zadzwonil_dzis', label: 'Zadzwonił dziś', bool: true },
+      { key: 'zadzwonil_dzis', label: 'Skontaktowane dziś', bool: true },
     ];
 
     function parsePlDate(str) {

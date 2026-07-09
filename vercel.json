@@ -3,9 +3,12 @@
   "functions": {
     "api/index.js": {
       "includeFiles": "{app.html,assets/**,server/login.html}",
-      "maxDuration": 60
+      "maxDuration": 180
     }
   },
+  "crons": [
+    { "path": "/api/cron/umowa-draft", "schedule": "0 5 * * 1-5" }
+  ],
   "rewrites": [
     { "source": "/(.*)", "destination": "/api/index" }
   ]

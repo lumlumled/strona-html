@@ -603,6 +603,19 @@ function parseLeadDate(value) {
   return null;
 }
 
+// app.html oczekuje dat w polu data_feedbacku wyłącznie jako "DD.MM.YYYY"
+// (parsePlDate/toIsoDate w froncie mają sztywny regex na ten format — inny
+// format, np. surowe "2026-05-14 00:00:00" jakie bywa w kolumnie "Data
+// Feedbacku" w Leady B2C, po prostu nie renderuje się w polu daty). Zawsze
+// normalizujemy do tego formatu przed wysłaniem do frontu.
+function formatPlDate(value) {
+  const d = parseLeadDate(value);
+  if (!d) return '';
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${dd}.${mm}.${d.getFullYear()}`;
+}
+
 app.get('/api/leady/nowe', async (req, res) => {
   try {
     const supabase = getClient();
@@ -638,6 +651,721 @@ app.get('/api/leady/nowe', async (req, res) => {
       }));
     res.json(rows);
   } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// ── Umowa Lorenzo Draft (cron dzienny) ──────────────────────────────────────
+// Odtworzenie scenariusza Make "Umowa Lorenzo Draft" (id 6316850) jako
+// endpoint wołany przez Vercel Cron. W stosunku do oryginału: dane mapowane
+// po nazwach kolumn Supabase (nie po indeksach Sheets — oryginał miał tu
+// rozjechane indeksy w jednej gałęzi), zapis do "Standup Log Lorenzo" jest
+// upsertem po "Data" (oryginał robił zwykły insert mimo że "Data" jest
+// naturalnym kluczem — dwa uruchomienia dziennie by kolidowały), a
+// "zadzwonil_dzis"/"zadzwoniono_dzis" liczone deterministycznie w kodzie z
+// prawdziwego "Log zmian" (oryginał czytał tu po raz drugi wczorajszy log
+// zamiast dzisiejszych połączeń — nigdy faktycznie nie działało).
+const UMOWA_MODEL = process.env.OPENAI_UMOWA_MODEL || 'gpt-5-mini';
+
+function warsawParts(date = new Date()) {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Warsaw', hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  const parts = dtf.formatToParts(date).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+  return {
+    y: Number(parts.year), m: Number(parts.month), d: Number(parts.day),
+    hh: parts.hour, mm: parts.minute, ss: parts.second,
+  };
+}
+
+function warsawDateStr(date = new Date()) {
+  const { y, m, d } = warsawParts(date);
+  return `${String(d).padStart(2, '0')}.${String(m).padStart(2, '0')}.${y}`;
+}
+
+function warsawTimeStr(date = new Date()) {
+  const { hh, mm } = warsawParts(date);
+  return `${hh}:${mm}`;
+}
+
+// Instant UTC odpowiadający północy danego dnia kalendarzowego w Warszawie —
+// potrzebne, żeby filtrować "data_zmiany::date = dziś" poprawnie mimo
+// przesunięcia CET/CEST, bez indeksowania rzutowania timestamptz→date w
+// Postgresie (Postgres to odrzuca, patrz notatka w migracji CRM Lorenzzo).
+function warsawMidnightUTC(y, m, d) {
+  const guess = new Date(Date.UTC(y, m - 1, d, 0, 0, 0));
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Warsaw', hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  const parts = dtf.formatToParts(guess).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+  const asIfUTC = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second));
+  const offsetMinutes = (asIfUTC - guess.getTime()) / 60000;
+  return new Date(guess.getTime() - offsetMinutes * 60000);
+}
+
+function warsawDayRange(offsetDays = 0) {
+  const { y, m, d } = warsawParts(new Date());
+  const base = new Date(Date.UTC(y, m - 1, d));
+  base.setUTCDate(base.getUTCDate() + offsetDays);
+  const start = warsawMidnightUTC(base.getUTCFullYear(), base.getUTCMonth() + 1, base.getUTCDate());
+  const end = warsawMidnightUTC(base.getUTCFullYear(), base.getUTCMonth() + 1, base.getUTCDate() + 1);
+  return { start, end };
+}
+
+function formatPhonePlus(raw) {
+  const digits = normalizePhoneDigits(raw);
+  if (!digits) return '';
+  return digits.startsWith('48') ? `+${digits}` : `+48${digits}`;
+}
+
+// Leady B2C i Wyceny B2C nie mają wspólnego klucza obcego — "ID Wyceny" w
+// Leady B2C to mały sekwencyjny numer własny tej tabeli (1, 3, 4…), a "ID" w
+// Wyceny B2C to zupełnie inna numeracja ("#1529", "#1815"…). Jedyne wspólne
+// pole to numer telefonu (tak samo dopasowuje leady do wycen webhook Zadarmy
+// — patrz findWycenaByPhone). Budujemy więc mapę telefon → sformatowane
+// produkty raz, dla wszystkich kategorii naraz.
+function formatProdukty(produktyJson) {
+  if (!Array.isArray(produktyJson) || !produktyJson.length) return '';
+  return produktyJson
+    .map((p) => {
+      const qty = p && p.quantity !== undefined ? p.quantity : '';
+      const unit = (p && p.unit) || '';
+      const name = (p && p.name) || '';
+      return [qty, unit, name].filter((part) => part !== '' && part !== undefined && part !== null).join(' ');
+    })
+    .filter(Boolean)
+    .join('; ');
+}
+
+async function fetchProduktyByPhone(supabase) {
+  const { data, error } = await supabase.from(WYCENY_B2C_TABLE).select('Telefon,produkty_json');
+  if (error) throw error;
+  const map = new Map();
+  (data || []).forEach((row) => {
+    const digits = normalizePhoneDigits(row['Telefon']);
+    const formatted = formatProdukty(row['produkty_json']);
+    if (digits && formatted && !map.has(digits)) map.set(digits, formatted);
+  });
+  return map;
+}
+
+function mapLeadRow(row, produktyByPhone) {
+  const phoneDigits = normalizePhoneDigits(row['Phone number']);
+  const produktyZWyceny = produktyByPhone && phoneDigits ? produktyByPhone.get(phoneDigits) : undefined;
+  return {
+    id: row['ID'] || '',
+    id_wyceny: row['ID Wyceny'] ?? '',
+    data_dolaczenia: row['Date'] || '',
+    imie: row['Name'] || '',
+    telefon: formatPhonePlus(row['Phone number']),
+    email: row['Email'] || '',
+    status: row['Deal stage'] || '',
+    opis: row['Notes'] || '',
+    data_feedbacku: formatPlDate(row['Data Feedbacku']),
+    temperatura: row['Temperatura'] || '',
+    ostatni_kontakt: row['Ostatni kontakt'] || '',
+    // "Ilość telefonów" ma w Supabase legacy skażone dane sprzed poprawki
+    // string-konkatenacji (np. "12440" zamiast realnej liczby) — puste na
+    // razie, do policzenia porządnie osobno.
+    ilosc_telefonow: '',
+    produkty: produktyZWyceny || row['Produkty z wyceny'] || '',
+    ocena_ai: row['Ocena AI kontaktu'] || '',
+    link_formularz: row['Link do formularza'] || '',
+    data_wyceny: row['Data wysłania wyceny'] || '',
+    kwota: Number(row['Kwota wyceny']) || 0,
+  };
+}
+
+function mapWycenaRow(row) {
+  return {
+    id_wyceny: row['ID'] || '',
+    data_stworzenia: row['Data stworzenia'] || '',
+    data_feedbacku: formatPlDate(row['Data Feedbacku']),
+    komentarz: row['Komentarz'] || '',
+    typ: row['Typ'] || '',
+    status: row['Status'] || '',
+    imie: row['Imię'] || '',
+    telefon: formatPhonePlus(row['Telefon']),
+    email: row['Email'] || '',
+    link_formularz: row['Link do formularza'] || '',
+    kwota: Number(row['Kwota']) || 0,
+  };
+}
+
+async function fetchLeadyByStage(supabase, stage, excludeStages) {
+  let query = supabase.from(LEADY_B2C_TABLE).select('*');
+  query = excludeStages
+    ? query.not('Deal stage', 'in', `(${excludeStages.map((s) => `"${s}"`).join(',')})`)
+    : query.eq('Deal stage', stage);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
+async function fetchNowe(supabase, produktyByPhone) {
+  const rows = await fetchLeadyByStage(supabase, 'Nowy');
+  const cutoff = Date.now() - 3 * 24 * 60 * 60 * 1000;
+  return rows
+    .map((row) => ({ row, date: parseLeadDate(row['Date']) }))
+    .filter(({ date }) => date && date.getTime() >= cutoff)
+    .sort((a, b) => b.date - a.date)
+    .slice(0, 10)
+    .map(({ row }) => mapLeadRow(row, produktyByPhone));
+}
+
+async function fetchWycenyZFeedbackiem(supabase, produktyByPhone) {
+  const rows = await fetchLeadyByStage(supabase, 'Wycena wysłana');
+  const now = Date.now();
+  return rows
+    .map((row) => ({ row, date: parseLeadDate(row['Data Feedbacku']) }))
+    .filter(({ date }) => date && date.getTime() <= now)
+    .sort((a, b) => a.date - b.date || Number(b.row['Kwota wyceny'] || 0) - Number(a.row['Kwota wyceny'] || 0))
+    .map(({ row }) => mapLeadRow(row, produktyByPhone));
+}
+
+async function fetchInneZFeedbackiem(supabase, produktyByPhone) {
+  const rows = await fetchLeadyByStage(supabase, null, ['Wycena wysłana', 'Stracony', 'Sprzedane']);
+  const now = Date.now();
+  const cutoff = now - 7 * 24 * 60 * 60 * 1000;
+  return rows
+    .map((row) => ({ row, date: parseLeadDate(row['Data Feedbacku']) }))
+    .filter(({ date }) => date && date.getTime() <= now && date.getTime() >= cutoff)
+    .sort((a, b) => a.date - b.date || Number(b.row['Kwota wyceny'] || 0) - Number(a.row['Kwota wyceny'] || 0))
+    .map(({ row }) => mapLeadRow(row, produktyByPhone));
+}
+
+async function fetchNieodebrane(supabase, produktyByPhone) {
+  const rows = await fetchLeadyByStage(supabase, 'Nie odebrał');
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  return rows
+    .map((row) => ({ row, date: parseLeadDate(row['Date']) }))
+    .filter(({ date }) => date && date.getTime() >= cutoff)
+    .sort((a, b) => (Number(b.row['Ilość telefonów']) || 0) - (Number(a.row['Ilość telefonów']) || 0) || a.date - b.date)
+    .slice(0, 10)
+    .map(({ row }) => mapLeadRow(row, produktyByPhone));
+}
+
+async function fetchWycenyHistoryczne(supabase) {
+  const { data: allRows, error } = await supabase.from(WYCENY_B2C_TABLE).select('*');
+  if (error) throw error;
+  const now = Date.now();
+  const withFeedback = (allRows || [])
+    .map((row) => ({ row, date: parseLeadDate(row['Data Feedbacku']) }))
+    .filter(({ date }) => date && date.getTime() <= now)
+    .map(({ row }) => row);
+
+  const usedIds = new Set(withFeedback.map((r) => r['ID']));
+  const openOldestFirst = (allRows || [])
+    .filter((row) => row['Status'] === 'Open' && !usedIds.has(row['ID']))
+    .map((row) => ({ row, date: parseLeadDate(row['Data stworzenia']) }))
+    .sort((a, b) => (a.date?.getTime() || 0) - (b.date?.getTime() || 0))
+    .map(({ row }) => row);
+
+  return [...withFeedback, ...openOldestFirst].slice(0, 10).map(mapWycenaRow);
+}
+
+// Siatka bezpieczeństwa: WSZYSTKIE leady z przeterminowanym feedbackiem,
+// niezależnie od statusu i bez limitu 7 dni wstecz — inne kategorie
+// (wyceny_z_feedbackiem, inne_z_feedbackiem) mają limit dni/max 8 do
+// wyświetlenia, więc stary, zapomniany case może z nich całkowicie zniknąć.
+// Ta lista nie jest ograniczona i nie jest kategoryzowana przez model —
+// dopasowanie/numeracja LP dzieje się deterministycznie w applyZalegleFeedbacki.
+async function fetchZalegleFeedbacki(supabase, produktyByPhone) {
+  const { data, error } = await supabase
+    .from(LEADY_B2C_TABLE)
+    .select('*')
+    .not('Deal stage', 'in', '("Sprzedane","Stracony")');
+  if (error) throw error;
+  const now = Date.now();
+  const sorted = (data || [])
+    .map((row) => ({ row, date: parseLeadDate(row['Data Feedbacku']) }))
+    .filter(({ date }) => date && date.getTime() <= now)
+    .sort((a, b) => a.date - b.date);
+
+  // Facebook Lead Ads potrafi wysłać ten sam formularz dwa razy (retry
+  // webhooka) — Leady B2C wtedy ma dwa wiersze z tym samym telefonem.
+  // Zostawiamy pierwsze wystąpienie (najstarszy feedback), żeby ten sam
+  // człowiek nie pojawił się w tej kategorii dwa razy pod tym samym lp.
+  const seenPhones = new Set();
+  const deduped = [];
+  sorted.forEach(({ row }) => {
+    const digits = normalizePhoneDigits(row['Phone number']);
+    if (digits && seenPhones.has(digits)) return;
+    if (digits) seenPhones.add(digits);
+    deduped.push(row);
+  });
+
+  return deduped.map((row) => mapLeadRow(row, produktyByPhone));
+}
+
+async function fetchLogZmianRange(supabase, start, end) {
+  const { data, error } = await supabase
+    .from(LOG_ZMIAN_TABLE)
+    .select('*')
+    .gte('data_zmiany', start.toISOString())
+    .lt('data_zmiany', end.toISOString())
+    .order('data_zmiany', { ascending: false });
+  if (error) throw error;
+  return (data || []).map((row) => ({
+    telefon: formatPhonePlus(row['telefon']),
+    data_zmiany: row['data_zmiany'],
+    status_przed: row['status_przed'] || '',
+    status_po: row['status_po'] || '',
+    opis: row['opis'] || '',
+    czas_trwania_s: row['czas_trwania_s'] || 0,
+    disposition: row['disposition'] || '',
+  }));
+}
+
+async function fetchStandupLog3(supabase) {
+  const { data, error } = await supabase
+    .from(STANDUP_TABLE)
+    .select('*')
+    .order('Data', { ascending: false })
+    .limit(3);
+  if (error) throw error;
+  return (data || []).map((row) => {
+    const umowa = row[DOCS.umowa.final] || row[DOCS.umowa.poprawka] || row[DOCS.umowa.draft];
+    const podsumowanie = row[DOCS.podsumowanie.final] || row[DOCS.podsumowanie.poprawka] || row[DOCS.podsumowanie.draft];
+    return {
+      data: row['Data'],
+      komentarz_dzienny_poprzedniej_umowy: umowa?.komentarz_dzienny || '',
+      podsumowanie_dnia: podsumowanie || null,
+    };
+  });
+}
+
+function buildCalledTodaySet(logZmianDzis) {
+  const set = new Set();
+  logZmianDzis.forEach((row) => {
+    const digits = normalizePhoneDigits(row.telefon);
+    if (digits) set.add(digits);
+  });
+  return set;
+}
+
+// GPT dostaje dzisiejszy log połączeń jako kontekst do narracji
+// (komentarz_dzienny/kontekst), ale same flagi zadzwonil_dzis/liczbę
+// zadzwoniono_dzis liczymy tu deterministycznie po dopasowaniu telefonu —
+// nie ufamy arytmetyce modelu na tym polu.
+function postProcessCalledToday(parsed, calledSet) {
+  const patch = (arr) => {
+    if (!Array.isArray(arr)) return;
+    arr.forEach((item) => {
+      if (item && typeof item === 'object' && 'telefon' in item) {
+        item.zadzwonil_dzis = calledSet.has(normalizePhoneDigits(item.telefon));
+      }
+    });
+  };
+  patch(parsed.priorytet_dzis);
+  if (parsed.kategorie && typeof parsed.kategorie === 'object') {
+    Object.values(parsed.kategorie).forEach(patch);
+  }
+  if (parsed.plan && typeof parsed.plan === 'object') {
+    parsed.plan.zadzwoniono_dzis = calledSet.size;
+  }
+}
+
+// Wstawia kategorię "zalegle_feedbacki" (patrz fetchZalegleFeedbacki) do
+// wyniku modelu. Jeśli dany lead (po telefonie) już gdzieś w dokumencie ma
+// przydzielony LP — dostaje TEN SAM LP zamiast nowego. Dzięki temu
+// leadInstancesByLp w app.html (mechanizm zbudowany pierwotnie dla
+// priorytet_dzis + jego kategorii) automatycznie linkuje oba wystąpienia:
+// zamknięcie case'a w jednym miejscu zamyka go też tu, bez żadnych zmian we
+// froncie. Leady, które nigdzie indziej się nie pojawiły, dostają świeży LP
+// kontynuujący istniejącą numerację.
+// Model potrafi przydzielić TEN SAM lp dwóm różnym osobom w różnych
+// kategoriach (złapane w testach: lp=2 jednocześnie dla dwóch różnych
+// leadów) — groźne, bo /api/lead-field aktualizuje WSZYSTKIE obiekty z danym
+// lp naraz, więc taka kolizja realnie nadpisywałaby dane niepowiązanego
+// case'a. LP liczymy więc od zera, wyłącznie w kodzie: każdy obiekt w
+// głównych 5 kategoriach (w stałej kolejności) dostaje kolejny numer, a
+// priorytet_dzis jest dopasowywany do swojego bliźniaka po telefonie zamiast
+// polegać na lp, które model sam podał.
+const KATEGORIA_LP_ORDER = ['nowe', 'wyceny_z_feedbackiem', 'inne_z_feedbackiem', 'nieodebrane', 'wyceny_historyczne'];
+
+function reassignLps(parsed) {
+  const kat = parsed.kategorie || {};
+  const phoneToLp = new Map();
+  let next = 1;
+
+  KATEGORIA_LP_ORDER.forEach((key) => {
+    const arr = Array.isArray(kat[key]) ? kat[key] : [];
+    arr.forEach((item) => {
+      if (!item || typeof item !== 'object') return;
+      const digits = item.telefon && normalizePhoneDigits(item.telefon);
+      let lp = digits ? phoneToLp.get(digits) : undefined;
+      if (lp === undefined) {
+        lp = next;
+        next += 1;
+        if (digits) phoneToLp.set(digits, lp);
+      }
+      item.lp = lp;
+    });
+  });
+
+  if (Array.isArray(parsed.priorytet_dzis)) {
+    parsed.priorytet_dzis = parsed.priorytet_dzis.filter((item) => {
+      if (!item || typeof item !== 'object') return false;
+      const digits = item.telefon && normalizePhoneDigits(item.telefon);
+      if (!digits) return false;
+      let lp = phoneToLp.get(digits);
+      if (lp === undefined) {
+        // Model wybrał do priorytetu kogoś spoza 5 głównych kategorii (np. z
+        // próbki NAJBARDZIEJ PRZETERMINOWANE) — dostaje nowy, unikalny lp.
+        lp = next;
+        next += 1;
+        phoneToLp.set(digits, lp);
+      }
+      item.lp = lp;
+      return true;
+    });
+  }
+
+  return { phoneToLp, nextLp: next };
+}
+
+function applyZalegleFeedbacki(parsed, zalegleRaw, phoneToLp, nextLp) {
+  let next = nextLp;
+  const result = zalegleRaw.map((lead) => {
+    const digits = normalizePhoneDigits(lead.telefon);
+    let lp = digits ? phoneToLp.get(digits) : undefined;
+    if (lp === undefined) {
+      lp = next;
+      next += 1;
+      if (digits) phoneToLp.set(digits, lp);
+    }
+    return { ...lead, lp, row_number: 0, zamkniete: 0, zadzwonil_dzis: false };
+  });
+
+  parsed.kategorie = parsed.kategorie || {};
+  parsed.kategorie.zalegle_feedbacki = result;
+}
+
+// Model pisząc komentarz_dzienny czasem nie zna prawdziwego lp case'a
+// dociągniętego z próbki przeterminowanych (bo w momencie generowania jeszcze
+// go nie ma — nadajemy go dopiero w reassignLps) i wstawia placeholder typu
+// "Case LP? — Imię". Skoro już znamy prawdziwe lp każdego z priorytet_dzis,
+// podmieniamy to w tekście deterministycznie zamiast liczyć na to, że model
+// się zastosuje do instrukcji w prompcie.
+function fixLpMentionsInComment(parsed) {
+  if (!parsed.komentarz_dzienny || !Array.isArray(parsed.priorytet_dzis)) return;
+  parsed.priorytet_dzis.forEach((item) => {
+    if (!item || !item.imie || item.lp === undefined) return;
+    const escapedName = String(item.imie).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`LP\\s*\\??\\s*(\\d+)?\\s*—\\s*${escapedName}`, 'g');
+    parsed.komentarz_dzienny = parsed.komentarz_dzienny.replace(re, `LP${item.lp} — ${item.imie}`);
+  });
+}
+
+// Model czasem liczy plan.*_count niespójnie z faktyczną długością tablic
+// (zaobserwowane w testach: inne_feedback_count=8 przy tablicy długości 7) —
+// app.html wyświetla plan[key] wprost jako kafelek, więc licznik musi być
+// prawdziwy. Tu też egzekwujemy limit "max 8" dla kategorii z feedbackiem i
+// liczymy backlog z odciętej reszty, zamiast ufać, że model sam przyciął.
+function postProcessCounts(parsed) {
+  const kat = parsed.kategorie || {};
+  const capWithBacklog = (key, cap) => {
+    const arr = Array.isArray(kat[key]) ? kat[key] : [];
+    const backlog = Math.max(0, arr.length - cap);
+    if (arr.length > cap) kat[key] = arr.slice(0, cap);
+    return { count: Math.min(arr.length, cap), backlog };
+  };
+  const wf = capWithBacklog('wyceny_z_feedbackiem', 8);
+  const inf = capWithBacklog('inne_z_feedbackiem', 8);
+
+  parsed.plan = parsed.plan || {};
+  parsed.plan.nowe_count = Array.isArray(kat.nowe) ? kat.nowe.length : 0;
+  parsed.plan.wyceny_feedback_count = wf.count;
+  parsed.plan.wyceny_feedback_backlog = wf.backlog;
+  parsed.plan.inne_feedback_count = inf.count;
+  parsed.plan.inne_feedback_backlog = inf.backlog;
+  parsed.plan.nieodebrane_count = Array.isArray(kat.nieodebrane) ? kat.nieodebrane.length : 0;
+  parsed.plan.wyceny_historyczne_count = Array.isArray(kat.wyceny_historyczne) ? kat.wyceny_historyczne.length : 0;
+  parsed.plan.zalegle_feedbacki_count = Array.isArray(kat.zalegle_feedbacki) ? kat.zalegle_feedbacki.length : 0;
+  parsed.plan.priorytet_dzis_count = Array.isArray(parsed.priorytet_dzis) ? parsed.priorytet_dzis.length : 0;
+}
+
+function buildUmowaSystemPrompt(dzisiaj, godzina) {
+  return `Jesteś asystentem operacyjnym LumLum (premium oświetlenie LED COB, lumlum.co).
+Generujesz codzienną Umowę dla handlowca Lorenzzo na podstawie danych z Supabase.
+Generujesz WYŁĄCZNIE czysty JSON — bez tekstu przed, bez komentarza, bez markdown, bez backtick. Sam obiekt JSON.
+
+---
+
+## DANE WEJŚCIOWE
+
+Dostajesz dziewięć zestawów danych, każdy jako tablica obiektów JSON z nazwanymi polami (nie kolumny arkusza indeksowane liczbami):
+
+**STANDUP LOG ostatnie 3 dni** — ostatnie 3 wiersze dziennego logu, malejąco po dacie. Pola: \`data\`, \`komentarz_dzienny_poprzedniej_umowy\` (co handlowiec miał zrobić poprzednio), \`podsumowanie_dnia\` (JSON podsumowania dnia albo null).
+
+**LOG ZMIAN wczoraj** — wczorajsze zmiany statusów/rozmowy w CRM. Pola: \`telefon\`, \`data_zmiany\`, \`status_przed\`, \`status_po\`, \`opis\`, \`czas_trwania_s\`, \`disposition\`.
+
+**LOG TELEFONÓW DZIŚ (Zadarma)** — dzisiejsze połączenia (przychodzące/wychodzące/nieodebrane) już zarejestrowane w systemie. Pola identyczne jak wyżej. Jeśli pusta tablica, pomiń bez komentarza — oznacza, że dziś jeszcze nikt nie dzwonił.
+
+**LEADY NOWE** — leady ze statusem "Nowy", max 3 dni, limit 10, najnowsze pierwsze.
+**WYCENY AKTYWNE z feedbackiem** — leady ze statusem "Wycena wysłana" z terminem feedbacku dziś lub wcześniej, najstarszy feedback pierwszy.
+**LEADY AKTYWNE z feedbackiem** — leady w innym statusie (nie "Wycena wysłana"/"Stracony"/"Sprzedane") z terminem feedbacku w ostatnich 7 dniach, najstarszy feedback pierwszy.
+**LEADY NIEODEBRANE ostatnie 7 dni** — status "Nie odebrał", limit 10, najwięcej prób nieodebrania pierwsze.
+
+Pola każdego leada: \`id\`, \`id_wyceny\`, \`data_dolaczenia\`, \`imie\`, \`telefon\`, \`email\`, \`status\`, \`opis\`, \`data_feedbacku\`, \`temperatura\`, \`ostatni_kontakt\`, \`ilosc_telefonow\` (celowo puste — nie licz go, przepisz jak jest), \`produkty\`, \`ocena_ai\`, \`link_formularz\`, \`data_wyceny\`, \`kwota\`.
+
+**WYCENY HISTORYCZNE** — do 10 wycen: najpierw te z feedbackiem (termin dziś lub wcześniej), potem uzupełnienie najstarszymi otwartymi ("Open"), bez duplikatów po ID. Pola: \`id_wyceny\`, \`data_stworzenia\`, \`data_feedbacku\`, \`komentarz\`, \`typ\`, \`status\`, \`imie\`, \`telefon\`, \`email\`, \`link_formularz\`, \`kwota\`.
+
+**NAJBARDZIEJ PRZETERMINOWANE FEEDBACKI** — próbka (top N po dacie) z pełnej listy WSZYSTKICH leadów z przeterminowanym feedbackiem, każdego statusu, bez limitu dni wstecz — siatka bezpieczeństwa na wypadek, że case wypadł z powyższych kategorii (limit dni/limit 8 do wyświetlenia). Pełna lista trafi do osobnej kategorii "zalegle_feedbacki" automatycznie, deterministycznie, PO twojej odpowiedzi — nie musisz jej budować ani kategoryzować. Ta próbka jest tu wyłącznie po to, żebyś mógł wyłapać naprawdę zapomniany, ważny case do \`priorytet_dzis\`, jeśli na to zasługuje wg poniższych kryteriów.
+
+---
+
+## LOGIKA BUDOWANIA UMOWY
+
+### Numeracja LP
+Przydziel \`lp\` ciągle przez wszystkie kategorie od 1 do N, unikalnie — dwa różne case'y NIGDY nie mogą mieć tego samego lp (lp identyfikuje case'a jednoznacznie, edycja po lp dotyka wszystkiego co je współdzieli). Case'y w sekcji "priorytet_dzis" mają ten sam lp co w swojej kategorii źródłowej — nie tworzą osobnej puli numerów. To pole i tak zostanie zweryfikowane i w razie kolizji poprawione po twojej odpowiedzi, ale rób to poprawnie od razu.
+
+### Priorytet dziś (max 5) — czytaj jak doświadczony analityk CRM, nie jak wyszukiwarka słów kluczowych
+
+Zanim wybierzesz, PRZECZYTAJ dokładnie pole \`opis\` każdego case'a ze wszystkich zestawów danych (włącznie z próbką NAJBARDZIEJ PRZETERMINOWANE FEEDBACKI) — to prawdziwe notatki handlowca: co ustalono, co obiecano, na czym stanęło. Nie szukaj samych fraz-kluczy, zrozum na jakim etapie faktycznie jest sprawa.
+
+1. **Czyja jest teraz piłka?** To najważniejsze rozróżnienie:
+   - **Czeka na nas** — klient o coś zapytał, czegoś oczekuje, albo minął termin, w którym MY mieliśmy się odezwać (wysłać link/wycenę, oddzwonić z odpowiedzią, potwierdzić termin montażu) → realny kandydat do priorytetu.
+   - **Czeka na klienta** — klient ma coś dostarczyć/zdecydować (przesłać zdjęcia, zrobić pomiar, skonsultować z rodziną) i nie ma sygnału, że to już się wydarzyło → NIE dawaj do priorytetu, nawet jeśli formalnie zaległy feedback — nic konkretnego nie ma dziś do zrobienia poza ewentualnym przypomnieniem, jeśli minęło naprawdę dużo czasu (wtedy samo przypomnienie STAJE SIĘ konkretną czynnością na dziś).
+2. **Konkretne deklaracje czasowe w opisie** — jeśli w notatce jest zapisany termin ("oddzwonię w czwartek", "dam znać po pomiarach w tym tygodniu", "kontakt po 16") i ten termin przypada dziś albo już minął — to mocny, konkretny sygnał do priorytetu.
+3. Jawne sygnały gotowości zakupu w opisie: "gotowy kupić", "powiedział że zamówi", "chcę zamówić", "biorę", "remont za miesiąc", "elektryk już jest", "mam projekt gotowy", "kiedy mogę zamówić".
+4. Temperatura GORĄCY.
+5. Zaległy feedback, ale TYLKO gdy opis daje jasny, wykonalny następny krok — samo "stary case, dawno feedback" bez kontekstu w opisie to za mało.
+6. Wyższa kwota jako tiebreaker przy remisie.
+
+Nie wrzucaj case'a do priorytetu tylko po to, żeby wypełnić limit 5 — jeśli opis pokazuje sprawę martwą/w zawieszeniu bez konkretnego triggera ("zastanawia się", "nic więcej nie wiadomo", brak odpowiedzi bez deklaracji terminu), zostaw ją poza priorytetem. Lepiej 3-4 dobre case'y niż 5 na siłę.
+
+### Kategorie w wyjściu — max do wyświetlenia
+**nowe** — wszystkie z LEADY NOWE.
+**wyceny_z_feedbackiem** — max 8 z WYCENY AKTYWNE z feedbackiem. Resztę zlicz jako backlog.
+**inne_z_feedbackiem** — max 8 z LEADY AKTYWNE z feedbackiem. Resztę zlicz jako backlog.
+**nieodebrane** — wszystkie z LEADY NIEODEBRANE (już max 10 z danych wejściowych).
+**wyceny_historyczne** — wszystkie z WYCENY HISTORYCZNE (już max 10 z danych wejściowych).
+**zalegle_feedbacki** — NIE buduj tej kategorii, zostaw ją całkowicie pominiętą albo pustą tablicę. Zostanie wypełniona automatycznie po twojej odpowiedzi z pełnej listy (patrz opis NAJBARDZIEJ PRZETERMINOWANE FEEDBACKI wyżej).
+
+### Temperatura (jeśli pole puste — oceń sam na podstawie opisu)
+- GORĄCY: konkretny termin, projekt gotowy, elektryk ustalony, pyta o zamówienie
+- LETNI: "muszę pomierzyć", "zastanowię się", "czekam na projekt"
+- ZIMNY: brak kontekstu, wielokrotne nieodebrane, "może kiedyś"
+
+### Komentarz dzienny (pole główne, jedno na całą umowę)
+Max 5 zdań. Piszesz do handlowca, nie do klienta.
+Struktura każdego zdania: "Case LP[N] — [imię] — [konkretna rekomendacja co powiedzieć lub zrobić]." Jeśli case pochodzi z próbki NAJBARDZIEJ PRZETERMINOWANE FEEDBACKI i nie masz dla niego numeru lp (nie występuje w żadnej z pięciu głównych kategorii) — pomiń "LP[N] —" i zacznij od samego imienia, nie wstawiaj "LP?" ani żadnego zmyślonego numeru.
+Rekomendacja to nie opis sytuacji, to instrukcja: co powiedzieć, czego się dowiedzieć, jak zamknąć.
+Wymieniaj tylko case'y które mają konkretny powód do działania dziś: umówiona rozmowa, gorący lead, zaległy feedback z sygnałem zakupu, albo coś co wynikło z dzisiejszego/wczorajszego telefonu.
+Ton: bezpośredni, jakbyś był doświadczonym sprzedawcą który mówi co robić.
+
+### Czego nie rób
+- \`row_number\` zawsze 0 — nieużywane w tym systemie, nie wymyślaj
+- Nie duplikuj case'ów między kategoriami
+- Nie wrzucaj do priorytet_dzis leadów wyłącznie za zaległy feedback bez innych sygnałów
+- Jeśli pole puste w danych, zwróć "" dla stringów i 0 dla liczb, nigdy null
+- Telefon zawsze w formacie +48XXXXXXXXX, nigdy bez plusa
+- Pole \`zadzwonil_dzis\` ustaw według obecności telefonu w LOG TELEFONÓW DZIŚ — i tak zostanie nadpisane deterministycznie po twojej odpowiedzi, więc rób najlepsze przybliżenie
+
+---
+
+## FORMAT WYJŚCIOWY — TYLKO JSON
+
+\`\`\`
+{
+  "data": "DD.MM.YYYY",
+  "wygenerowano": "HH:MM",
+  "status": "draft",
+  "ostatnie_3_dni": "",
+  "kontekst": "",
+  "komentarz_dzienny": "",
+  "plan": {
+    "priorytet_dzis_count": 0,
+    "nowe_count": 0,
+    "wyceny_feedback_count": 0,
+    "wyceny_feedback_backlog": 0,
+    "inne_feedback_count": 0,
+    "inne_feedback_backlog": 0,
+    "nieodebrane_count": 0,
+    "wyceny_historyczne_count": 0,
+    "zalegle_feedbacki_count": 0,
+    "zadzwoniono_dzis": 0
+  },
+  "priorytet_dzis": [
+    {
+      "lp": 0, "row_number": 0, "kategoria": "", "id_wyceny": "", "imie": "", "telefon": "", "email": "",
+      "status": "", "opis": "", "data_feedbacku": "", "temperatura": "", "ostatni_kontakt": "",
+      "ilosc_telefonow": "", "produkty": "", "ocena_ai": "", "link_formularz": "", "data_wyceny": "",
+      "kwota": 0, "zadzwonil_dzis": false, "zamkniete": 0
+    }
+  ],
+  "kategorie": {
+    "nowe": [
+      {
+        "lp": 0, "row_number": 0, "id_wyceny": "", "data_dolaczenia": "", "imie": "", "telefon": "", "email": "",
+        "status": "", "opis": "", "data_feedbacku": "", "temperatura": "", "ostatni_kontakt": "",
+        "ilosc_telefonow": "", "produkty": "", "ocena_ai": "", "link_formularz": "", "data_wyceny": "",
+        "kwota": 0, "zadzwonil_dzis": false, "zamkniete": 0
+      }
+    ],
+    "wyceny_z_feedbackiem": [],
+    "inne_z_feedbackiem": [],
+    "nieodebrane": [],
+    "wyceny_historyczne": [
+      {
+        "lp": 0, "row_number": 0, "id_wyceny": "", "data_stworzenia": "", "data_feedbacku": "",
+        "dni_temu": 0, "imie": "", "telefon": "", "kwota": 0, "komentarz": "", "link_formularz": "",
+        "zadzwonil_dzis": false, "zamkniete": 0
+      }
+    ],
+    "zalegle_feedbacki": []
+  }
+}
+\`\`\`
+
+Zasady:
+- \`zamkniete\` zawsze 0 przy generowaniu
+- \`status\` zawsze "draft" przy generowaniu
+- \`dni_temu\` dla wycen historycznych: liczba dni od data_stworzenia do dziś
+- \`lp\` ciągłe przez wszystkie kategorie
+- \`ostatnie_3_dni\`: 2-3 zdania ze STANDUP LOG, co było, co wykonano, co przechodzi
+- \`kontekst\`: 2-3 zdania z LOG ZMIAN wczoraj i LOG TELEFONÓW DZIŚ, co się ruszyło, co stoi
+
+---
+
+## KONTEKST PRODUKTOWY
+
+Taśma COB cyfrowa: 75 zł/m | LumControl: 350 zł | Zasilacz 150W 24V: 200 zł | Pilot MONO: 100 zł
+Referencja: 10m + LumControl + zasilacz + pilot = ok. 1400 zł
+Taśmy powyżej 12m wymagają zasilania dwustronnego
+
+Statusy B2C: Nowy, Po pierwszym tel, Wycena wysłana, Zadzwonić jeszcze raz, Nie odebrał, Przyszłościowy, Sprzedane, Stracony
+
+Dzisiejsza data: ${dzisiaj}
+Godzina wygenerowania: ${godzina}
+
+Wygeneruj umowę na dziś. Zwróć TYLKO czysty JSON, zero tekstu poza nim.`;
+}
+
+function isCronAuthorized(req) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+  if (req.headers.authorization === `Bearer ${secret}`) return true;
+  if (req.query.secret === secret) return true;
+  return false;
+}
+
+app.all('/api/cron/umowa-draft', async (req, res) => {
+  const supabase = getClient();
+  let dataIso = null;
+  try {
+    requireOpenAiKey();
+    if (!isCronAuthorized(req)) return res.status(401).json({ error: 'Brak autoryzacji' });
+
+    const now = new Date();
+    const dzisiaj = warsawDateStr(now);
+    const godzina = warsawTimeStr(now);
+    const { y, m, d } = warsawParts(now);
+    dataIso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+    const wczoraj = warsawDayRange(-1);
+    const dzis = warsawDayRange(0);
+
+    // Osobno, przed resztą — leady-fetche potrzebują tej mapy do wypełnienia
+    // pola produkty.
+    const produktyByPhone = await fetchProduktyByPhone(supabase);
+
+    const [standupLog, logZmianWczoraj, logZmianDzis, nowe, wycenyZFeedbackiem, inneZFeedbackiem, nieodebrane, wycenyHistoryczne, zalegleRaw] = await Promise.all([
+      fetchStandupLog3(supabase),
+      fetchLogZmianRange(supabase, wczoraj.start, wczoraj.end),
+      fetchLogZmianRange(supabase, dzis.start, dzis.end),
+      fetchNowe(supabase, produktyByPhone),
+      fetchWycenyZFeedbackiem(supabase, produktyByPhone),
+      fetchInneZFeedbackiem(supabase, produktyByPhone),
+      fetchNieodebrane(supabase, produktyByPhone),
+      fetchWycenyHistoryczne(supabase),
+      fetchZalegleFeedbacki(supabase, produktyByPhone),
+    ]);
+
+    const calledSet = buildCalledTodaySet(logZmianDzis);
+
+    // Modelowi pokazujemy tylko najbardziej przeterminowane z zaległych (do
+    // ewentualnego wyłapania w priorytet_dzis) — pełną, nieobciętą listę i
+    // tak wstawiamy deterministycznie niżej (applyZalegleFeedbacki), więc nie
+    // trzeba pchać w prompt setek wierszy, żeby kategoria "Zaległe feedbacki"
+    // była kompletna.
+    const zalegleDlaModelu = zalegleRaw.slice(0, 20);
+
+    const userContent = [
+      `Dzisiejsza data: ${dzisiaj}`,
+      `Godzina wygenerowania: ${godzina}`,
+      '',
+      'STANDUP LOG ostatnie 3 dni:', JSON.stringify(standupLog),
+      '',
+      'LOG ZMIAN wczoraj:', JSON.stringify(logZmianWczoraj),
+      '',
+      'LOG TELEFONÓW DZIŚ (Zadarma):', JSON.stringify(logZmianDzis),
+      '',
+      'LEADY NOWE:', JSON.stringify(nowe),
+      '',
+      'WYCENY AKTYWNE z feedbackiem:', JSON.stringify(wycenyZFeedbackiem),
+      '',
+      'LEADY AKTYWNE z feedbackiem:', JSON.stringify(inneZFeedbackiem),
+      '',
+      'LEADY NIEODEBRANE ostatnie 7 dni:', JSON.stringify(nieodebrane),
+      '',
+      'WYCENY HISTORYCZNE:', JSON.stringify(wycenyHistoryczne),
+      '',
+      `NAJBARDZIEJ PRZETERMINOWANE FEEDBACKI (top ${zalegleDlaModelu.length} z ${zalegleRaw.length} łącznie, tylko do wglądu — patrz zasady niżej):`,
+      JSON.stringify(zalegleDlaModelu),
+    ].join('\n');
+
+    const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_API_KEY}` },
+      body: JSON.stringify({
+        model: UMOWA_MODEL,
+        // gpt-5-mini na tym API nie przyjmuje temperature != domyślnej (1) —
+        // scenariusz Make ustawiał 0, ale to ustawienie modelu w innej wersji
+        // API, tu odrzucane jako "unsupported_value". Pomijamy parametr.
+        response_format: { type: 'json_object' },
+        reasoning_effort: 'minimal',
+        messages: [
+          { role: 'system', content: buildUmowaSystemPrompt(dzisiaj, godzina) },
+          { role: 'user', content: userContent },
+        ],
+      }),
+    });
+    if (!aiRes.ok) {
+      const body = await aiRes.text();
+      throw new Error(`OpenAI ${aiRes.status}: ${body.slice(0, 300)}`);
+    }
+    const aiBody = await aiRes.json();
+    const content = aiBody.choices?.[0]?.message?.content || '';
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      throw new Error('AI zwróciło JSON, którego nie da się sparsować');
+    }
+    if (!parsed || typeof parsed !== 'object' || !parsed.kategorie || !parsed.plan) {
+      throw new Error('Odpowiedź AI nie wygląda na dokument Umowy (brak "kategorie"/"plan")');
+    }
+
+    const { phoneToLp, nextLp } = reassignLps(parsed);
+    applyZalegleFeedbacki(parsed, zalegleRaw, phoneToLp, nextLp);
+    fixLpMentionsInComment(parsed);
+    postProcessCalledToday(parsed, calledSet);
+    postProcessCounts(parsed);
+
+    const { error: upsertErr } = await supabase
+      .from(STANDUP_TABLE)
+      .upsert({ Data: dataIso, [DOCS.umowa.draft]: parsed }, { onConflict: 'Data' });
+    if (upsertErr) throw upsertErr;
+
+    await logOperation(supabase, 'umowa_draft_cron', 'ok', { data: dataIso, wygenerowano: godzina });
+    res.json({ json: parsed });
+  } catch (err) {
+    await logOperation(supabase, 'umowa_draft_cron', 'error', { data: dataIso, message: err.message });
     handleError(res, err, 502);
   }
 });
