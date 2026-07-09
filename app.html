@@ -1087,6 +1087,111 @@
     @keyframes btn-spin {
       to { transform: rotate(360deg); }
     }
+
+    .polaczenia-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.9rem;
+    }
+
+    .polaczenia-toggle {
+      display: flex;
+      gap: 0.4rem;
+    }
+
+    .polaczenia-toggle button {
+      font-size: 0.82rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+
+    .polaczenia-toggle button.is-active {
+      background: var(--accent-soft);
+      color: var(--text-primary);
+      border-color: transparent;
+    }
+
+    .polaczenia-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .polaczenie-row {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .polaczenie-row summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.4rem 0.8rem;
+      padding: 0.6rem 0.85rem;
+    }
+
+    .polaczenie-row summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .polaczenie-row summary:hover {
+      background: var(--accent-soft);
+    }
+
+    .polaczenie-row .czas {
+      font-variant-numeric: tabular-nums;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      flex: 0 0 auto;
+    }
+
+    .polaczenie-row .kierunek {
+      font-size: 0.76rem;
+      padding: 0.15rem 0.55rem;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--text-secondary);
+      flex: 0 0 auto;
+    }
+
+    .polaczenie-row .telefon {
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--text-primary);
+    }
+
+    .polaczenie-row .czas-trwania,
+    .polaczenie-row .status-zmiana {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+
+    .polaczenie-body {
+      padding: 0 0.85rem 0.85rem 0.85rem;
+      font-size: 0.88rem;
+      line-height: 1.5;
+      color: var(--text-primary);
+    }
+
+    .polaczenie-body .polaczenie-label {
+      color: var(--text-secondary);
+      font-weight: 600;
+    }
+
+    .polaczenia-empty {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
   </style>
 </head>
 <body>
@@ -1137,6 +1242,17 @@
 
     <section id="kategorie-section" style="display:none;">
       <div class="kategorie-wrap" id="kategorie-wrap"></div>
+    </section>
+
+    <section class="card" id="polaczenia-card">
+      <div class="polaczenia-head">
+        <h2>Połączenia</h2>
+        <div class="polaczenia-toggle" id="polaczenia-toggle">
+          <button type="button" data-offset="0" class="is-active">Dziś</button>
+          <button type="button" data-offset="-1">Wczoraj</button>
+        </div>
+      </div>
+      <div class="polaczenia-list" id="polaczenia-list"></div>
     </section>
   </div>
 
@@ -2231,6 +2347,125 @@
     });
 
     init();
+
+    // ── Połączenia (dziennik aktywności handlowca) ─────────────────────────
+    // Niezależne od Umowy/Standupu wyżej — własny fetch, własny stan, nie
+    // wchodzi w DOC_FIELDS/composer, żeby błąd w jednym nie blokował drugiego.
+    function formatPolaczenieCzas(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return '';
+      return d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function formatPolaczenieTelefon(v) {
+      const digits = String(v || '').replace(/\D/g, '');
+      return digits ? `+${digits}` : '—';
+    }
+
+    function polaczenieKierunekLabel(row) {
+      if (row.kierunek === 'przychodzące') return row.disposition === 'no_answer' ? 'nieodebrane' : 'przychodzące';
+      if (row.kierunek === 'wychodzące') return 'wychodzące';
+      return row.disposition === 'no_answer' ? 'nieodebrane' : '—';
+    }
+
+    function appendPolaczenieField(container, label, value) {
+      if (!value) return;
+      const p = document.createElement('p');
+      const strong = document.createElement('span');
+      strong.className = 'polaczenie-label';
+      strong.textContent = `${label}: `;
+      p.appendChild(strong);
+      p.appendChild(document.createTextNode(value));
+      container.appendChild(p);
+    }
+
+    function renderPolaczenia(rows) {
+      const list = document.getElementById('polaczenia-list');
+      list.innerHTML = '';
+      if (!rows.length) {
+        const empty = document.createElement('p');
+        empty.className = 'polaczenia-empty';
+        empty.textContent = 'Brak połączeń.';
+        list.appendChild(empty);
+        return;
+      }
+      rows.forEach((row) => {
+        const details = document.createElement('details');
+        details.className = 'polaczenie-row';
+
+        const summary = document.createElement('summary');
+        const czas = document.createElement('span');
+        czas.className = 'czas';
+        czas.textContent = formatPolaczenieCzas(row.data_zmiany);
+        const kierunek = document.createElement('span');
+        kierunek.className = 'kierunek';
+        kierunek.textContent = polaczenieKierunekLabel(row);
+        const telefon = document.createElement('span');
+        telefon.className = 'telefon';
+        telefon.textContent = formatPolaczenieTelefon(row.telefon);
+        const czasTrwania = document.createElement('span');
+        czasTrwania.className = 'czas-trwania';
+        czasTrwania.textContent = `${row.czas_trwania_s || 0}s`;
+        summary.append(czas, kierunek, telefon, czasTrwania);
+        if (row.handlowiec) {
+          const handlowiec = document.createElement('span');
+          handlowiec.className = 'status-zmiana';
+          handlowiec.textContent = row.handlowiec;
+          summary.appendChild(handlowiec);
+        }
+        if (row.status_przed || row.status_po) {
+          const statusZmiana = document.createElement('span');
+          statusZmiana.className = 'status-zmiana';
+          statusZmiana.textContent = `${row.status_przed || '—'} → ${row.status_po || '—'}`;
+          summary.appendChild(statusZmiana);
+        }
+        details.appendChild(summary);
+
+        const body = document.createElement('div');
+        body.className = 'polaczenie-body';
+        appendPolaczenieField(body, 'Podsumowanie', row.opis);
+        appendPolaczenieField(body, 'Notatki przed', row.opis_przed);
+        appendPolaczenieField(body, 'Notatki po', row.opis_po);
+        appendPolaczenieField(body, 'Data feedbacku przed', row.data_feedbacku_przed);
+        appendPolaczenieField(body, 'Data feedbacku po', row.data_feedbacku_po);
+        appendPolaczenieField(body, 'Transkrypcja', row.transkrypcja);
+        if (!body.children.length) {
+          const empty = document.createElement('p');
+          empty.className = 'polaczenia-empty';
+          empty.textContent = 'Brak dodatkowych danych.';
+          body.appendChild(empty);
+        }
+        details.appendChild(body);
+
+        list.appendChild(details);
+      });
+    }
+
+    async function loadPolaczenia(offset) {
+      document.querySelectorAll('#polaczenia-toggle button').forEach((btn) => {
+        btn.classList.toggle('is-active', Number(btn.dataset.offset) === offset);
+      });
+      const list = document.getElementById('polaczenia-list');
+      list.innerHTML = '<p class="polaczenia-empty">Wczytywanie…</p>';
+      try {
+        const res = await fetch(`${API_BASE}/api/log-polaczen?offset=${offset}`);
+        if (!res.ok) throw new Error(`Błąd ${res.status}`);
+        const body = await res.json();
+        renderPolaczenia(body.data || []);
+      } catch (err) {
+        list.innerHTML = '';
+        const errNode = document.createElement('p');
+        errNode.className = 'polaczenia-empty';
+        errNode.textContent = `Nie udało się wczytać połączeń: ${err.message}`;
+        list.appendChild(errNode);
+      }
+    }
+
+    document.querySelectorAll('#polaczenia-toggle button').forEach((btn) => {
+      btn.addEventListener('click', () => loadPolaczenia(Number(btn.dataset.offset)));
+    });
+    loadPolaczenia(0);
 
     const siteHeader = document.getElementById('site-header');
     window.addEventListener('scroll', () => {

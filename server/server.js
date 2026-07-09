@@ -543,6 +543,11 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     const label = answered ? 'answered' : 'no_answer';
     const opis = await summarizeCall(transcript, label);
     const statusBefore = lead ? lead['Deal stage'] : wycena ? wycena['Status'] : null;
+    const opisBefore = lead ? lead['Notes'] : wycena ? wycena['Komentarz'] : null;
+    const feedbackBefore = lead ? lead['Data Feedbacku'] : wycena ? wycena['Data Feedbacku'] : null;
+    // called_did = numer, na który zadzwonił klient (przychodzące); dst = numer,
+    // który wykręcił handlowiec (wychodzące) — patrz komentarz o kształcie payloadu wyżej.
+    const kierunek = call.called_did ? 'przychodzące' : call.dst ? 'wychodzące' : null;
 
     const { error: insertErr } = await supabase.from(LOG_ZMIAN_TABLE).insert({
       zrodlo: 'zadarma_webhook',
@@ -550,6 +555,13 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       status_przed: statusBefore,
       status_po: statusBefore,
       opis,
+      opis_przed: opisBefore,
+      opis_po: opisBefore,
+      data_feedbacku_przed: feedbackBefore,
+      data_feedbacku_po: feedbackBefore,
+      kierunek,
+      transkrypcja: transcript || null,
+      handlowiec: process.env.DEFAULT_HANDLOWIEC || null,
       czas_trwania_s: Number(call.duration) || 0,
       disposition: label,
       pbx_call_id: call.pbx_call_id || null,
@@ -1366,6 +1378,73 @@ app.all('/api/cron/umowa-draft', async (req, res) => {
     res.json({ json: parsed });
   } catch (err) {
     await logOperation(supabase, 'umowa_draft_cron', 'error', { data: dataIso, message: err.message });
+    handleError(res, err, 502);
+  }
+});
+
+// Domyka dzień: dla dzisiejszych wierszy Log zmian dopasowanych do leada/
+// wyceny, odczytuje AKTUALNY status/notatki/datę feedbacku tego rekordu i
+// wpisuje je jako "_po" — handlowiec edytuje te pola poza tą appką (Sheets/
+// Supabase), więc nie ma innego miejsca w kodzie, w którym dałoby się to
+// złapać na żywo. Raz dziennie wieczorem wystarcza (patrz vercel.json).
+app.all('/api/cron/log-polaczen-closeout', async (req, res) => {
+  const supabase = getClient();
+  try {
+    if (!isCronAuthorized(req)) return res.status(401).json({ error: 'Brak autoryzacji' });
+
+    const { start, end } = warsawDayRange(0);
+    const { data: rows, error: fetchErr } = await supabase
+      .from(LOG_ZMIAN_TABLE)
+      .select('*')
+      .gte('data_zmiany', start.toISOString())
+      .lt('data_zmiany', end.toISOString())
+      .not('dopasowano_tabela', 'is', null);
+    if (fetchErr) throw fetchErr;
+
+    let updated = 0;
+    for (const row of rows || []) {
+      const { data: current, error: currentErr } = await supabase
+        .from(row.dopasowano_tabela)
+        .select('*')
+        .eq('ID', row.dopasowano_id)
+        .limit(1);
+      if (currentErr || !current?.length) continue;
+      const record = current[0];
+      const isLead = row.dopasowano_tabela === LEADY_B2C_TABLE;
+      const { error: updateErr } = await supabase
+        .from(LOG_ZMIAN_TABLE)
+        .update({
+          status_po: isLead ? record['Deal stage'] : record['Status'],
+          opis_po: isLead ? record['Notes'] : record['Komentarz'],
+          data_feedbacku_po: record['Data Feedbacku'],
+        })
+        .eq('id', row.id);
+      if (!updateErr) updated += 1;
+    }
+
+    await logOperation(supabase, 'log_polaczen_closeout_cron', 'ok', { wierszy: rows?.length || 0, zaktualizowano: updated });
+    res.json({ wierszy: rows?.length || 0, zaktualizowano: updated });
+  } catch (err) {
+    await logOperation(supabase, 'log_polaczen_closeout_cron', 'error', { message: err.message });
+    handleError(res, err, 502);
+  }
+});
+
+// Podgląd dziennika połączeń handlowca — offset=0 dziś, offset=-1 wczoraj itd.
+app.get('/api/log-polaczen', async (req, res) => {
+  try {
+    const supabase = getClient();
+    const offset = Number(req.query.offset) || 0;
+    const { start, end } = warsawDayRange(offset);
+    const { data, error } = await supabase
+      .from(LOG_ZMIAN_TABLE)
+      .select('*')
+      .gte('data_zmiany', start.toISOString())
+      .lt('data_zmiany', end.toISOString())
+      .order('data_zmiany', { ascending: false });
+    if (error) throw error;
+    res.json({ data: data || [] });
+  } catch (err) {
     handleError(res, err, 502);
   }
 });
