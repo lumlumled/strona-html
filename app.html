@@ -296,6 +296,57 @@
       padding: 0.75rem 0.95rem;
     }
 
+    .card.zmiany {
+      border-left: 3px solid var(--good);
+    }
+
+    .zmiany-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+    }
+
+    .zmiany-item {
+      font-size: 0.9rem;
+      line-height: 1.5;
+      color: var(--text-primary);
+      padding-left: 1.1rem;
+      position: relative;
+    }
+
+    .zmiany-item::before {
+      content: '•';
+      position: absolute;
+      left: 0.15rem;
+      color: var(--text-secondary);
+    }
+
+    .zmiany-item.is-added::before {
+      content: '+';
+      color: var(--good);
+      font-weight: 700;
+    }
+
+    .zmiany-item.is-removed::before {
+      content: '–';
+      color: var(--feedback-overdue);
+      font-weight: 700;
+    }
+
+    .zmiany-item .zmiany-name {
+      font-weight: 600;
+    }
+
+    .zmiany-item .zmiany-arrow {
+      color: var(--text-secondary);
+      margin: 0 0.3rem;
+    }
+
+    .zmiany-empty {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+    }
+
     .stat-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
@@ -780,6 +831,48 @@
 
     .field-grid .field.wide {
       grid-column: 1 / -1;
+    }
+
+    .produkty-details > summary {
+      list-style: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      color: var(--text-primary);
+      font-size: 0.86rem;
+    }
+
+    .produkty-details > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .produkty-details > summary::before {
+      content: '▸';
+      display: inline-block;
+      font-size: 1rem;
+      line-height: 0.6;
+      color: var(--text-muted);
+      transition: transform 0.15s ease;
+    }
+
+    .produkty-details[open] > summary::before {
+      transform: rotate(90deg);
+    }
+
+    .produkty-list {
+      list-style: none;
+      margin: 0.4rem 0 0;
+      padding: 0 0 0 0.9rem;
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+
+    .produkty-list li {
+      font-size: 0.86rem;
+      color: var(--text-primary);
     }
 
     .field {
@@ -1288,6 +1381,16 @@
       color: var(--text-muted);
     }
 
+    .polaczenie-row .zamkniete-dzis-badge {
+      font-size: 0.76rem;
+      padding: 0.15rem 0.55rem;
+      border-radius: 999px;
+      background: var(--good);
+      color: var(--accent-contrast);
+      flex: 0 0 auto;
+      font-weight: 600;
+    }
+
     .polaczenie-body {
       padding: 0 0.85rem 0.85rem 0.85rem;
       font-size: 0.88rem;
@@ -1331,6 +1434,11 @@
     </div>
 
     <p id="status"></p>
+
+    <section class="card zmiany" id="zmiany-card" style="display:none;">
+      <h2>Wprowadzone zmiany — do zatwierdzenia</h2>
+      <div class="zmiany-list" id="zmiany-list"></div>
+    </section>
 
     <section class="card" id="kontekst-card" style="display:none;">
       <h2>Kontekst</h2>
@@ -1458,6 +1566,168 @@
       return map;
     }
 
+    // Zmiany do zatwierdzenia: diff między oryginalnym draftem a aktualną
+    // poprawką AI (skumulowany, nie tylko ostatnie polecenie) — pokazywane
+    // nad Kontekstem/Komentarzem, żeby przed zatwierdzeniem było widać
+    // dokładnie co się zmieniło, zamiast nowa wersja po prostu "podmieniała"
+    // starą bez śladu.
+    function zmianaCaseKey(c) {
+      return c.lp !== undefined && c.lp !== null ? `lp:${c.lp}` : `tel:${normalizePhone(c.telefon)}`;
+    }
+
+    // Numer LP z przodu (np. "12 Wojciech Mądrala") — żeby dało się case'a
+    // z karty Zmiany łatwo znowu wskazać głosowo/tekstowo w composerze.
+    function caseLabel(c) {
+      const name = (c && c.imie) || '(brak nazwiska)';
+      return c && c.lp !== undefined && c.lp !== null ? `${c.lp} ${name}` : name;
+    }
+
+    function collectCasesByKey(doc) {
+      const map = new Map();
+      if (doc && doc.kategorie) {
+        Object.entries(doc.kategorie).forEach(([kategoria, arr]) => {
+          if (!Array.isArray(arr)) return;
+          arr.forEach((c) => { if (c) map.set(zmianaCaseKey(c), { case: c, kategoria }); });
+        });
+      }
+      return map;
+    }
+
+    const ZMIANA_FIELD_LABELS = { status: 'status', data_feedbacku: 'data feedbacku', opis: 'opis' };
+
+    function diffCaseFields(oldC, newC) {
+      const lines = [];
+      Object.keys(ZMIANA_FIELD_LABELS).forEach((field) => {
+        const ov = oldC[field] ?? (field === 'opis' ? oldC.komentarz : undefined) ?? '';
+        const nv = newC[field] ?? (field === 'opis' ? newC.komentarz : undefined) ?? '';
+        if (String(ov) !== String(nv)) {
+          lines.push({ field, before: String(ov) || '—', after: String(nv) || '—' });
+        }
+      });
+      return lines;
+    }
+
+    function diffDrafts(oldDoc, newDoc) {
+      const changes = [];
+      if (!oldDoc || !newDoc) return changes;
+
+      if ((oldDoc.komentarz_dzienny || '') !== (newDoc.komentarz_dzienny || '')) {
+        changes.push({ type: 'text', name: 'Komentarz dzienny', before: oldDoc.komentarz_dzienny || '—', after: newDoc.komentarz_dzienny || '—' });
+      }
+      if ((oldDoc.kontekst || '') !== (newDoc.kontekst || '')) {
+        changes.push({ type: 'text', name: 'Kontekst', before: oldDoc.kontekst || '—', after: newDoc.kontekst || '—' });
+      }
+
+      const oldPlan = oldDoc.plan || {};
+      const newPlan = newDoc.plan || {};
+      new Set([...Object.keys(oldPlan), ...Object.keys(newPlan)]).forEach((key) => {
+        const ov = oldPlan[key];
+        const nv = newPlan[key];
+        if (String(ov ?? '') !== String(nv ?? '')) {
+          changes.push({ type: 'text', name: PLAN_TILE_LABELS[key] || humanizeKey(key), before: String(ov ?? '—'), after: String(nv ?? '—') });
+        }
+      });
+
+      const oldPriorytet = new Set((oldDoc.priorytet_dzis || []).filter(Boolean).map(zmianaCaseKey));
+      const newPriorytet = new Set((newDoc.priorytet_dzis || []).filter(Boolean).map(zmianaCaseKey));
+      (newDoc.priorytet_dzis || []).forEach((c) => {
+        if (c && !oldPriorytet.has(zmianaCaseKey(c))) {
+          changes.push({ type: 'added', name: caseLabel(c), kategoria: 'Priorytet dziś' });
+        }
+      });
+      (oldDoc.priorytet_dzis || []).forEach((c) => {
+        if (c && !newPriorytet.has(zmianaCaseKey(c))) {
+          changes.push({ type: 'removed', name: caseLabel(c), kategoria: 'Priorytet dziś' });
+        }
+      });
+
+      const oldCases = collectCasesByKey(oldDoc);
+      const newCases = collectCasesByKey(newDoc);
+
+      newCases.forEach((entry, key) => {
+        const name = caseLabel(entry.case);
+        const oldEntry = oldCases.get(key);
+        if (!oldEntry) {
+          changes.push({ type: 'added', name, kategoria: KATEGORIA_LABELS[entry.kategoria] || entry.kategoria });
+          return;
+        }
+        if (oldEntry.kategoria !== entry.kategoria) {
+          changes.push({
+            type: 'moved',
+            name,
+            before: KATEGORIA_LABELS[oldEntry.kategoria] || oldEntry.kategoria,
+            after: KATEGORIA_LABELS[entry.kategoria] || entry.kategoria,
+          });
+        }
+        diffCaseFields(oldEntry.case, entry.case).forEach((fc) => {
+          changes.push({ type: 'field', name, field: ZMIANA_FIELD_LABELS[fc.field], before: fc.before, after: fc.after });
+        });
+      });
+
+      oldCases.forEach((entry, key) => {
+        if (!newCases.has(key)) {
+          changes.push({ type: 'removed', name: caseLabel(entry.case), kategoria: KATEGORIA_LABELS[entry.kategoria] || entry.kategoria });
+        }
+      });
+
+      return changes;
+    }
+
+    function zmianaItemNode(change) {
+      const item = document.createElement('div');
+      item.className = `zmiany-item is-${change.type === 'field' || change.type === 'moved' || change.type === 'text' ? 'changed' : change.type}`;
+
+      const appendName = (text) => {
+        const span = document.createElement('span');
+        span.className = 'zmiany-name';
+        span.textContent = text;
+        item.appendChild(span);
+      };
+      const appendArrow = (before, after) => {
+        item.appendChild(document.createTextNode(`„${before}”`));
+        const arrow = document.createElement('span');
+        arrow.className = 'zmiany-arrow';
+        arrow.textContent = '→';
+        item.appendChild(arrow);
+        item.appendChild(document.createTextNode(`„${after}”`));
+      };
+
+      if (change.type === 'added') {
+        appendName(change.name);
+        item.appendChild(document.createTextNode(`: dodany do „${change.kategoria}”`));
+      } else if (change.type === 'removed') {
+        appendName(change.name);
+        item.appendChild(document.createTextNode(`: usunięty z „${change.kategoria}”`));
+      } else if (change.type === 'moved') {
+        appendName(change.name);
+        item.appendChild(document.createTextNode(': przeniesiony '));
+        appendArrow(change.before, change.after);
+      } else if (change.type === 'field') {
+        appendName(change.name);
+        item.appendChild(document.createTextNode(`: ${change.field} `));
+        appendArrow(change.before, change.after);
+      } else if (change.type === 'text') {
+        appendName(change.name);
+        item.appendChild(document.createTextNode(': '));
+        appendArrow(change.before, change.after);
+      }
+      return item;
+    }
+
+    function renderZmiany(oldDoc, newDoc) {
+      const card = document.getElementById('zmiany-card');
+      const list = document.getElementById('zmiany-list');
+      const changes = diffDrafts(oldDoc, newDoc);
+      if (!changes.length) {
+        card.style.display = 'none';
+        list.innerHTML = '';
+        return;
+      }
+      card.style.display = 'block';
+      list.innerHTML = '';
+      changes.forEach((change) => list.appendChild(zmianaItemNode(change)));
+    }
+
     function formatPlDate(d) {
       const day = String(d.getDate()).padStart(2, '0');
       const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -1466,6 +1736,17 @@
 
     function isSameDate(a, b) {
       return a.toDateString() === b.toDateString();
+    }
+
+    // Ile dni dzieli podaną datę od PRAWDZIWEGO "dziś" (a nie od dnia, który
+    // akurat oglądamy w zakładkach) — używane do "Realizacji planu", żeby
+    // pytać /api/log-polaczen o właściwy dzień zamiast zawsze o dzisiejszy.
+    function daysOffsetFromToday(date) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const d = new Date(date);
+      d.setHours(0, 0, 0, 0);
+      return Math.round((d - today) / (24 * 60 * 60 * 1000));
     }
 
     // Kolumna "Data" w Supabase bywała zapisywana zarówno jako "DD.MM.YYYY",
@@ -1691,16 +1972,26 @@
       { key: 'ostatni_kontakt', label: 'Ostatni kontakt' },
       { key: 'ilosc_telefonow', label: 'Ilość telefonów' },
       { key: 'temperatura', label: 'Temperatura' },
+      { key: 'zadzwonil_dzis', label: 'Skontaktowane dziś', bool: true },
       { key: 'email', label: 'Email', wide: true, nowrap: true, copy: true },
     ];
 
     // Grupa 2: informacje transakcyjne — ta sama stylistyka co grupa kontaktowa.
+    // Etykiety data_wyceny/kwota/produkty zależą od tego, czy telefon dopasował
+    // się do prawdziwej Wyceny B2C (c.ma_wycene) — bez tego dopasowania to, co
+    // tu jest, to tylko notatka handlowca z rozmowy, nie oficjalna wycena.
+    // id_wyceny/data_wyceny/kwota/produkty znikają całkiem, gdy nie ma wartości
+    // (zamiast pokazywać pusty placeholder "—").
     const DEAL_FIELDS = [
-      { key: 'data_wyceny', label: 'Data wyceny' },
-      { key: 'id_wyceny', label: 'ID wyceny' },
-      { key: 'kwota', label: 'Kwota', currency: true },
-      { key: 'produkty', label: 'Produkty' },
-      { key: 'zadzwonil_dzis', label: 'Skontaktowane dziś', bool: true },
+      { key: 'data_wyceny', label: (c) => (c.ma_wycene ? 'Data wyceny' : 'Data przedstawienia oferty'), hideWhenEmpty: true },
+      // id_lida = wewnętrzny numer leada (kolumna "ID Leada" w Leady B2C) —
+      // zawsze widoczny, gdy jest. id_wyceny = numer prawdziwej wyceny
+      // (format "#XXXX"), tylko gdy telefon faktycznie dopasował się do
+      // wiersza w Wyceny B2C — to dwa różne numery, nie mylić.
+      { key: 'id_lida', label: 'ID lida', hideWhenEmpty: true },
+      { key: 'id_wyceny', label: 'ID wyceny', hideWhenEmpty: true },
+      { key: 'kwota', label: (c) => (c.ma_wycene ? 'Kwota' : 'Proponowana kwota'), currency: true, hideWhenEmpty: true },
+      { key: 'produkty', label: (c) => (c.ma_wycene ? 'Produkty z wyceny' : 'Produkty złapane z rozmowy'), wide: true, hideWhenEmpty: true, render: produktyValueNode },
     ];
 
     function parsePlDate(str) {
@@ -1776,6 +2067,37 @@
         });
       });
       return copyBtn;
+    }
+
+    // Zamiast jednej zbitej linijki tekstu ("? m - Cyfrowa taśma COB IP20 ? szt -
+    // ...") — lista produktów rozwijana na kliknięcie, każdy produkt w
+    // osobnej linii; domyślnie zwinięta, żeby nie rozdymać case'a. Rozdziela
+    // po "\n" (tak teraz wygląda oczyszczone "Produkty z wyceny" w Supabase)
+    // albo "; " (tak łączy formatProdukty dla dopasowanej Wyceny B2C).
+    function produktyValueNode(raw) {
+      if (!raw) return document.createTextNode('—');
+      const items = String(raw).split(/\n|;\s*/).map((s) => s.trim()).filter(Boolean);
+      if (items.length <= 1) return document.createTextNode(items[0] || String(raw));
+      const details = document.createElement('details');
+      details.className = 'produkty-details';
+      const summary = document.createElement('summary');
+      summary.textContent = `${items.length} pozycji`;
+      details.appendChild(summary);
+      const list = document.createElement('ul');
+      list.className = 'produkty-list';
+      items.forEach((item) => {
+        const li = document.createElement('li');
+        li.textContent = item;
+        list.appendChild(li);
+      });
+      details.appendChild(list);
+      return details;
+    }
+
+    function fieldIsEmpty(spec, raw) {
+      if (spec.bool) return false;
+      if (spec.currency) return !raw;
+      return raw === undefined || raw === null || raw === '';
     }
 
     function fieldValueNode(spec, raw) {
@@ -2132,14 +2454,16 @@
         const grid = document.createElement('div');
         grid.className = 'field-grid';
         fields.forEach((spec) => {
+          const raw = c[spec.key];
+          if (spec.hideWhenEmpty && fieldIsEmpty(spec, raw)) return;
           const field = document.createElement('div');
           field.className = 'field' + (spec.wide ? ' wide' : '');
           const label = document.createElement('div');
           label.className = 'label';
-          label.textContent = spec.label;
+          label.textContent = typeof spec.label === 'function' ? spec.label(c) : spec.label;
           const value = document.createElement('div');
-          value.className = 'value' + (spec.nowrap ? ' nowrap' : '') + (spec.copy && c[spec.key] ? ' with-copy' : '');
-          value.appendChild(fieldValueNode(spec, c[spec.key]));
+          value.className = 'value' + (spec.nowrap ? ' nowrap' : '') + (spec.copy && raw ? ' with-copy' : '');
+          value.appendChild(spec.render ? spec.render(raw, c) : fieldValueNode(spec, raw));
           field.appendChild(label);
           field.appendChild(value);
           grid.appendChild(field);
@@ -2280,6 +2604,8 @@
     function resetSections() {
       leadInstancesByLp.clear();
       document.getElementById('meta').innerHTML = '';
+      document.getElementById('zmiany-card').style.display = 'none';
+      document.getElementById('zmiany-list').innerHTML = '';
       document.getElementById('kontekst-card').style.display = 'none';
       document.getElementById('komentarz-card').style.display = 'none';
       document.getElementById('plan-card').style.display = 'none';
@@ -2293,6 +2619,7 @@
 
     function loadDay(date) {
       resetSections();
+      loadRealizacjaDzis(daysOffsetFromToday(date));
       const formatted = formatPlDate(date);
       const row = allRows.find((r) => rowMatchesDate(r['Data'], date));
       currentRow = row || null;
@@ -2308,29 +2635,39 @@
       // Precedens: final → poprawka AI → draft. Final jest tylko do odczytu
       // (composer znika); poprawka/draft pokazują pole edycji.
       const fields = DOC_FIELDS[activeDoc];
-      let draft = null;
+      let latest = null;
       if (row[fields.final]) {
-        draft = row[fields.final];
+        latest = row[fields.final];
         activeState = 'final';
       } else if (row[fields.poprawka]) {
-        draft = row[fields.poprawka];
+        latest = row[fields.poprawka];
         activeState = 'poprawka';
       } else if (row[fields.draft]) {
-        draft = row[fields.draft];
+        latest = row[fields.draft];
         activeState = 'draft';
       } else {
         activeState = null;
       }
       updateComposer();
 
-      if (!draft) {
+      if (!latest) {
         setStatus(`Brak dokumentu „${DOC_NAMES[activeDoc]}" dla ${formatted}`);
         if (activeDoc === 'umowa') mergeLiveNowe(null, date);
         return;
       }
 
+      // Dopóki poprawka AI nie jest zatwierdzona, główna lista dalej pokazuje
+      // to, co jest aktualnie "na żywo" (oryginalny draft) — proponowane
+      // zmiany widać wyłącznie w karcie "Zmiany" (renderZmiany), nie w samej
+      // liście. Dopiero zatwierdzenie przenosi je do listy.
+      const draft = activeState === 'poprawka' ? (row[fields.draft] || latest) : latest;
+
       setStatus('');
       renderMeta(draft);
+
+      if (activeState === 'poprawka') {
+        renderZmiany(row[fields.draft], latest);
+      }
 
       if (draft.kontekst) {
         document.getElementById('kontekst-card').style.display = 'block';
@@ -2680,6 +3017,13 @@
           statusZmiana.textContent = `${row.status_przed || '—'} → ${row.status_po || '—'}`;
           summary.appendChild(statusZmiana);
         }
+        if (row.zamkniete_dzis) {
+          const badge = document.createElement('span');
+          badge.className = 'zamkniete-dzis-badge';
+          badge.textContent = '✓ zaopiekowane dziś';
+          badge.title = 'GPT ocenił po rozmowie, że z tym tematem nie trzeba dziś nic więcej robić';
+          summary.appendChild(badge);
+        }
         details.appendChild(summary);
 
         const body = document.createElement('div');
@@ -2742,12 +3086,13 @@
     // raz-dziennie generowanej Umowy) ──────────────────────────────────────
     // Czwarty kafelek (przychodzące/wychodzące) tylko na desktopie — na mobile
     // trzy podstawowe liczby wystarczają, nie ma sensu zajmować więcej miejsca.
-    function renderRealizacjaDzis(stats) {
+    function renderRealizacjaDzis(stats, offset) {
       document.getElementById('realizacja-card').style.display = 'block';
       const grid = document.getElementById('realizacja-grid');
       grid.innerHTML = '';
+      const zadzwonionoLabel = offset === 0 ? 'Zadzwoniono dziś' : 'Zadzwoniono tego dnia';
       [
-        { value: stats.zadzwoniono, label: 'Zadzwoniono dziś' },
+        { value: stats.zadzwoniono, label: zadzwonionoLabel },
         { value: stats.odebrano, label: 'Odebrało' },
         { value: stats.nieodebrano, label: 'Nie odebrało' },
         { value: `${stats.przychodzace}/${stats.wychodzace}`, label: 'Przych. / wych.', desktopOnly: true },
@@ -2766,9 +3111,13 @@
       });
     }
 
-    async function loadRealizacjaDzis() {
+    // offset w dniach względem PRAWDZIWEGO dziś (patrz daysOffsetFromToday) —
+    // wywoływane z loadDay przy każdej zmianie oglądanego dnia, żeby
+    // "Realizacja planu" zawsze pokazywała połączenia z TEGO dnia, a nie
+    // zawsze dzisiejsze niezależnie od wybranej zakładki.
+    async function loadRealizacjaDzis(offset) {
       try {
-        const res = await fetch(`${API_BASE}/api/log-polaczen?offset=0`);
+        const res = await fetch(`${API_BASE}/api/log-polaczen?offset=${offset}`);
         if (!res.ok) return;
         const body = await res.json();
         const rows = body.data || [];
@@ -2776,13 +3125,11 @@
         const nieodebrano = rows.filter((r) => r.disposition === 'no_answer').length;
         const przychodzace = rows.filter((r) => r.kierunek === 'przychodzące').length;
         const wychodzace = rows.filter((r) => r.kierunek === 'wychodzące').length;
-        renderRealizacjaDzis({ zadzwoniono: rows.length, odebrano, nieodebrano, przychodzace, wychodzace });
+        renderRealizacjaDzis({ zadzwoniono: rows.length, odebrano, nieodebrano, przychodzace, wychodzace }, offset);
       } catch {
         // Cicho — sekcja "Połączenia" niżej i tak pokaże błąd, jeśli endpoint nie działa.
       }
     }
-
-    loadRealizacjaDzis();
 
     const siteHeader = document.getElementById('site-header');
     window.addEventListener('scroll', () => {

@@ -137,13 +137,36 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5.1';
 const OPENAI_TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe';
 
+// Webhook wychodzący do jednej konkretnej automatyzacji Antoniego (Make) —
+// odpala się WYŁĄCZNIE gdy webhook Zadarmy sam tworzy nowego leada z numeru,
+// którego nie ma w bazie (patrz createdLead w /api/webhooks/zadarma). Na
+// sztywno w kodzie, celowo (Antoni prosił) — zmiana adresu wymaga deployu.
+const NEW_LEAD_WEBHOOK_URL = 'https://hook.eu1.make.com/2hdhzl5b254o6bayfsynnz6p9hfvjtq2';
+
+async function notifyNewLead(telefon) {
+  try {
+    const res = await fetch(NEW_LEAD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ telefon }),
+    });
+    if (!res.ok) console.warn(`Webhook nowego leada odpowiedział ${res.status}`);
+  } catch (err) {
+    console.warn('Nie udało się wysłać webhooka nowego leada:', err.message);
+  }
+}
+
 const PROMPT_INTRO = {
   umowa: 'Jesteś edytorem umowy dziennej LumLum. Dostajesz JSON umowy i polecenie użytkownika (często dyktowane głosowo — mogą być literówki).',
   podsumowanie: 'Jesteś edytorem podsumowania dnia LumLum. Dostajesz JSON podsumowania dnia i polecenie użytkownika (często dyktowane głosowo — mogą być literówki).',
 };
 
-function buildSystemPrompt(doc) {
+function buildSystemPrompt(doc, dzisiaj) {
   return `${PROMPT_INTRO[doc]} Zwróć WYŁĄCZNIE pełny, poprawiony JSON o tej samej strukturze. Zero tekstu poza nim.
+
+## DATA
+
+Dzisiejsza rzeczywista data (kalendarzowa, Warszawa): ${dzisiaj}. Wszystkie relatywne określenia dat w poleceniu ("jutro", "dziś", "pojutrze", "za tydzień", "w piątek" itd.) licz WZGLĘDEM TEJ daty — NIE względem pola \`data\` w przekazanym JSON-ie. Ten JSON może być Umową z zupełnie innego (np. historycznego) dnia niż dzisiaj, więc "jutro" zawsze oznacza dzień po dzisiejszej rzeczywistej dacie, niezależnie od tego, którego dnia dotyczy edytowany dokument.
 
 ## IDENTYFIKACJA CASE'A
 
@@ -184,6 +207,7 @@ Jeśli polecenie dotyczy case'a który jest w \`priorytet_dzis\` ORAZ w swojej k
 
 ## ZASADY
 
+- Edytuj WYŁĄCZNIE JEDNEGO case'a wskazanego w poleceniu — dokładnie ten LP/imię/telefon, nic więcej. Nigdy nie dotykaj sąsiednich case'ów (np. LP-1 albo LP+1) ani żadnego innego, nawet jeśli wydają się podobni albo są obok w tej samej kategorii — chyba że polecenie wprost wymienia więcej niż jeden LP.
 - Edytuj TYLKO pola których dotyczy polecenie. Resztę przepisz znak w znak.
 - Nie przeliczaj liczników w \`plan\` chyba że użytkownik wprost o to prosi.
 - Nie przeliczaj LP innych case'ów po usunięciu.
@@ -255,8 +279,12 @@ app.post('/api/ai-edit', async (req, res) => {
       },
       body: JSON.stringify({
         model: OPENAI_MODEL,
+        // Bez tego gpt-5.1 domyślnie myśli "na pełną głowę" nawet nad edycją
+        // jednego pola — 'low' starcza na precyzyjne dopasowanie case'a i
+        // wielokrotnie skraca czas odpowiedzi (patrz UMOWA_MODEL, ten sam wzorzec).
+        reasoning_effort: 'low',
         messages: [
-          { role: 'system', content: buildSystemPrompt(doc) },
+          { role: 'system', content: buildSystemPrompt(doc, warsawDateStr()) },
           { role: 'user', content: `Aktualny JSON:\n${JSON.stringify(current, null, 2)}\n\nPolecenie:\n${instruction}` },
         ],
       }),
@@ -435,33 +463,341 @@ app.post('/api/transcribe', express.raw({ type: 'audio/*', limit: '8mb' }), asyn
 // "odebrane vs nieodebrane" wnioskujemy z obecności record_url/duration.
 // Zabezpieczenie: sekretny token w query stringu URL-a zarejestrowanego w
 // Zadarmie (?token=...), sprawdzany tu zamiast podpisu HMAC.
-async function summarizeCall(transcript, fallbackLabel) {
-  if (!OPENAI_API_KEY) return transcript ? transcript.slice(0, 200) : fallbackLabel;
+// Port promptu, który wcześniej żył w Make (scenariusz GPT-5 mini analizujący
+// transkrypcję) — Antoni podał go 1:1, przenosimy tu żeby webhook Zadarmy
+// robił to sam, bez pośrednictwa Make. Jedna świadoma zmiana względem
+// oryginału: reguła statusu "Wycena wysłana" wymagała wcześniej TYLKO
+// zapowiedzi wysłania ("wysłał LUB obiecał wysłać") — w praktyce łapało to
+// też przypadki typu "wyślę ofertę na maila", gdzie nic jeszcze nie zostało
+// wysłane. Teraz wymaga potwierdzonego faktu wysłania.
+function buildCallAnalysisPrompt(dzisiaj, kierunek) {
+  const kierunekOpis = kierunek === 'wychodzące'
+    ? 'To handlowiec dzwoni do klienta (połączenie wychodzące).'
+    : kierunek === 'przychodzące'
+      ? 'To klient dzwoni do handlowca (połączenie przychodzące).'
+      : 'Kierunek połączenia nieznany — nie zakładaj kto do kogo dzwonił, opieraj się wyłącznie na treści rozmowy.';
+  return `Jesteś asystentem CRM firmy LumLum (oświetlenie LED premium).
+Analizujesz transkrypcję rozmowy telefonicznej handlowca z klientem.
+Zwróć WYŁĄCZNIE jeden obiekt JSON. Bez komentarzy, bez markdownu, bez tekstu przed ani po.
+
+${kierunekOpis}
+
+DZISIAJ: ${dzisiaj}
+
+===== STATUSY =====
+Wybierz dokładnie jeden:
+- "Po pierwszym tel"
+- "Lekko zainteresowany"
+- "Przyszłościowy"
+- "Zadzwonić jeszcze raz"
+- "Wycena wysłana"
+- "Sprzedane"
+- "Stracony"
+
+===== ZASADY STATUSU =====
+Prosi o kontakt w terminie → "Zadzwonić jeszcze raz" + data_feedbacku.
+Handlowiec FAKTYCZNIE wysłał wycenę (padł link do wyceny, potwierdzenie że PDF/oferta już poszła na maila, klient potwierdza że dostał) → "Wycena wysłana".
+SAMA zapowiedź/obietnica wysłania wyceny w przyszłości ("wyślę panu ofertę", "przygotuję wycenę i prześlę", "dostanie pan wycenę") to NIE jest "Wycena wysłana" — zostaje "Po pierwszym tel" albo "Zadzwonić jeszcze raz" (jeśli padła data kolejnego kontaktu).
+Klient zamówił → "Sprzedane".
+Niepewny → "Po pierwszym tel".
+Jeśli pasuje kilka statusów → wybierz najdalej zaawansowany wg powyższej logiki.
+
+===== ZASADY data_feedbacku =====
+Data feedbacku to WYŁĄCZNIE termin kolejnego kontaktu telefonicznego lub umówionej rozmowy.
+NIE jest to data żadnego innego zdarzenia jak koniec budowy, odbiór mieszkania, start remontu.
+
+Wypełnij TYLKO gdy w rozmowie pada JEDNOCZEŚNIE:
+1. Wyraźny sygnał ponownego kontaktu, np.:
+   - "zadzwonię do pana za X"
+   - "proszę zadzwonić za X"
+   - "możemy się umówić na X"
+   - "oddzwonię w X"
+   - "kiedy mogę zadzwonić"
+   - "umawiamy się na ponowną rozmowę"
+   - "wróćmy do tematu za X"
+2. ORAZ konkretny termin (data, dzień tygodnia, "za X dni/tygodni/miesięcy")
+
+Samo padnięcie daty lub okresu czasu w innym kontekście NIE wypełnia tego pola.
+Przykłady które NIE są data_feedbacku:
+- "za miesiąc skończy się etap budowy"
+- "remont zaczyna się za dwa tygodnie"
+- "odbiór mieszkania jest w przyszłym miesiącu"
+- "elektryka będzie za trzy tygodnie"
+
+Przelicz względem DZISIAJ i zwróć w formacie DD.MM.YYYY.
+"25-tego" bez miesiąca → najbliższy przyszły taki dzień.
+"w piątek" → najbliższy przyszły piątek.
+"za tydzień" → +7 dni od dzisiaj.
+Brak wyraźnego umówienia kontaktu → null.
+
+===== ZASADY opis =====
+Zwięzłe podsumowanie najważniejszych informacji z rozmowy.
+Styl: konkretna notatka handlowca, bez lania wody.
+Zawiera: czego klient szuka, gdzie montaż, jaki etap projektu, co ustalono, co jest następnym krokiem.
+Długość dopasuj do treści, nie pomijaj ważnych rzeczy, nie dodawaj zbędnych.
+
+===== ZASADY KOREKT =====
+Jeśli pada korekta (np. "3000K... nie, jednak 4000K") → bierz OSTATNIĄ wartość.
+Dotyczy: temperatury, ilości metrów, typu produktu, liczby sztuk.
+
+===== ZASADY zamkniete_dzis =====
+To NIE jest "zamknięty case" (sprzedany/stracony na zawsze) — to informacja czy
+z tym tematem trzeba jeszcze coś zrobić DZISIAJ, czy nie. Liczy się WYŁĄCZNIE
+konkretność ustalenia, NIE odległość w czasie do kolejnego kontaktu — "proszę
+zadzwonić jutro" to TAK, jest zaopiekowany na dziś (bo dzisiejsze zadanie z tym
+tematem jest zrobione, kolejny krok jest zaplanowany na inny, konkretny dzień).
+
+true gdy:
+- status = "Sprzedane"
+- status = "Stracony"
+- klient jednoznacznie odmówił ("nie jestem zainteresowany", "rezygnuję")
+- padła data_feedbacku — KONKRETNY termin kolejnego kontaktu, niezależnie jak
+  blisko (nawet "jutro") — bo skoro termin jest ustalony na inny dzień, na dziś
+  nic więcej nie trzeba robić
+- handlowiec faktycznie wysłał wycenę i klient powiedział że odezwie się sam
+
+false gdy:
+- klient prosi o kontakt "później"/"jeszcze dziś" BEZ konkretnej daty czy pory —
+  niejednoznaczne, może oznaczać że jeszcze dziś coś z tym tematem się zdarzy
+- klient "zastanawia się" bez konkretnej daty
+- rozmowa urwana, niejasna, bez konkluzji
+
+===== TYP KLIENTA B2B / B2C =====
+Oceń czy klient jest B2B czy B2C na podstawie faktów z rozmowy.
+
+B2B - klient jest profesjonalistą działającym w imieniu swojej firmy lub klientów:
+Sygnały B2B (wystarczy jeden wyraźny):
+- mówi że jest projektantem wnętrz, architektem, interior designerem
+- mówi że jest elektrykiem, instalatorem, wykonawcą, monterem
+- mówi że robi dla swojego klienta, dla inwestora, dla projektu
+- mówi że ma firmę budowlaną, remontową, wykończeniową
+- mówi że szuka rozwiązania do stałej współpracy lub hurtowego zakupu
+- pyta o program partnerski, prowizję, rabat dla firm
+- mówi że ma wiele realizacji, projektów, budów
+
+B2C - klient kupuje dla siebie:
+- robi remont własnego domu, mieszkania
+- nie wspomina o firmie ani działaniu w imieniu kogoś innego
+- brak sygnałów B2B
+
+Jeśli brak jakichkolwiek sygnałów → domyślnie "B2C".
+
+===== NAZWY I MAPOWANIE PRODUKTÓW =====
+Mapuj to co pada w rozmowie na oficjalne nazwy.
+Wyciągaj produkty TYLKO jeśli klient lub handlowiec mówi o konkretnych produktach lub ilościach.
+NIE wymyślaj produktów jeśli rozmowa jest ogólna.
+
+TAŚMY:
+- "cyfrowa / cyfra / digital / COB cyfrowa" → "Cyfrowa taśma COB [temp]K [IP]"
+- "analogowa / analog / mono / jednokolorowa" → "Analogowa taśma COB [temp]K [IP]"
+
+TEMPERATURA:
+- "ciepła / ciepłe / 3000" → 3000K
+- "neutralna / neutralne / 4000" → 4000K
+- "zimna / zimne / 6000" → 6000K
+- brak info → nie wpisuj temperatury (np. "Cyfrowa taśma COB IP20")
+
+IP - ZAWSZE wpisuj IP w nazwie, nigdy nie pomijaj:
+- cyfrowe: brak info → IP20, pada wodoodporna/wodoszczelna/ip65/ip67/łazienka/kuchnia/zewnętrze/elewacja → IP65
+- analogowe: brak info → IP20, pada wodoodporna/wodoszczelna/ip65/ip67/łazienka/kuchnia/zewnętrze/elewacja → IP67
+
+STEROWNIKI:
+- "sterownik cyfrowy / LumControl / lum control" → "Sterownik LumControl"
+- "sterownik mono / V1 / sterownik analogowy / sterownik jednokolor" → "Sterownik analogowy MONO"
+- "sterownik kaskadowy / schodowy / na schody" → "Sterownik schodowy PIR" (chyba że pada "laser" → "Sterownik schodowy LASER")
+- "sterownik RGB / WT5 / sterownik kolorowy" → "Sterownik analogowy RGB+CCT"
+- Jeśli pada sam "sterownik" bez doprecyzowania a wcześniej mówiono o taśmie cyfrowej → "Sterownik LumControl"
+- Jeśli pada sam "sterownik" bez doprecyzowania a wcześniej mówiono o taśmie analogowej → "Sterownik analogowy MONO"
+
+ZASILACZE:
+- "zasilacz 150W" bez MeanWell → "Zasilacz 150W 24V"
+- "zasilacz 75W" → "Zasilacz MeanWell 75W 24V"
+- "zasilacz 200W" → "Zasilacz MeanWell 200W 24V"
+- "zasilacz 600W" → "Zasilacz MeanWell 600W 24V"
+- "zasilacz" bez mocy → "Zasilacz 150W 24V"
+
+PILOTY:
+- "pilot / pilot mono / pilot jednostrefowy" → "Pilot MONO 1 strefa"
+- "pilot czterostrefowy / pilot 4 strefy / pilot 4-strefowy" → "Pilot MONO 4 strefy"
+- "pilot CCT" → "Pilot CCT 1 strefa"
+- "pilot RGB / pilot kolorowy" → "Pilot RGB+CCT 1 strefa"
+
+CZUJNIKI:
+- "czujniki / czujniki ruchu / PIR / zestaw czujników" → "Zestaw czujników ruchu"
+- "czujniki laserowe / laser / zestaw laserowy" → "Zestaw laserowych czujników ruchu"
+
+===== JAKOŚĆ LEADA =====
+Oceń jakość leada na podstawie faktów z rozmowy. Nie zgaduj, opieraj się wyłącznie na tym co padło.
+
+GORĄCY, spełnia minimum 2 z poniższych:
+- pyta o konkretne ilości (metry, sztuki) potrzebne do jego projektu
+- ma potwierdzoną datę montażu w ciągu najbliższych 4 tygodni, lub prace budowlane/wykończeniowe faktycznie trwają w tym momencie (nie "elektryk przyjdzie po wylewkach" bez daty)
+- pyta o cenę konkretnego zestawu lub składa zamówienie
+- ma wykonawcę wybranego konkretnie do montażu oświetlenia LED (nie ogólnie "mam swojego elektryka")
+- wraca po wcześniejszym kontakcie z konkretnymi pytaniami dotyczącymi wyceny lub specyfikacji
+
+ZIMNY, spełnia minimum 2 z poniższych:
+- brak projektu lub remont odłożony w czasie (ponad 6 miesięcy lub bez określonej daty)
+- nie wie czego chce, pyta bardzo ogólnie o produkt
+- porównuje ceny bez zaangażowania w konkretny projekt
+- krótka rozmowa bez żadnych konkretów
+- niechętny do rozmowy, odpowiada monosylabami
+
+ŚREDNI, wszystko pomiędzy, w tym przypadki gdzie klient ma realny, ale wczesny projekt (np. przygotowana instalacja, ale bez daty montażu i bez znajomości zakresu produktu).
+
+Ważne zasady: posiadanie przygotowanej elektryki/kabli/czujnika samo w sobie nie jest sygnałem gorącym, jeśli klient nie zna terminu ani zakresu zamówienia. Ilość zadanych pytań technicznych nie jest sygnałem temperatury, liczy się treść odpowiedzi (czy padła data, ilość, cena). Kryteria muszą być spełnione dosłownie, nie interpretacyjnie.
+
+uzasadnienie_jakosci: jedno konkretne zdanie, tylko fakty z rozmowy, bez domysłów.
+
+===== ZASADY cena_zaproponowana =====
+Wypełnij TYLKO jeśli handlowiec wprost podał kwotę klientowi podczas rozmowy.
+Przykłady: "to będzie około 1500 zł", "wycena wychodzi 2200", "cena to 3400 złotych".
+Format: "2300 zł"
+Brak → null.
+
+===== FORMAT WYJŚCIOWY =====
+{
+  "status": "",
+  "data_feedbacku": "DD.MM.YYYY lub null",
+  "opis": "",
+  "wycena": "tak lub nie",
+  "typ_klienta": "B2B lub B2C",
+  "produkty": "",
+  "cena_zaproponowana": "XXXX zł lub null",
+  "jakosc_leada": "gorący lub średni lub zimny",
+  "uzasadnienie_jakosci": "",
+  "zamkniete_dzis": true lub false
+}
+
+ZASADY POLA produkty:
+- Zapisuj produkt TYLKO gdy w rozmowie padła KONKRETNA, znana ilość (liczba
+  metrów, liczba sztuk). Jeśli ilość jest niejasna, ogólnikowa albo w ogóle nie
+  padła — NIE dodawaj tego produktu do listy. Żadnych placeholderów typu
+  "? m"/"? szt" — niepewny produkt to nie jest produkt z wyceny, to szum.
+- Format każdej linii: "[ilość][jednostka] [nazwa produktu]" — jednostka
+  WYŁĄCZNIE dla taśm (zawsze "m", sklejone z liczbą, np. "10m"). Dla
+  wszystkiego innego (sterowniki, zasilacze, piloty, czujniki) sama liczba
+  bez jednostki, np. "2 Sterownik LumControl", "1 Pilot MONO 4 strefy".
+- Bez myślnika między ilością a nazwą.
+- Każdy produkt w osobnej linii (znak \\n między liniami)
+- Puste "" jeśli żaden produkt nie ma konkretnej, znanej ilości
+
+Pole wycena: "tak" jeśli handlowiec omawiał konkretne produkty z ilościami lub faktycznie wysłał wycenę. Inaczej "nie".
+Pole jakosc_leada: zawsze wypełnione.
+Pole typ_klienta: jeśli brak sygnałów B2B → zawsze "B2C".`;
+}
+
+// Zastępuje dawne summarizeCall — zamiast samego streszczenia, pełna analiza
+// rozmowy (status/data_feedbacku/produkty/kwota/jakość leada/zamknięcie na
+// dziś), przeniesiona z promptu, który wcześniej żył w scenariuszu Make.
+async function analyzeCall(transcript, { kierunek, dzisiaj }) {
+  const fallback = { status: null, data_feedbacku: null, opis: transcript ? transcript.slice(0, 200) : null, produkty: '', cena_zaproponowana: null, jakosc_leada: null, uzasadnienie_jakosci: '', zamkniete_dzis: false };
+  if (!OPENAI_API_KEY || !transcript) return fallback;
   try {
     const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_API_KEY}` },
       body: JSON.stringify({
-        model: OPENAI_MODEL,
+        model: UMOWA_MODEL,
+        response_format: { type: 'json_object' },
+        reasoning_effort: 'minimal',
         messages: [
-          {
-            role: 'system',
-            content: 'Podsumuj rozmowę handlową po polsku, jako przetworzoną notatkę do historii kontaktu z klientem — nie transkrypcję, ale nie pomijaj żadnych konkretnych szczegółów (kwoty, terminy, produkty, ustalenia, obiekcje, kolejny krok). Kilka zdań, bez wstępów, bez "rozmowa dotyczyła" — pisz konkretnie co się stało i co zostało ustalone.',
-          },
-          { role: 'user', content: transcript || `(brak transkrypcji, status połączenia: ${fallbackLabel})` },
+          { role: 'system', content: buildCallAnalysisPrompt(dzisiaj, kierunek) },
+          { role: 'user', content: transcript },
         ],
       }),
     });
-    if (!aiRes.ok) return transcript ? transcript.slice(0, 200) : fallbackLabel;
+    if (!aiRes.ok) return fallback;
     const body = await aiRes.json();
-    return body.choices?.[0]?.message?.content?.trim() || (transcript || fallbackLabel);
-  } catch {
-    return transcript ? transcript.slice(0, 200) : fallbackLabel;
+    const content = body.choices?.[0]?.message?.content || '';
+    const parsed = JSON.parse(content);
+    return { ...fallback, ...parsed };
+  } catch (err) {
+    console.warn('Analiza rozmowy (GPT) nie powiodła się:', err.message);
+    return fallback;
   }
 }
 
 function normalizePhoneDigits(v) {
   return String(v || '').replace(/\D/g, '');
+}
+
+// Hierarchia statusów leada — status ustawiany automatycznie z webhooka
+// Zadarmy nigdy nie cofa się w dół tego lejka (np. lead z "Wycena wysłana"
+// nie wraca na "Po pierwszym tel" tylko dlatego, że ktoś znów zadzwonił i
+// GPT błędnie to tak zinterpretował). Oba warianty nazwy "Po pierwszym
+// tel(efonie)" widziane w prawdziwych danych — patrz STATUS_COLORS w app.html.
+const STATUS_RANK = {
+  'Nowy': 0,
+  'Lekko zainteresowany': 1,
+  'Po pierwszym tel': 1,
+  'Po pierwszym telefonie': 1,
+  'Nie odebrał': 1,
+  'Przyszłościowy': 2,
+  'Zadzwonić jeszcze raz': 2,
+  'Wycena wysłana': 3,
+  'Sprzedane': 4,
+  'Stracony': 4,
+};
+
+function statusRank(status) {
+  return STATUS_RANK[status] ?? 0;
+}
+
+// "Nie odebrał" nie idzie przez rangę (patrz statusRank) — to osobny, wąski
+// wyjątek: wolno w niego wejść tylko z tych trzech wczesnych statusów (albo
+// gdy lead jeszcze nie ma żadnego statusu). Z każdego innego miejsca
+// (Zadzwonić jeszcze raz, Wycena wysłana...) nieodebrany telefon zostawia
+// status bez zmian.
+const NO_ANSWER_ALLOWED_FROM = new Set(['Nowy', 'Po pierwszym tel', 'Po pierwszym telefonie', 'Przyszłościowy']);
+
+// "2300 zł" / "2300" / "~2300 zł" → 2300. Brak liczby → null (nie nadpisuj
+// istniejącej Kwoty wyceny przypadkowym zerem).
+function parseKwotaZlotych(str) {
+  if (!str) return null;
+  const digits = String(str).replace(/[^0-9]/g, '');
+  return digits ? Number(digits) : null;
+}
+
+// Ustawia zamkniete=1 dla case'a o danym telefonie we WSZYSTKICH wersjach
+// (draft/poprawka/final, które akurat istnieją) dzisiejszej Umowy — patrz
+// wywołanie w /api/webhooks/zadarma. Szuka po priorytet_dzis i wszystkich
+// kategoriach, tak jak updateLeadInJson (ten szuka po lp, tu szukamy po
+// telefonie, bo webhook nie zna lp).
+function setZamknieteByPhone(json, phoneDigits) {
+  let updated = false;
+  const applyToArray = (arr) => {
+    if (!Array.isArray(arr)) return;
+    arr.forEach((item) => {
+      if (item && normalizePhoneDigits(item.telefon) === phoneDigits) {
+        item.zamkniete = 1;
+        updated = true;
+      }
+    });
+  };
+  applyToArray(json.priorytet_dzis);
+  if (json.kategorie && typeof json.kategorie === 'object') {
+    Object.values(json.kategorie).forEach(applyToArray);
+  }
+  return updated;
+}
+
+async function markZamknieteInUmowa(supabase, phoneDigits) {
+  try {
+    const { y, m, d } = warsawParts(new Date());
+    const dataIso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const row = await getRowByData(supabase, dataIso);
+    if (!row) return;
+    const patch = {};
+    ['draft', 'poprawka', 'final'].forEach((state) => {
+      const column = DOCS.umowa[state];
+      const json = row[column];
+      if (json && setZamknieteByPhone(json, phoneDigits)) patch[column] = json;
+    });
+    if (Object.keys(patch).length) await updateRowByData(supabase, dataIso, patch);
+  } catch (err) {
+    console.warn('Nie udało się oznaczyć case\'a jako zamkniętego w dzisiejszej Umowie:', err.message);
+  }
 }
 
 async function findLeadByPhone(supabase, phoneDigits) {
@@ -552,23 +888,39 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     }
 
     const label = answered ? 'answered' : 'no_answer';
-    const opis = await summarizeCall(transcript, label);
-    const statusBefore = lead ? lead['Deal stage'] : wycena ? wycena['Status'] : null;
-    // Nieodebrane połączenie do leada (nie do wyceny — ta nie ma statusu do
-    // zmiany) przestawia status na "Nie odebrał" automatycznie, pomijając
-    // leady już zamknięte (Sprzedane/Stracony) — patrz update Leady B2C niżej,
-    // gdzie ta sama decyzja jest faktycznie zapisywana.
-    const statusAfter = (lead && label === 'no_answer' && !['Sprzedane', 'Stracony'].includes(statusBefore))
-      ? 'Nie odebrał'
-      : statusBefore;
-    const opisBefore = lead ? lead['Notes'] : wycena ? wycena['Komentarz'] : null;
-    const feedbackBefore = lead ? lead['Data Feedbacku'] : wycena ? wycena['Data Feedbacku'] : null;
     // Wnioskowanie z called_did/dst zawodzi, gdy pośrednik (Make) mapuje oba
     // pola naraz albo pomyli szablon gałęzi — most przez Make zna kierunek na
     // pewno (osobny "Watch" per typ połączenia), więc jawne pole `kierunek` w
     // payloadzie ma pierwszeństwo. called_did/dst zostaje jako fallback dla
     // webhooka prosto z Zadarmy (bez pośrednictwa Make, tam nie ma tej dwuznaczności).
     const kierunek = call.kierunek || (call.called_did ? 'przychodzące' : call.dst ? 'wychodzące' : null);
+
+    const statusBefore = lead ? lead['Deal stage'] : wycena ? wycena['Status'] : null;
+    const opisBefore = lead ? lead['Notes'] : wycena ? wycena['Komentarz'] : null;
+    const feedbackBefore = lead ? lead['Data Feedbacku'] : wycena ? wycena['Data Feedbacku'] : null;
+
+    // Pełna analiza GPT tylko dla odebranych połączeń z transkrypcją — dla
+    // nieodebranych nie ma czego analizować (patrz statusAfter niżej).
+    const analysis = (answered && transcript)
+      ? await analyzeCall(transcript, { kierunek, dzisiaj: warsawDateStr(new Date()) })
+      : null;
+    const opis = analysis?.opis || (transcript ? transcript.slice(0, 200) : label);
+
+    // Status nigdy nie cofa się w dół lejka — patrz STATUS_RANK/statusRank.
+    // "Nie odebrał" traktowane osobno (nie przez rangę): wolno wejść w nie
+    // TYLKO z wczesnego etapu (Nowy/Po pierwszym tel/Przyszłościowy) — lead
+    // z "Wycena wysłana", który nie odbiera telefonu, zostaje przy "Wycena
+    // wysłana", a nie cofa się na "Nie odebrał".
+    const leadClosed = lead && ['Sprzedane', 'Stracony'].includes(statusBefore);
+    let statusAfter = statusBefore;
+    if (lead && !leadClosed) {
+      if (label === 'no_answer') {
+        if (!statusBefore || NO_ANSWER_ALLOWED_FROM.has(statusBefore)) statusAfter = 'Nie odebrał';
+      } else if (analysis?.status && statusRank(analysis.status) >= statusRank(statusBefore)) {
+        statusAfter = analysis.status;
+      }
+    }
+    const feedbackAfter = (lead && analysis?.data_feedbacku) ? analysis.data_feedbacku : feedbackBefore;
 
     // Telefon bez dopasowania w Leady B2C/Wyceny B2C — bez tego rozmowa
     // zostawałaby tylko w Log zmian, niewidoczna w panelu i "gubiona" przez
@@ -577,16 +929,17 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     // Umowy), żeby każde połączenie miało swój case w backlogu.
     let createdLead = null;
     if (!lead && !wycena && customerDigits) {
-      // "ID Wyceny" jest NOT NULL bez wartości domyślnej — to zwykły
-      // sekwencyjny licznik, który dotychczas nadawał ręcznie Make (nie
-      // Postgresowa identity/serial), więc trzeba go policzyć samemu.
+      // "ID Leada" (dawniej "ID Wyceny" — przemianowane w bazie, to zwykły
+      // wewnętrzny identyfikator leada, nie numer wyceny) jest NOT NULL bez
+      // wartości domyślnej — to sekwencyjny licznik, który dotychczas nadawał
+      // ręcznie Make (nie Postgresowa identity/serial), więc trzeba go policzyć samemu.
       const { data: maxRow } = await supabase
         .from(LEADY_B2C_TABLE)
-        .select('"ID Wyceny"')
-        .order('"ID Wyceny"', { ascending: false })
+        .select('"ID Leada"')
+        .order('"ID Leada"', { ascending: false })
         .limit(1)
         .single();
-      const nextIdWyceny = (Number(maxRow?.['ID Wyceny']) || 0) + 1;
+      const nextIdLeada = (Number(maxRow?.['ID Leada']) || 0) + 1;
 
       const { data: inserted, error: createErr } = await supabase
         .from(LEADY_B2C_TABLE)
@@ -598,12 +951,16 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
           'Ostatni kontakt': call.callstart || null,
           Źródło: 'Zadarma — rozmowa bez dopasowania w bazie',
           'Treść rozmowy': transcript || null,
-          'ID Wyceny': nextIdWyceny,
+          'ID Leada': nextIdLeada,
         })
         .select()
         .single();
-      if (createErr) console.error('Błąd tworzenia leada z nieznanego numeru:', createErr.message);
-      else createdLead = inserted;
+      if (createErr) {
+        console.error('Błąd tworzenia leada z nieznanego numeru:', createErr.message);
+      } else {
+        createdLead = inserted;
+        await notifyNewLead(formatPhonePlus(customerDigits));
+      }
     }
 
     const { error: insertErr } = await supabase.from(LOG_ZMIAN_TABLE).insert({
@@ -615,8 +972,13 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       opis_przed: opisBefore,
       opis_po: opisBefore,
       data_feedbacku_przed: feedbackBefore,
-      data_feedbacku_po: feedbackBefore,
+      data_feedbacku_po: feedbackAfter,
       kierunek,
+      // Czy z tym tematem trzeba jeszcze coś zrobić DZISIAJ, wg oceny GPT
+      // (patrz ZASADY zamkniete_dzis w buildCallAnalysisPrompt) — pokazywane
+      // w widoku "Połączenia" (app.html), żeby było widać co się dziś fizycznie
+      // wydarzyło bez klikania w każdy case osobno.
+      zamkniete_dzis: Boolean(analysis?.zamkniete_dzis),
       transkrypcja: transcript || null,
       // `pracownik` w payloadzie (wpisany ręcznie w Make, per scenariusz/osoba)
       // ma pierwszeństwo nad DEFAULT_HANDLOWIEC — ten drugi zostaje jako
@@ -636,18 +998,40 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     if (insertErr) console.error('Błąd zapisu Log zmian:', insertErr.message);
 
     if (lead) {
+      const patch = {
+        'Ilość telefonów': (Number(lead['Ilość telefonów']) || 0) + 1,
+        'Ostatni kontakt': call.callstart || null,
+        'Treść rozmowy': transcript || lead['Treść rozmowy'] || null,
+        // statusAfter — patrz wyżej, ta sama decyzja co poszła do Log zmian
+        // (status_po), żeby oba miejsca nigdy się nie rozjechały.
+        'Deal stage': statusAfter,
+        'Data Feedbacku': feedbackAfter,
+      };
+      // Produkty/kwota/ocena AI: nadpisujemy TYLKO gdy ta rozmowa faktycznie
+      // coś nowego dorzuciła — pusty wynik analizy nie ma czyścić tego, co
+      // już wcześniej ustalono w poprzednich rozmowach.
+      if (analysis?.produkty) patch['Produkty z wyceny'] = analysis.produkty;
+      const cenaZaproponowana = parseKwotaZlotych(analysis?.cena_zaproponowana);
+      if (cenaZaproponowana !== null) patch['Kwota wyceny'] = cenaZaproponowana;
+      if (analysis?.jakosc_leada) {
+        const typ = analysis.typ_klienta ? ` (${analysis.typ_klienta})` : '';
+        const uzasadnienie = analysis.uzasadnienie_jakosci ? ` — ${analysis.uzasadnienie_jakosci}` : '';
+        patch['Ocena AI kontaktu'] = `${analysis.jakosc_leada}${typ}${uzasadnienie}`;
+      }
+
       const { error: updateErr } = await supabase
         .from(LEADY_B2C_TABLE)
-        .update({
-          'Ilość telefonów': (Number(lead['Ilość telefonów']) || 0) + 1,
-          'Ostatni kontakt': call.callstart || null,
-          'Treść rozmowy': transcript || lead['Treść rozmowy'] || null,
-          // statusAfter — patrz wyżej, ta sama decyzja co poszła do Log zmian
-          // (status_po), żeby oba miejsca nigdy się nie rozjechały.
-          'Deal stage': statusAfter,
-        })
+        .update(patch)
         .eq('Phone number', lead['Phone number']);
       if (updateErr) console.error('Błąd update Leady B2C:', updateErr.message);
+
+      // Jeśli GPT ocenił, że temat jest zaopiekowany na dziś — oznacz ten
+      // case jako zamknięty (ta sama flaga co lokalny checkbox po lewej w
+      // liście, ale tu zapisana do Supabase) w dzisiejszej Umowie, żeby
+      // spadł na dół listy automatycznie, bez ręcznego klikania.
+      if (analysis?.zamkniete_dzis && customerDigits) {
+        await markZamknieteInUmowa(supabase, customerDigits);
+      }
     }
 
     await logOperation(supabase, 'zadarma_webhook', 'ok', {
@@ -657,6 +1041,7 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       dopasowano_wycene: Boolean(wycena),
       nowy_lead_bez_dopasowania: Boolean(createdLead),
       transkrypcja: Boolean(transcript),
+      zamkniete_dzis: Boolean(analysis?.zamkniete_dzis),
     });
     res.json({ status: 'ok' });
   } catch (err) {
@@ -724,7 +1109,12 @@ app.get('/api/leady/nowe', async (req, res) => {
         produkty: row['Produkty z wyceny'] || '',
         link_formularz: row['Link do formularza'] || '',
         data_wyceny: row['Data wysłania wyceny'] || '',
-        id_wyceny: row['ID Wyceny'] || '',
+        // Ten endpoint nie sprawdza w ogóle Wyceny B2C, więc nie ma tu skąd
+        // wziąć prawdziwego id_wyceny — tylko id_lida (wewnętrzny numer
+        // leada, kolumna "ID Leada", bez związku z realną wyceną).
+        id_wyceny: '',
+        id_lida: row['ID Leada'] || '',
+        ma_wycene: false,
         kwota: row['Kwota wyceny'] || 0,
         zadzwonil_dzis: false,
         zamkniete: 0,
@@ -800,7 +1190,7 @@ function formatPhonePlus(raw) {
   return digits.startsWith('48') ? `+${digits}` : `+48${digits}`;
 }
 
-// Leady B2C i Wyceny B2C nie mają wspólnego klucza obcego — "ID Wyceny" w
+// Leady B2C i Wyceny B2C nie mają wspólnego klucza obcego — "ID Leada" w
 // Leady B2C to mały sekwencyjny numer własny tej tabeli (1, 3, 4…), a "ID" w
 // Wyceny B2C to zupełnie inna numeracja ("#1529", "#1815"…). Jedyne wspólne
 // pole to numer telefonu (tak samo dopasowuje leady do wycen webhook Zadarmy
@@ -859,12 +1249,25 @@ async function fetchCallCountByPhone(supabase) {
 function mapLeadRow(row, wycenaByPhone, callCountByPhone) {
   const phoneDigits = normalizePhoneDigits(row['Phone number']);
   const wycena = wycenaByPhone && phoneDigits ? wycenaByPhone.get(phoneDigits) : undefined;
+  const linkFormularz = row['Link do formularza'] || (wycena && wycena.linkFormularz) || '';
+  // Samo dopasowanie telefonu do wiersza w Wyceny B2C NIE wystarcza, żeby
+  // uznać to za "prawdziwą wycenę" — taki wiersz może istnieć bez realnie
+  // wygenerowanego linku. Rozstrzyga wyłącznie obecność linku do wyceny: jest
+  // link → id_wyceny/Data wyceny/Kwota są prawdziwe; nie ma linku → to tylko
+  // notatka z rozmowy, pokazujemy id_lida zamiast id_wyceny.
+  const maWycene = Boolean(linkFormularz);
   return {
     id: row['ID'] || '',
-    // "ID Wyceny" w Leady B2C to wewnętrzny licznik tej tabeli, nie realny
-    // numer wyceny — jeśli telefon dopasował się do Wyceny B2C, pokazujemy
-    // JEJ "ID" (np. "#1659"), bo to jedyny sensowny numer wyceny do wglądu.
-    id_wyceny: (wycena && wycena.id) || row['ID Wyceny'] || '',
+    // "ID Leada" to wewnętrzny, auto-inkrementowany numer leada w TEJ tabeli
+    // (patrz miejsce, gdzie webhook Zadarmy go nadaje nowym leadom) — osobne
+    // pole, zawsze widoczne. NIE ma nic wspólnego z realnym numerem wyceny
+    // (ten ma format "#1659" i istnieje tylko gdy jest link do wyceny) —
+    // id_wyceny zostaje puste, jeśli linku nie ma.
+    id_wyceny: maWycene ? ((wycena && wycena.id) || '') : '',
+    id_lida: row['ID Leada'] || '',
+    // Czy ten case ma realnie wygenerowaną Wycenę (link) — front pokazuje to
+    // inaczej (inne etykiety, "Proponowana kwota" zamiast "Kwota" itp.).
+    ma_wycene: maWycene,
     data_dolaczenia: row['Date'] || '',
     imie: row['Name'] || '',
     telefon: formatPhonePlus(row['Phone number']),
@@ -879,10 +1282,10 @@ function mapLeadRow(row, wycenaByPhone, callCountByPhone) {
     // legacy skażone dane (string-konkatenacja), to tu tylko placeholder.
     ilosc_telefonow: (callCountByPhone && phoneDigits && callCountByPhone.get(phoneDigits)) || 0,
     produkty: (wycena && wycena.produkty) || row['Produkty z wyceny'] || '',
-    // Leady B2C bywa bez własnych "Kwota wyceny"/"Data wysłania wyceny"/
-    // "Link do formularza" (dopóki wycena nie wpadnie do Wyceny B2C) —
-    // wtedy dociągamy te pola z dopasowanej wyceny, żeby nie były puste bez potrzeby.
-    link_formularz: row['Link do formularza'] || (wycena && wycena.linkFormularz) || '',
+    link_formularz: linkFormularz,
+    // Data/kwota pokazują się niezależnie od maWycene (front tylko zmienia
+    // etykietę) — bez linku to nadal użyteczna informacja, tylko nieformalna
+    // (data/kwota z rozmowy, nie z wysłanego dokumentu).
     data_wyceny: row['Data wysłania wyceny'] || (wycena && wycena.dataStworzenia) || '',
     kwota: Number(row['Kwota wyceny']) || (wycena && wycena.kwota) || 0,
   };
@@ -914,7 +1317,22 @@ async function fetchLeadyByStage(supabase, stage, excludeStages) {
     : query.eq('Deal stage', stage);
   const { data, error } = await query;
   if (error) throw error;
-  return data || [];
+
+  // Facebook Lead Ads potrafi wysłać ten sam formularz dwa razy (retry
+  // webhooka) — Leady B2C wtedy ma dwa wiersze z tym samym telefonem, a bez
+  // odfiltrowania ten sam człowiek wychodził w Umowie dwa razy pod tym samym
+  // LP w tej samej kategorii (reassignLps daje duplikatom po telefonie ten
+  // sam LP, bo tak łączy wystąpienia case'a między kategoriami — tu jednak
+  // to dwa wiersze tej samej osoby, nie dwa różne miejsca). Ten sam wzorzec
+  // dedupu co w fetchZalegleFeedbacki.
+  const seenPhones = new Set();
+  return (data || []).filter((row) => {
+    const digits = normalizePhoneDigits(row['Phone number']);
+    if (!digits) return true;
+    if (seenPhones.has(digits)) return false;
+    seenPhones.add(digits);
+    return true;
+  });
 }
 
 async function fetchNowe(supabase, wycenaByPhone, callCountByPhone) {
@@ -1106,13 +1524,13 @@ function postProcessCalledToday(parsed, calledSet) {
 }
 
 // Wstawia kategorię "zalegle_feedbacki" (patrz fetchZalegleFeedbacki) do
-// wyniku modelu. Jeśli dany lead (po telefonie) już gdzieś w dokumencie ma
-// przydzielony LP — dostaje TEN SAM LP zamiast nowego. Dzięki temu
-// leadInstancesByLp w app.html (mechanizm zbudowany pierwotnie dla
-// priorytet_dzis + jego kategorii) automatycznie linkuje oba wystąpienia:
-// zamknięcie case'a w jednym miejscu zamyka go też tu, bez żadnych zmian we
-// froncie. Leady, które nigdzie indziej się nie pojawiły, dostają świeży LP
-// kontynuujący istniejącą numerację.
+// wyniku modelu. Lead, który już gdzieś w dokumencie ma przydzielony LP
+// (nowe/wyceny_z_feedbackiem/inne_z_feedbackiem/nieodebrane/wyceny_historyczne/
+// priorytet_dzis), jest tu POMIJANY — inaczej wychodził dwa razy na liście
+// pod tym samym LP (np. każdy z "inne z feedbackiem ostatnie 3 dni" i tak ma
+// przeterminowany feedback, więc bez tego wykluczenia lądował też w
+// "zaległe feedbacki"). Leady, które nigdzie indziej się nie pojawiły,
+// dostają świeży LP kontynuujący istniejącą numerację.
 // Model potrafi przydzielić TEN SAM lp dwóm różnym osobom w różnych
 // kategoriach (złapane w testach: lp=2 jednocześnie dla dwóch różnych
 // leadów) — groźne, bo /api/lead-field aktualizuje WSZYSTKIE obiekty z danym
@@ -1187,15 +1605,23 @@ function applyRozmowySpozaBazy(parsed, rozmowySpozaBazyRaw, phoneToLp, nextLp) {
 
 function applyZalegleFeedbacki(parsed, zalegleRaw, phoneToLp, nextLp) {
   let next = nextLp;
-  const result = zalegleRaw.map((lead) => {
+  // Case, który model już umieścił gdzieś indziej (nowe/wyceny_z_feedbackiem/
+  // inne_z_feedbackiem/nieodebrane/wyceny_historyczne/priorytet_dzis — czyli
+  // ma telefon w phoneToLp) pomijamy tutaj całkowicie, zamiast dublować go
+  // pod tym samym LP w drugiej kategorii. Bez tego np. "inne z feedbackiem
+  // ostatnie 3 dni" i "zaległe feedbacki" pokazywały tego samego człowieka
+  // dwa razy — okno 3 dni w fetchWycenyZFeedbackiem/fetchInneZFeedbackiem
+  // nie chroni przed tym, bo "zaległe" (fetchZalegleFeedbacki) bierze
+  // WSZYSTKIE przeterminowane feedbacki bez ograniczenia dni, co się z nim
+  // pokrywa.
+  const result = [];
+  zalegleRaw.forEach((lead) => {
     const digits = normalizePhoneDigits(lead.telefon);
-    let lp = digits ? phoneToLp.get(digits) : undefined;
-    if (lp === undefined) {
-      lp = next;
-      next += 1;
-      if (digits) phoneToLp.set(digits, lp);
-    }
-    return { ...lead, lp, row_number: 0, zamkniete: 0, zadzwonil_dzis: false };
+    if (digits && phoneToLp.has(digits)) return;
+    const lp = next;
+    next += 1;
+    if (digits) phoneToLp.set(digits, lp);
+    result.push({ ...lead, lp, row_number: 0, zamkniete: 0, zadzwonil_dzis: false });
   });
 
   parsed.kategorie = parsed.kategorie || {};
