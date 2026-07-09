@@ -305,6 +305,8 @@
     .stat-tile {
       display: flex;
       flex-direction: column;
+      align-items: center;
+      text-align: center;
       gap: 0.2rem;
     }
 
@@ -318,6 +320,16 @@
     .stat-tile .label {
       font-size: 0.82rem;
       color: var(--text-secondary);
+    }
+
+    .stat-tile.desktop-only {
+      display: none;
+    }
+
+    @media (min-width: 641px) {
+      .stat-tile.desktop-only {
+        display: flex;
+      }
     }
 
     .cases {
@@ -692,6 +704,64 @@
     .lead-body .opis-text {
       font-size: 0.9rem;
       line-height: 1.5;
+      color: var(--text-primary);
+    }
+
+    .historia-rozmow {
+      margin-top: 0.5rem;
+    }
+
+    .historia-rozmow > summary {
+      list-style: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .historia-rozmow > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .historia-rozmow > summary::before {
+      content: '▸';
+      display: inline-block;
+      font-size: 1.15rem;
+      line-height: 0.6;
+      transition: transform 0.15s ease;
+    }
+
+    .historia-rozmow[open] > summary::before {
+      transform: rotate(90deg);
+    }
+
+    .historia-rozmow-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      margin-top: 0.5rem;
+      padding-left: 0.9rem;
+      border-left: 1px solid var(--border);
+    }
+
+    .historia-rozmow-entry {
+      display: flex;
+      flex-direction: column;
+      gap: 0.1rem;
+      font-size: 0.85rem;
+    }
+
+    .historia-rozmow-data {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .historia-rozmow-notatka {
       color: var(--text-primary);
     }
 
@@ -1088,34 +1158,76 @@
       to { transform: rotate(360deg); }
     }
 
-    .polaczenia-head {
+    .polaczenia-summary {
+      list-style: none;
+      cursor: pointer;
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 0.75rem;
-      flex-wrap: wrap;
+      gap: 0.55rem;
+    }
+
+    .polaczenia-summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .polaczenia-summary h2 {
+      margin: 0;
+    }
+
+    .polaczenia-chevron {
+      display: inline-flex;
+      font-size: 0.95rem;
+      color: var(--text-secondary);
+      transition: transform 0.15s ease;
+    }
+
+    #polaczenia-card[open] .polaczenia-chevron {
+      transform: rotate(90deg);
+    }
+
+    #polaczenia-card .polaczenia-head {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 0.5rem;
+      margin-top: 0.9rem;
       margin-bottom: 0.9rem;
     }
 
-    .polaczenia-toggle {
-      display: flex;
-      gap: 0.4rem;
-    }
-
-    .polaczenia-toggle button {
-      font-size: 0.82rem;
-      padding: 0.35rem 0.75rem;
+    /* Ten sam wzorzec co day-strip u góry (‹ dzień › ) — chronologicznie
+       lewo→prawo, cofanie się bez limitu (nie tylko dziś/wczoraj). */
+    .polaczenia-nav-btn {
+      flex: 0 0 auto;
+      width: 1.7rem;
+      height: 1.7rem;
       border-radius: 999px;
-      border: 1px solid var(--border);
+      border: none;
       background: transparent;
-      color: var(--text-secondary);
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
       cursor: pointer;
+      font-size: 0.9rem;
+      line-height: 1;
+      transition: background 0.15s ease, color 0.15s ease;
     }
 
-    .polaczenia-toggle button.is-active {
+    .polaczenia-nav-btn:hover:not(:disabled) {
       background: var(--accent-soft);
       color: var(--text-primary);
-      border-color: transparent;
+    }
+
+    .polaczenia-nav-btn:disabled {
+      visibility: hidden;
+      cursor: default;
+    }
+
+    .polaczenia-day-label {
+      min-width: 6rem;
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
     }
 
     .polaczenia-list {
@@ -1235,6 +1347,11 @@
       <div class="stat-grid" id="plan-grid"></div>
     </section>
 
+    <section class="card" id="realizacja-card" style="display:none;">
+      <h2>Realizacja planu</h2>
+      <div class="stat-grid" id="realizacja-grid"></div>
+    </section>
+
     <section id="priorytet-section" style="display:none;">
       <h2 class="section-title">Priorytet dziś</h2>
       <div class="cases" id="priorytet-list"></div>
@@ -1244,16 +1361,18 @@
       <div class="kategorie-wrap" id="kategorie-wrap"></div>
     </section>
 
-    <section class="card" id="polaczenia-card">
-      <div class="polaczenia-head">
+    <details class="card" id="polaczenia-card">
+      <summary class="polaczenia-summary">
+        <span class="polaczenia-chevron">▸</span>
         <h2>Połączenia</h2>
-        <div class="polaczenia-toggle" id="polaczenia-toggle">
-          <button type="button" data-offset="0" class="is-active">Dziś</button>
-          <button type="button" data-offset="-1">Wczoraj</button>
-        </div>
+      </summary>
+      <div class="polaczenia-head">
+        <button type="button" class="polaczenia-nav-btn" id="polaczenia-prev" aria-label="Wcześniej">‹</button>
+        <span class="polaczenia-day-label" id="polaczenia-day-label">Dziś</span>
+        <button type="button" class="polaczenia-nav-btn" id="polaczenia-next" aria-label="Później" disabled>›</button>
       </div>
       <div class="polaczenia-list" id="polaczenia-list"></div>
-    </section>
+    </details>
   </div>
 
   <!-- Composer: widoczny tylko gdy aktywny dokument jest draftem -->
@@ -1262,7 +1381,7 @@
       <div class="composer-msg" id="composer-msg"></div>
       <div class="composer-controls">
         <div class="composer-box">
-          <textarea id="composer-input" rows="1" placeholder="Napisz lub podyktuj polecenie, np. „case 3, zmień status na Sprzedane”…"></textarea>
+          <textarea id="composer-input" rows="1" placeholder="Napisz lub podyktuj polecenie"></textarea>
           <button class="composer-btn mic" id="composer-mic" type="button" title="Dyktuj (kliknij, mów, kliknij ponownie)">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
               <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/>
@@ -1316,6 +1435,29 @@
     // zaznaczenie "zamknięte" (i przesunięcie na dół listy) w obu miejscach.
     let leadInstancesByLp = new Map();
 
+    // Dopasowanie telefon → {imię, lp} z aktualnie wczytanej Umowy, żeby przy
+    // wierszu połączenia (sekcja "Połączenia") było widać, do którego case'a
+    // z backlogu ono należy. Budowane w loadDay, używane w renderPolaczenia —
+    // jeśli Połączenia wczytają się pierwsze (możliwy wyścig przy starcie),
+    // lastPolaczeniaRows pozwala je przerenderować, gdy mapa się uzupełni.
+    let caseByPhone = new Map();
+    let lastPolaczeniaRows = null;
+
+    function buildCaseByPhone(draft) {
+      const map = new Map();
+      const addAll = (arr) => {
+        if (!Array.isArray(arr)) return;
+        arr.forEach((c) => {
+          if (!c || !c.telefon) return;
+          const digits = normalizePhone(c.telefon);
+          if (digits && !map.has(digits)) map.set(digits, { imie: c.imie || '', lp: c.lp });
+        });
+      };
+      addAll(draft.priorytet_dzis);
+      if (draft.kategorie) Object.values(draft.kategorie).forEach(addAll);
+      return map;
+    }
+
     function formatPlDate(d) {
       const day = String(d.getDate()).padStart(2, '0');
       const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -1366,14 +1508,15 @@
     const KATEGORIA_LABELS = {
       nowe: 'Nowe',
       nieodebrane: 'Nieodebrane',
-      inne_z_feedbackiem: 'Inne z feedbackiem',
-      wyceny_z_feedbackiem: 'Wyceny z feedbackiem',
+      inne_z_feedbackiem: 'Inne z feedbackiem (ostatnie 3 dni)',
+      wyceny_z_feedbackiem: 'Wyceny z feedbackiem (ostatnie 3 dni)',
       wyceny_historyczne: 'Wyceny historyczne',
       zalegle_feedbacki: 'Zaległe feedbacki',
+      rozmowy_spoza_bazy: 'Rozmowy spoza bazy',
       dodane_recznie: 'Dodane ręcznie',
     };
 
-    const KATEGORIA_ORDER = ['nowe', 'wyceny_z_feedbackiem', 'inne_z_feedbackiem', 'nieodebrane', 'wyceny_historyczne', 'zalegle_feedbacki', 'dodane_recznie'];
+    const KATEGORIA_ORDER = ['nowe', 'wyceny_z_feedbackiem', 'inne_z_feedbackiem', 'nieodebrane', 'wyceny_historyczne', 'zalegle_feedbacki', 'rozmowy_spoza_bazy', 'dodane_recznie'];
 
     // Kolory statusów odwzorowane z CRM-u (Google Sheets) — przybliżone,
     // nie muszą być piksel w piksel identyczne.
@@ -1400,10 +1543,10 @@
       return luminance > 0.6 ? '#111111' : '#ffffff';
     }
 
-    function applyStatusColor(el, status) {
+    function applyStatusColor(el, status, colorMap = STATUS_COLORS) {
       const key = status.trim().toLowerCase();
-      const matchKey = STATUS_COLORS[key] ? key : Object.keys(STATUS_COLORS).find((k) => key.startsWith(k));
-      const bg = matchKey && STATUS_COLORS[matchKey];
+      const matchKey = colorMap[key] ? key : Object.keys(colorMap).find((k) => key.startsWith(k));
+      const bg = matchKey && colorMap[matchKey];
       if (!bg) return;
       el.style.background = bg;
       el.style.color = contrastTextColor(bg);
@@ -1422,6 +1565,20 @@
       'Wycena wysłana',
       'Zadzwonić jeszcze raz',
     ];
+
+    // Statusy TYLKO dla kategorii "Wyceny historyczne" — inny słownik niż
+    // Leady B2C ("Deal stage"), bo tu interesuje nas wyłącznie czy klient
+    // jest jeszcze zainteresowany, nie cały lejek sprzedażowy. Kolory wg
+    // wzoru od Antoniego (dropdown ze arkusza Wyceny B2C).
+    const WYCENA_STATUS_COLORS = {
+      'open': '#b7dba3',
+      'closed': '#f2a9a9',
+      'powiedział że kupi': '#a7bfc9',
+      'nie odbiera': '#cbb6e0',
+      'kupił': '#1f6b3a',
+    };
+
+    const WYCENA_STATUS_OPTIONS = ['Open', 'Closed', 'Powiedział że kupi', 'Nie odbiera', 'Kupił'];
 
     // Ręczna edycja pojedynczego pola case'a (status / data feedbacku) —
     // niezależna od trybu draft/poprawka/final, zapisuje się natychmiast.
@@ -1457,12 +1614,11 @@
         span.textContent = text;
         meta.appendChild(span);
       });
-      if (draft.status) {
-        const badge = document.createElement('span');
-        badge.className = 'badge';
-        badge.textContent = draft.status;
-        meta.appendChild(badge);
-      }
+      // Nie renderujemy tu drugiego badge'a z draft.status — to pole w JSON-ie
+      // jest zawsze literalnie "draft" (ustawiane raz przy generowaniu, nigdy
+      // nie aktualizowane przy poprawce/zatwierdzeniu), więc pokazywanie go
+      // obok właściwego badge'a stanu (poniżej, który poprawnie świeci na
+      // zielono tylko dla "final") wyglądało jak dwa sprzeczne "draft" naraz.
       if (activeState) {
         const state = document.createElement('span');
         state.className = 'badge' + (activeState === 'final' ? ' state-final' : '');
@@ -1503,9 +1659,13 @@
       const grid = document.getElementById('plan-grid');
       grid.innerHTML = '';
 
-      const known = Object.keys(PLAN_TILE_LABELS).filter((k) => plan[k] !== undefined);
+      // zadzwoniono_dzis idzie do sekcji "Realizacja planu" (żywe dane z Log
+      // zmian), backlogi i priorytet_dzis_count to pomocnicze liczniki, nie
+      // osobne kafelki — Plan dnia ma zostać przy dokładnie 6 kategoriach.
+      const HIDDEN_PLAN_KEYS = ['zadzwoniono_dzis', 'wyceny_feedback_backlog', 'inne_feedback_backlog', 'priorytet_dzis_count'];
+      const known = Object.keys(PLAN_TILE_LABELS).filter((k) => !HIDDEN_PLAN_KEYS.includes(k) && plan[k] !== undefined);
       const extra = Object.keys(plan).filter(
-        (k) => !(k in PLAN_TILE_LABELS) && (typeof plan[k] === 'number' || typeof plan[k] === 'string')
+        (k) => !HIDDEN_PLAN_KEYS.includes(k) && !(k in PLAN_TILE_LABELS) && (typeof plan[k] === 'number' || typeof plan[k] === 'string')
       );
 
       known.concat(extra).forEach((key) => {
@@ -1532,7 +1692,6 @@
       { key: 'ilosc_telefonow', label: 'Ilość telefonów' },
       { key: 'temperatura', label: 'Temperatura' },
       { key: 'email', label: 'Email', wide: true, nowrap: true, copy: true },
-      { key: 'ocena_ai', label: 'Ocena AI', wide: true },
     ];
 
     // Grupa 2: informacje transakcyjne — ta sama stylistyka co grupa kontaktowa.
@@ -1578,12 +1737,15 @@
       return url.replace(/([?&]id=)#/, '$1');
     }
 
+    // Model bywa niekonsekwentny: czasem pisze "Case LP9 — ...", czasem samo
+    // "LP9 — ..." bez słowa "Case" (zaobserwowane 2026-07-09) — dzielimy po
+    // obu wariantach, żeby każdy case i tak trafił do własnego bąbelka.
     function splitKomentarzCases(text) {
       const parts = String(text || '')
-        .split(/(?=Case LP\d+\s*—)/g)
+        .split(/(?=(?:Case\s+)?LP\d+\s*—)/g)
         .map((s) => s.trim())
         .filter(Boolean);
-      return parts.map((part) => part.replace(/^Case LP(\d+)\s*—/, 'Case $1 —'));
+      return parts.map((part) => part.replace(/^(?:Case\s+)?LP(\d+)\s*—/, 'Case $1 —'));
     }
 
     function renderKomentarz(text) {
@@ -1673,7 +1835,48 @@
       containers.forEach((container) => resortContainer(container));
     }
 
-    function leadItem(c, orderIndex) {
+    // Starsze wiersze z etapu walidacji migracji (zrodlo: zadarma_poll, patrz
+    // server/scripts/zadarma-poll.js) mają "opis" w formie technicznego
+    // "answered, 48s (from 48459... to 48607...)" — nie licz tego jako
+    // treściwą notatkę, numer/czas są już w wyszarzonej linii nad tym.
+    function isSurowyOpisPoll(opis) {
+      return /^\S+,\s*\d+s\s*\(from\s+\S+\s+to\s+\S+\)$/i.test(String(opis || '').trim());
+    }
+
+    function renderHistoriaRozmow(container, rows) {
+      container.innerHTML = '';
+      if (!rows.length) {
+        const empty = document.createElement('p');
+        empty.className = 'polaczenia-empty';
+        empty.textContent = 'Brak zarejestrowanych rozmów.';
+        container.appendChild(empty);
+        return;
+      }
+      rows.forEach((row) => {
+        const entry = document.createElement('div');
+        entry.className = 'historia-rozmow-entry';
+        const when = document.createElement('span');
+        when.className = 'historia-rozmow-data';
+        const d = new Date(row.data_zmiany);
+        const dataGodzina = Number.isNaN(d.getTime())
+          ? ''
+          : `${formatPlDate(d)} ${d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })}`;
+        when.textContent = `${dataGodzina} – ${row.czas_trwania_s || 0}s`;
+        const note = document.createElement('span');
+        note.className = 'historia-rozmow-notatka';
+        const hasRealOpis = row.opis && !isSurowyOpisPoll(row.opis);
+        note.textContent = hasRealOpis
+          ? row.opis
+          : row.disposition === 'no_answer' ? 'Nieodebrane' : 'Odebrane — brak zapisanego podsumowania (starszy wpis)';
+        entry.append(when, note);
+        container.appendChild(entry);
+      });
+    }
+
+    function leadItem(c, orderIndex, categoryKey) {
+      const isWycenaHistoryczna = categoryKey === 'wyceny_historyczne';
+      const statusColors = isWycenaHistoryczna ? WYCENA_STATUS_COLORS : STATUS_COLORS;
+      const statusOptionsList = isWycenaHistoryczna ? WYCENA_STATUS_OPTIONS : STATUS_OPTIONS;
       const lead = document.createElement('details');
       lead.className = 'lead' + (c.zamkniete ? ' zamkniete' : '');
       lead.dataset.order = orderIndex || 0;
@@ -1777,7 +1980,7 @@
         const statusTag = document.createElement('span');
         statusTag.className = 'status-tag';
         statusTag.textContent = c.status;
-        applyStatusColor(statusTag, c.status);
+        applyStatusColor(statusTag, c.status, statusColors);
         summary.appendChild(statusTag);
         statusEl = statusTag;
       } else if (c.status) {
@@ -1788,25 +1991,25 @@
         trigger.type = 'button';
         trigger.className = 'status-tag';
         trigger.textContent = c.status;
-        applyStatusColor(trigger, c.status);
+        applyStatusColor(trigger, c.status, statusColors);
 
         const menu = document.createElement('div');
         menu.className = 'status-menu';
 
-        const options = STATUS_OPTIONS.includes(c.status) ? STATUS_OPTIONS : [...STATUS_OPTIONS, c.status];
+        const options = statusOptionsList.includes(c.status) ? statusOptionsList : [...statusOptionsList, c.status];
         options.forEach((opt) => {
           const optionBtn = document.createElement('button');
           optionBtn.type = 'button';
           optionBtn.className = 'status-option' + (opt === c.status ? ' is-selected' : '');
           optionBtn.textContent = opt;
-          applyStatusColor(optionBtn, opt);
+          applyStatusColor(optionBtn, opt, statusColors);
           optionBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
             closeAllStatusMenus();
             if (opt === c.status) return;
             const previous = c.status;
             trigger.textContent = opt;
-            applyStatusColor(trigger, opt);
+            applyStatusColor(trigger, opt, statusColors);
             menu.querySelectorAll('.status-option').forEach((el) => {
               el.classList.toggle('is-selected', el === optionBtn);
             });
@@ -1816,7 +2019,7 @@
             } catch (err) {
               c.status = previous;
               trigger.textContent = previous;
-              applyStatusColor(trigger, previous);
+              applyStatusColor(trigger, previous, statusColors);
               menu.querySelectorAll('.status-option').forEach((el) => {
                 el.classList.toggle('is-selected', el.textContent === previous);
               });
@@ -1888,6 +2091,43 @@
         body.appendChild(opisWrap);
       }
 
+      // Historia rozmów: rozwijalna, wczytywana leniwie (dopiero po kliknięciu)
+      // — pod Opisem, żeby nie wydłużać case'a każdym kolejnym telefonem,
+      // ale nic z tych danych nie zostaje ucięte, tylko schowane domyślnie.
+      if (c.telefon) {
+        const historiaDetails = document.createElement('details');
+        historiaDetails.className = 'historia-rozmow';
+        const historiaSummary = document.createElement('summary');
+        historiaSummary.textContent = 'Historia rozmów';
+        historiaDetails.appendChild(historiaSummary);
+        const historiaList = document.createElement('div');
+        historiaList.className = 'historia-rozmow-list';
+        historiaList.style.display = 'none';
+        historiaDetails.appendChild(historiaList);
+        historiaDetails.addEventListener('toggle', async () => {
+          if (!historiaDetails.open || historiaDetails.dataset.loaded) return;
+          historiaDetails.dataset.loaded = '1';
+          historiaList.style.display = '';
+          historiaList.textContent = 'Wczytywanie…';
+          try {
+            const res = await fetch(`${API_BASE}/api/log-polaczen/historia?telefon=${encodeURIComponent(c.telefon)}`);
+            if (!res.ok) throw new Error(`Błąd ${res.status}`);
+            const histBody = await res.json();
+            renderHistoriaRozmow(historiaList, histBody.data || []);
+          } catch (err) {
+            historiaList.textContent = `Nie udało się wczytać historii: ${err.message}`;
+          }
+        });
+        body.appendChild(historiaDetails);
+
+        // Zwinięcie case'a resetuje jego Historię rozmów — inaczej po
+        // ponownym rozwinięciu case'a widok wraca "nie clean" (rozwinięta
+        // historia z poprzedniej sesji przeglądania).
+        lead.addEventListener('toggle', () => {
+          if (!lead.open) historiaDetails.open = false;
+        });
+      }
+
       function fieldGrid(fields) {
         const grid = document.createElement('div');
         grid.className = 'field-grid';
@@ -1951,9 +2191,17 @@
         details.appendChild(summary);
         const list = document.createElement('div');
         list.className = 'cases';
-        arr.forEach((c, i) => list.appendChild(leadItem(c, i)));
+        arr.forEach((c, i) => list.appendChild(leadItem(c, i, key)));
         resortContainer(list);
         details.appendChild(list);
+
+        // Zwinięcie kategorii porządkuje wszystko w niej: każdy case i jego
+        // Historia rozmów wracają do stanu zwiniętego, żeby ponowne
+        // rozwinięcie kategorii zawsze zaczynało od czystego widoku.
+        details.addEventListener('toggle', () => {
+          if (!details.open) list.querySelectorAll('details').forEach((d) => { d.open = false; });
+        });
+
         wrap.appendChild(details);
       });
     }
@@ -2024,7 +2272,7 @@
       document.getElementById('kategorie-section').style.display = 'block';
       const details = ensureNoweDetails();
       const list = details.querySelector('.cases');
-      fresh.forEach((c, i) => list.insertBefore(leadItem(c, -1 - i), list.firstChild));
+      fresh.forEach((c, i) => list.insertBefore(leadItem(c, -1 - i, 'nowe'), list.firstChild));
       resortContainer(list);
       setKategoriaCount(details, KATEGORIA_LABELS.nowe, (kategorieNowe || []).length + fresh.length);
     }
@@ -2098,6 +2346,11 @@
       renderPriorytet(draft.priorytet_dzis);
       renderKategorie(draft.kategorie);
       if (activeDoc === 'umowa') mergeLiveNowe(draft.kategorie && draft.kategorie.nowe, date);
+
+      if (activeDoc === 'umowa') {
+        caseByPhone = buildCaseByPhone(draft);
+        if (lastPolaczeniaRows) renderPolaczenia(lastPolaczeniaRows);
+      }
     }
 
     function renderDayStrip() {
@@ -2381,6 +2634,7 @@
     }
 
     function renderPolaczenia(rows) {
+      lastPolaczeniaRows = rows;
       const list = document.getElementById('polaczenia-list');
       list.innerHTML = '';
       if (!rows.length) {
@@ -2401,9 +2655,15 @@
         const kierunek = document.createElement('span');
         kierunek.className = 'kierunek';
         kierunek.textContent = polaczenieKierunekLabel(row);
+        // Telefon – imię i nazwisko – numer porządkowy, jedną prominentną
+        // linią (nie wyszarzoną) — łatwiej odnaleźć case w backlogu.
+        const matchedCase = caseByPhone.get(normalizePhone(row.telefon));
         const telefon = document.createElement('span');
         telefon.className = 'telefon';
-        telefon.textContent = formatPolaczenieTelefon(row.telefon);
+        const telefonParts = [formatPolaczenieTelefon(row.telefon)];
+        if (matchedCase && matchedCase.imie) telefonParts.push(matchedCase.imie);
+        if (matchedCase && matchedCase.lp !== undefined) telefonParts.push(String(matchedCase.lp));
+        telefon.textContent = telefonParts.join(' – ');
         const czasTrwania = document.createElement('span');
         czasTrwania.className = 'czas-trwania';
         czasTrwania.textContent = `${row.czas_trwania_s || 0}s`;
@@ -2442,10 +2702,20 @@
       });
     }
 
+    let polaczeniaOffset = 0;
+
+    function polaczeniaDayLabel(offset) {
+      if (offset === 0) return 'Dziś';
+      if (offset === -1) return 'Wczoraj';
+      const d = new Date();
+      d.setDate(d.getDate() + offset);
+      return formatPlDate(d);
+    }
+
     async function loadPolaczenia(offset) {
-      document.querySelectorAll('#polaczenia-toggle button').forEach((btn) => {
-        btn.classList.toggle('is-active', Number(btn.dataset.offset) === offset);
-      });
+      polaczeniaOffset = offset;
+      document.getElementById('polaczenia-day-label').textContent = polaczeniaDayLabel(offset);
+      document.getElementById('polaczenia-next').disabled = offset >= 0;
       const list = document.getElementById('polaczenia-list');
       list.innerHTML = '<p class="polaczenia-empty">Wczytywanie…</p>';
       try {
@@ -2462,10 +2732,57 @@
       }
     }
 
-    document.querySelectorAll('#polaczenia-toggle button').forEach((btn) => {
-      btn.addEventListener('click', () => loadPolaczenia(Number(btn.dataset.offset)));
+    document.getElementById('polaczenia-prev').addEventListener('click', () => loadPolaczenia(polaczeniaOffset - 1));
+    document.getElementById('polaczenia-next').addEventListener('click', () => {
+      if (polaczeniaOffset < 0) loadPolaczenia(polaczeniaOffset + 1);
     });
     loadPolaczenia(0);
+
+    // ── Realizacja planu (statystyki na żywo z Log zmian, nie ze statycznej
+    // raz-dziennie generowanej Umowy) ──────────────────────────────────────
+    // Czwarty kafelek (przychodzące/wychodzące) tylko na desktopie — na mobile
+    // trzy podstawowe liczby wystarczają, nie ma sensu zajmować więcej miejsca.
+    function renderRealizacjaDzis(stats) {
+      document.getElementById('realizacja-card').style.display = 'block';
+      const grid = document.getElementById('realizacja-grid');
+      grid.innerHTML = '';
+      [
+        { value: stats.zadzwoniono, label: 'Zadzwoniono dziś' },
+        { value: stats.odebrano, label: 'Odebrało' },
+        { value: stats.nieodebrano, label: 'Nie odebrało' },
+        { value: `${stats.przychodzace}/${stats.wychodzace}`, label: 'Przych. / wych.', desktopOnly: true },
+      ].forEach(({ value, label, desktopOnly }) => {
+        const tile = document.createElement('div');
+        tile.className = 'stat-tile' + (desktopOnly ? ' desktop-only' : '');
+        const v = document.createElement('div');
+        v.className = 'value';
+        v.textContent = value;
+        const l = document.createElement('div');
+        l.className = 'label';
+        l.textContent = label;
+        tile.appendChild(v);
+        tile.appendChild(l);
+        grid.appendChild(tile);
+      });
+    }
+
+    async function loadRealizacjaDzis() {
+      try {
+        const res = await fetch(`${API_BASE}/api/log-polaczen?offset=0`);
+        if (!res.ok) return;
+        const body = await res.json();
+        const rows = body.data || [];
+        const odebrano = rows.filter((r) => r.disposition === 'answered').length;
+        const nieodebrano = rows.filter((r) => r.disposition === 'no_answer').length;
+        const przychodzace = rows.filter((r) => r.kierunek === 'przychodzące').length;
+        const wychodzace = rows.filter((r) => r.kierunek === 'wychodzące').length;
+        renderRealizacjaDzis({ zadzwoniono: rows.length, odebrano, nieodebrano, przychodzace, wychodzace });
+      } catch {
+        // Cicho — sekcja "Połączenia" niżej i tak pokaże błąd, jeśli endpoint nie działa.
+      }
+    }
+
+    loadRealizacjaDzis();
 
     const siteHeader = document.getElementById('site-header');
     window.addEventListener('scroll', () => {

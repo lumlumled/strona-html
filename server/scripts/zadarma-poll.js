@@ -1,7 +1,12 @@
-// Etap walidacji z planu migracji Zadarmy: NIE dotyka webhooka Zadarmy
-// (ten zostaje wpięty w Make, Sheets nadal się aktualizuje jak dziś).
-// Zamiast tego odpytuje REST API Zadarmy (/v1/statistics/) i niezależnie
-// zasila Supabase, żeby oba źródła dało się porównać przed cutoverem.
+// Etap walidacji z planu migracji Zadarmy — cutover na webhook już zrobiony
+// i potwierdzony (patrz server.js /api/webhooks/zadarma), więc ten skrypt
+// NIE jest już częścią normalnego przepływu. NIE odpalać rutynowo: jego
+// `opis` to tylko surowy "disposition, Ns (from X to Y)" (brak transkrypcji/
+// AI-podsumowania, celowo — miał być lekki do porównania), więc wiersze
+// stąd wyglądają gorzej w "Historia rozmów" w app.html (przefiltrowane tam
+// jako "brak podsumowania"). Zostawiony jako narzędzie do ręcznej diagnozy
+// (np. porównanie z /v1/statistics/, gdy trzeba coś zweryfikować w Zadarmie),
+// nie do regularnego zasilania Log zmian.
 // Uruchamiać ręcznie: `node scripts/zadarma-poll.js [minuty_wstecz]`
 require('dotenv').config();
 const { callZadarma } = require('../zadarma');

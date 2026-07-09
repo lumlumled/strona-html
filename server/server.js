@@ -446,7 +446,7 @@ async function summarizeCall(transcript, fallbackLabel) {
         messages: [
           {
             role: 'system',
-            content: 'Podsumuj rozmowę handlową w maks. 2 zdaniach po polsku, konkretnie (co klient powiedział, na czym stoi sprawa). Zero wstępów.',
+            content: 'Podsumuj rozmowę handlową po polsku, jako przetworzoną notatkę do historii kontaktu z klientem — nie transkrypcję, ale nie pomijaj żadnych konkretnych szczegółów (kwoty, terminy, produkty, ustalenia, obiekcje, kolejny krok). Kilka zdań, bez wstępów, bez "rozmowa dotyczyła" — pisz konkretnie co się stało i co zostało ustalone.',
           },
           { role: 'user', content: transcript || `(brak transkrypcji, status połączenia: ${fallbackLabel})` },
         ],
@@ -543,17 +543,60 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     const label = answered ? 'answered' : 'no_answer';
     const opis = await summarizeCall(transcript, label);
     const statusBefore = lead ? lead['Deal stage'] : wycena ? wycena['Status'] : null;
+    // Nieodebrane połączenie do leada (nie do wyceny — ta nie ma statusu do
+    // zmiany) przestawia status na "Nie odebrał" automatycznie, pomijając
+    // leady już zamknięte (Sprzedane/Stracony) — patrz update Leady B2C niżej,
+    // gdzie ta sama decyzja jest faktycznie zapisywana.
+    const statusAfter = (lead && label === 'no_answer' && !['Sprzedane', 'Stracony'].includes(statusBefore))
+      ? 'Nie odebrał'
+      : statusBefore;
     const opisBefore = lead ? lead['Notes'] : wycena ? wycena['Komentarz'] : null;
     const feedbackBefore = lead ? lead['Data Feedbacku'] : wycena ? wycena['Data Feedbacku'] : null;
     // called_did = numer, na który zadzwonił klient (przychodzące); dst = numer,
     // który wykręcił handlowiec (wychodzące) — patrz komentarz o kształcie payloadu wyżej.
     const kierunek = call.called_did ? 'przychodzące' : call.dst ? 'wychodzące' : null;
 
+    // Telefon bez dopasowania w Leady B2C/Wyceny B2C — bez tego rozmowa
+    // zostawałaby tylko w Log zmian, niewidoczna w panelu i "gubiona" przez
+    // handlowca. Tworzymy nowy lead automatycznie (kolumna "Źródło" oznacza,
+    // że to nie z formularza — patrz kategoria "rozmowy_spoza_bazy" w cronie
+    // Umowy), żeby każde połączenie miało swój case w backlogu.
+    let createdLead = null;
+    if (!lead && !wycena && customerDigits) {
+      // "ID Wyceny" jest NOT NULL bez wartości domyślnej — to zwykły
+      // sekwencyjny licznik, który dotychczas nadawał ręcznie Make (nie
+      // Postgresowa identity/serial), więc trzeba go policzyć samemu.
+      const { data: maxRow } = await supabase
+        .from(LEADY_B2C_TABLE)
+        .select('"ID Wyceny"')
+        .order('"ID Wyceny"', { ascending: false })
+        .limit(1)
+        .single();
+      const nextIdWyceny = (Number(maxRow?.['ID Wyceny']) || 0) + 1;
+
+      const { data: inserted, error: createErr } = await supabase
+        .from(LEADY_B2C_TABLE)
+        .insert({
+          'Phone number': Number(customerDigits),
+          Date: warsawDateStr(new Date()),
+          'Deal stage': 'Nowy',
+          Notes: opis,
+          'Ostatni kontakt': call.callstart || null,
+          Źródło: 'Zadarma — rozmowa bez dopasowania w bazie',
+          'Treść rozmowy': transcript || null,
+          'ID Wyceny': nextIdWyceny,
+        })
+        .select()
+        .single();
+      if (createErr) console.error('Błąd tworzenia leada z nieznanego numeru:', createErr.message);
+      else createdLead = inserted;
+    }
+
     const { error: insertErr } = await supabase.from(LOG_ZMIAN_TABLE).insert({
       zrodlo: 'zadarma_webhook',
       telefon: customerDigits || null,
       status_przed: statusBefore,
-      status_po: statusBefore,
+      status_po: statusAfter,
       opis,
       opis_przed: opisBefore,
       opis_po: opisBefore,
@@ -565,8 +608,13 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       czas_trwania_s: Number(call.duration) || 0,
       disposition: label,
       pbx_call_id: call.pbx_call_id || null,
-      dopasowano_tabela: lead ? LEADY_B2C_TABLE : wycena ? WYCENY_B2C_TABLE : null,
-      dopasowano_id: lead ? String(lead['ID'] ?? '') : wycena ? wycena['ID'] : null,
+      dopasowano_tabela: lead ? LEADY_B2C_TABLE : wycena ? WYCENY_B2C_TABLE : createdLead ? LEADY_B2C_TABLE : null,
+      // Leady B2C ma "ID" prawie zawsze puste (populowane przez Make tylko,
+      // gdy jest wycena — to w praktyce kopia ID z Wyceny B2C, nie klucz tej
+      // tabeli) — dla nowo tworzonego leada nie ma go jeszcze skąd wziąć,
+      // więc identyfikujemy po telefonie, jedynym polu po którym cała reszta
+      // kodu i tak dopasowuje Leady B2C (patrz findLeadByPhone/update wyżej).
+      dopasowano_id: lead ? String(lead['ID'] ?? '') : wycena ? wycena['ID'] : createdLead ? String(createdLead['Phone number'] ?? '') : null,
     });
     if (insertErr) console.error('Błąd zapisu Log zmian:', insertErr.message);
 
@@ -577,6 +625,9 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
           'Ilość telefonów': (Number(lead['Ilość telefonów']) || 0) + 1,
           'Ostatni kontakt': call.callstart || null,
           'Treść rozmowy': transcript || lead['Treść rozmowy'] || null,
+          // statusAfter — patrz wyżej, ta sama decyzja co poszła do Log zmian
+          // (status_po), żeby oba miejsca nigdy się nie rozjechały.
+          'Deal stage': statusAfter,
         })
         .eq('Phone number', lead['Phone number']);
       if (updateErr) console.error('Błąd update Leady B2C:', updateErr.message);
@@ -587,6 +638,7 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       telefon: customerDigits,
       dopasowano_leada: Boolean(lead),
       dopasowano_wycene: Boolean(wycena),
+      nowy_lead_bez_dopasowania: Boolean(createdLead),
       transkrypcja: Boolean(transcript),
     });
     res.json({ status: 'ok' });
@@ -653,7 +705,6 @@ app.get('/api/leady/nowe', async (req, res) => {
         ostatni_kontakt: row['Ostatni kontakt'] || '',
         ilosc_telefonow: row['Ilość telefonów'] || 0,
         produkty: row['Produkty z wyceny'] || '',
-        ocena_ai: row['Ocena AI kontaktu'] || '',
         link_formularz: row['Link do formularza'] || '',
         data_wyceny: row['Data wysłania wyceny'] || '',
         id_wyceny: row['ID Wyceny'] || '',
@@ -736,8 +787,10 @@ function formatPhonePlus(raw) {
 // Leady B2C to mały sekwencyjny numer własny tej tabeli (1, 3, 4…), a "ID" w
 // Wyceny B2C to zupełnie inna numeracja ("#1529", "#1815"…). Jedyne wspólne
 // pole to numer telefonu (tak samo dopasowuje leady do wycen webhook Zadarmy
-// — patrz findWycenaByPhone). Budujemy więc mapę telefon → sformatowane
-// produkty raz, dla wszystkich kategorii naraz.
+// — patrz findWycenaByPhone). Budujemy więc mapę telefon → dane wyceny (id,
+// kwota, data stworzenia, link do formularza, produkty) raz, dla wszystkich
+// kategorii naraz — mapLeadRow używa jej jako uzupełnienia/poprawki własnych
+// pól leada (patrz komentarz przy mapLeadRow, dlaczego to nie jest tylko fallback).
 function formatProdukty(produktyJson) {
   if (!Array.isArray(produktyJson) || !produktyJson.length) return '';
   return produktyJson
@@ -751,24 +804,50 @@ function formatProdukty(produktyJson) {
     .join('; ');
 }
 
-async function fetchProduktyByPhone(supabase) {
-  const { data, error } = await supabase.from(WYCENY_B2C_TABLE).select('Telefon,produkty_json');
+async function fetchWycenaByPhone(supabase) {
+  const { data, error } = await supabase
+    .from(WYCENY_B2C_TABLE)
+    .select('Telefon,produkty_json,ID,Kwota,"Data stworzenia","Link do formularza"');
   if (error) throw error;
   const map = new Map();
   (data || []).forEach((row) => {
     const digits = normalizePhoneDigits(row['Telefon']);
-    const formatted = formatProdukty(row['produkty_json']);
-    if (digits && formatted && !map.has(digits)) map.set(digits, formatted);
+    if (!digits || map.has(digits)) return;
+    map.set(digits, {
+      produkty: formatProdukty(row['produkty_json']),
+      id: row['ID'] || '',
+      kwota: Number(row['Kwota']) || 0,
+      dataStworzenia: row['Data stworzenia'] || '',
+      linkFormularz: row['Link do formularza'] || '',
+    });
   });
   return map;
 }
 
-function mapLeadRow(row, produktyByPhone) {
+// "Ile razy dzwoniono do tego leada" liczone z realnych wierszy "Log zmian"
+// (każdy telefon, niezależnie od tego, czy dopasował się do Leady B2C/Wyceny
+// B2C) — nie z legacy skażonej kolumny "Ilość telefonów" w Leady B2C.
+async function fetchCallCountByPhone(supabase) {
+  const { data, error } = await supabase.from(LOG_ZMIAN_TABLE).select('telefon');
+  if (error) throw error;
+  const map = new Map();
+  (data || []).forEach((row) => {
+    const digits = normalizePhoneDigits(row['telefon']);
+    if (!digits) return;
+    map.set(digits, (map.get(digits) || 0) + 1);
+  });
+  return map;
+}
+
+function mapLeadRow(row, wycenaByPhone, callCountByPhone) {
   const phoneDigits = normalizePhoneDigits(row['Phone number']);
-  const produktyZWyceny = produktyByPhone && phoneDigits ? produktyByPhone.get(phoneDigits) : undefined;
+  const wycena = wycenaByPhone && phoneDigits ? wycenaByPhone.get(phoneDigits) : undefined;
   return {
     id: row['ID'] || '',
-    id_wyceny: row['ID Wyceny'] ?? '',
+    // "ID Wyceny" w Leady B2C to wewnętrzny licznik tej tabeli, nie realny
+    // numer wyceny — jeśli telefon dopasował się do Wyceny B2C, pokazujemy
+    // JEJ "ID" (np. "#1659"), bo to jedyny sensowny numer wyceny do wglądu.
+    id_wyceny: (wycena && wycena.id) || row['ID Wyceny'] || '',
     data_dolaczenia: row['Date'] || '',
     imie: row['Name'] || '',
     telefon: formatPhonePlus(row['Phone number']),
@@ -778,15 +857,17 @@ function mapLeadRow(row, produktyByPhone) {
     data_feedbacku: formatPlDate(row['Data Feedbacku']),
     temperatura: row['Temperatura'] || '',
     ostatni_kontakt: row['Ostatni kontakt'] || '',
-    // "Ilość telefonów" ma w Supabase legacy skażone dane sprzed poprawki
-    // string-konkatenacji (np. "12440" zamiast realnej liczby) — puste na
-    // razie, do policzenia porządnie osobno.
-    ilosc_telefonow: '',
-    produkty: produktyZWyceny || row['Produkty z wyceny'] || '',
-    ocena_ai: row['Ocena AI kontaktu'] || '',
-    link_formularz: row['Link do formularza'] || '',
-    data_wyceny: row['Data wysłania wyceny'] || '',
-    kwota: Number(row['Kwota wyceny']) || 0,
+    // Deterministyczne, nadpisywane w postProcessCallCounts z realnych
+    // wierszy "Log zmian" po telefonie — "Ilość telefonów" w Supabase ma
+    // legacy skażone dane (string-konkatenacja), to tu tylko placeholder.
+    ilosc_telefonow: (callCountByPhone && phoneDigits && callCountByPhone.get(phoneDigits)) || 0,
+    produkty: (wycena && wycena.produkty) || row['Produkty z wyceny'] || '',
+    // Leady B2C bywa bez własnych "Kwota wyceny"/"Data wysłania wyceny"/
+    // "Link do formularza" (dopóki wycena nie wpadnie do Wyceny B2C) —
+    // wtedy dociągamy te pola z dopasowanej wyceny, żeby nie były puste bez potrzeby.
+    link_formularz: row['Link do formularza'] || (wycena && wycena.linkFormularz) || '',
+    data_wyceny: row['Data wysłania wyceny'] || (wycena && wycena.dataStworzenia) || '',
+    kwota: Number(row['Kwota wyceny']) || (wycena && wycena.kwota) || 0,
   };
 }
 
@@ -807,7 +888,10 @@ function mapWycenaRow(row) {
 }
 
 async function fetchLeadyByStage(supabase, stage, excludeStages) {
-  let query = supabase.from(LEADY_B2C_TABLE).select('*');
+  // Leady oznaczone "Źródło" (rozmowa bez dopasowania, patrz
+  // fetchRozmowySpozaBazy) mają własną kategorię — bez tego filtra
+  // pojawiłyby się też tutaj (Deal stage="Nowy" trafia w fetchNowe).
+  let query = supabase.from(LEADY_B2C_TABLE).select('*').is('Źródło', null);
   query = excludeStages
     ? query.not('Deal stage', 'in', `(${excludeStages.map((s) => `"${s}"`).join(',')})`)
     : query.eq('Deal stage', stage);
@@ -816,7 +900,7 @@ async function fetchLeadyByStage(supabase, stage, excludeStages) {
   return data || [];
 }
 
-async function fetchNowe(supabase, produktyByPhone) {
+async function fetchNowe(supabase, wycenaByPhone, callCountByPhone) {
   const rows = await fetchLeadyByStage(supabase, 'Nowy');
   const cutoff = Date.now() - 3 * 24 * 60 * 60 * 1000;
   return rows
@@ -824,39 +908,46 @@ async function fetchNowe(supabase, produktyByPhone) {
     .filter(({ date }) => date && date.getTime() >= cutoff)
     .sort((a, b) => b.date - a.date)
     .slice(0, 10)
-    .map(({ row }) => mapLeadRow(row, produktyByPhone));
+    .map(({ row }) => mapLeadRow(row, wycenaByPhone, callCountByPhone));
 }
 
-async function fetchWycenyZFeedbackiem(supabase, produktyByPhone) {
+// Ograniczone do ostatnich 3 dni (dziś + 3 dni wstecz) — starsze przeterminowane
+// feedbacki i tak trafiają do "Zaległe feedbacki" (fetchZalegleFeedbacki, bez
+// limitu dni), więc bez tego okna te dwie kategorie by się duplikowały.
+async function fetchWycenyZFeedbackiem(supabase, wycenaByPhone, callCountByPhone) {
   const rows = await fetchLeadyByStage(supabase, 'Wycena wysłana');
   const now = Date.now();
-  return rows
-    .map((row) => ({ row, date: parseLeadDate(row['Data Feedbacku']) }))
-    .filter(({ date }) => date && date.getTime() <= now)
-    .sort((a, b) => a.date - b.date || Number(b.row['Kwota wyceny'] || 0) - Number(a.row['Kwota wyceny'] || 0))
-    .map(({ row }) => mapLeadRow(row, produktyByPhone));
-}
-
-async function fetchInneZFeedbackiem(supabase, produktyByPhone) {
-  const rows = await fetchLeadyByStage(supabase, null, ['Wycena wysłana', 'Stracony', 'Sprzedane']);
-  const now = Date.now();
-  const cutoff = now - 7 * 24 * 60 * 60 * 1000;
+  const cutoff = now - 3 * 24 * 60 * 60 * 1000;
   return rows
     .map((row) => ({ row, date: parseLeadDate(row['Data Feedbacku']) }))
     .filter(({ date }) => date && date.getTime() <= now && date.getTime() >= cutoff)
     .sort((a, b) => a.date - b.date || Number(b.row['Kwota wyceny'] || 0) - Number(a.row['Kwota wyceny'] || 0))
-    .map(({ row }) => mapLeadRow(row, produktyByPhone));
+    .map(({ row }) => mapLeadRow(row, wycenaByPhone, callCountByPhone));
 }
 
-async function fetchNieodebrane(supabase, produktyByPhone) {
+async function fetchInneZFeedbackiem(supabase, wycenaByPhone, callCountByPhone) {
+  const rows = await fetchLeadyByStage(supabase, null, ['Wycena wysłana', 'Stracony', 'Sprzedane']);
+  const now = Date.now();
+  const cutoff = now - 3 * 24 * 60 * 60 * 1000;
+  return rows
+    .map((row) => ({ row, date: parseLeadDate(row['Data Feedbacku']) }))
+    .filter(({ date }) => date && date.getTime() <= now && date.getTime() >= cutoff)
+    .sort((a, b) => a.date - b.date || Number(b.row['Kwota wyceny'] || 0) - Number(a.row['Kwota wyceny'] || 0))
+    .map(({ row }) => mapLeadRow(row, wycenaByPhone, callCountByPhone));
+}
+
+// Okno 7 dni liczone od "Ostatni kontakt" (kiedy faktycznie nie odebrano), nie
+// od "Date" (kiedy lead powstał) — stary lead z dziś nieodebranym telefonem
+// ma się tu pojawić, a nie wypadać tylko bo powstał dawno temu.
+async function fetchNieodebrane(supabase, wycenaByPhone, callCountByPhone) {
   const rows = await fetchLeadyByStage(supabase, 'Nie odebrał');
   const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
   return rows
-    .map((row) => ({ row, date: parseLeadDate(row['Date']) }))
+    .map((row) => ({ row, date: parseLeadDate(row['Ostatni kontakt']) }))
     .filter(({ date }) => date && date.getTime() >= cutoff)
-    .sort((a, b) => (Number(b.row['Ilość telefonów']) || 0) - (Number(a.row['Ilość telefonów']) || 0) || a.date - b.date)
+    .sort((a, b) => (Number(b.row['Ilość telefonów']) || 0) - (Number(a.row['Ilość telefonów']) || 0) || b.date - a.date)
     .slice(0, 10)
-    .map(({ row }) => mapLeadRow(row, produktyByPhone));
+    .map(({ row }) => mapLeadRow(row, wycenaByPhone, callCountByPhone));
 }
 
 async function fetchWycenyHistoryczne(supabase) {
@@ -884,10 +975,11 @@ async function fetchWycenyHistoryczne(supabase) {
 // wyświetlenia, więc stary, zapomniany case może z nich całkowicie zniknąć.
 // Ta lista nie jest ograniczona i nie jest kategoryzowana przez model —
 // dopasowanie/numeracja LP dzieje się deterministycznie w applyZalegleFeedbacki.
-async function fetchZalegleFeedbacki(supabase, produktyByPhone) {
+async function fetchZalegleFeedbacki(supabase, wycenaByPhone, callCountByPhone) {
   const { data, error } = await supabase
     .from(LEADY_B2C_TABLE)
     .select('*')
+    .is('Źródło', null)
     .not('Deal stage', 'in', '("Sprzedane","Stracony")');
   if (error) throw error;
   const now = Date.now();
@@ -909,7 +1001,23 @@ async function fetchZalegleFeedbacki(supabase, produktyByPhone) {
     deduped.push(row);
   });
 
-  return deduped.map((row) => mapLeadRow(row, produktyByPhone));
+  return deduped.map((row) => mapLeadRow(row, wycenaByPhone, callCountByPhone));
+}
+
+// Leady, które istnieją TYLKO dlatego, że kto zadzwonił na numer bez
+// dopasowania w bazie (webhook Zadarmy je sam tworzy — patrz
+// /api/webhooks/zadarma, kolumna "Źródło"). Dopóki handlowiec nie ruszy
+// statusu dalej, siedzą tu, żeby nic nie "uciekło" bez triage'u — jak status
+// się zmieni, naturalnie trafiają do zwykłej kategorii jak każdy inny lead
+// (i wypadają stąd, bo filtr niżej jest na Deal stage = "Nowy").
+async function fetchRozmowySpozaBazy(supabase, wycenaByPhone, callCountByPhone) {
+  const { data, error } = await supabase
+    .from(LEADY_B2C_TABLE)
+    .select('*')
+    .not('Źródło', 'is', null)
+    .eq('Deal stage', 'Nowy');
+  if (error) throw error;
+  return (data || []).map((row) => mapLeadRow(row, wycenaByPhone, callCountByPhone));
 }
 
 async function fetchLogZmianRange(supabase, start, end) {
@@ -1039,6 +1147,27 @@ function reassignLps(parsed) {
   return { phoneToLp, nextLp: next };
 }
 
+// Ten sam wzorzec co applyZalegleFeedbacki — kategoria budowana deterministycznie
+// z już przygotowanych danych (webhook Zadarmy sam tworzy leada dla numeru bez
+// dopasowania, patrz server.js /api/webhooks/zadarma), model jej nie dotyka.
+function applyRozmowySpozaBazy(parsed, rozmowySpozaBazyRaw, phoneToLp, nextLp) {
+  let next = nextLp;
+  const result = rozmowySpozaBazyRaw.map((lead) => {
+    const digits = normalizePhoneDigits(lead.telefon);
+    let lp = digits ? phoneToLp.get(digits) : undefined;
+    if (lp === undefined) {
+      lp = next;
+      next += 1;
+      if (digits) phoneToLp.set(digits, lp);
+    }
+    return { ...lead, lp, row_number: 0, zamkniete: 0, zadzwonil_dzis: false };
+  });
+
+  parsed.kategorie = parsed.kategorie || {};
+  parsed.kategorie.rozmowy_spoza_bazy = result;
+  return next;
+}
+
 function applyZalegleFeedbacki(parsed, zalegleRaw, phoneToLp, nextLp) {
   let next = nextLp;
   const result = zalegleRaw.map((lead) => {
@@ -1070,6 +1199,71 @@ function fixLpMentionsInComment(parsed) {
     const re = new RegExp(`LP\\s*\\??\\s*(\\d+)?\\s*—\\s*${escapedName}`, 'g');
     parsed.komentarz_dzienny = parsed.komentarz_dzienny.replace(re, `LP${item.lp} — ${item.imie}`);
   });
+}
+
+function buildStatusByPhone(rows) {
+  const map = new Map();
+  (rows || []).forEach((row) => {
+    const digits = normalizePhoneDigits(row.telefon);
+    if (digits && row.status) map.set(digits, row.status);
+  });
+  return map;
+}
+
+// Model bywa niekonsekwentny co do tego, czy odda pole "status" w każdym
+// case'ie (zaobserwowane: obecne w priorytet_dzis/nowe, brakujące w innych
+// kategoriach) — front pokazuje pigułkę statusu tylko gdy c.status jest
+// prawdziwe, więc brak pola = case bez statusu w UI. Wymuszamy je tu
+// deterministycznie z tych samych danych źródłowych, którymi model był
+// zasilony (dopasowanie po telefonie), zamiast ufać, że wiernie przepisał.
+function postProcessStatus(parsed, leadyStatusByPhone, wycenyStatusByPhone) {
+  const patchWith = (arr, statusMap) => {
+    if (!Array.isArray(arr)) return;
+    arr.forEach((item) => {
+      if (!item || typeof item !== 'object' || !item.telefon) return;
+      const status = statusMap.get(normalizePhoneDigits(item.telefon));
+      if (status) item.status = status;
+    });
+  };
+  const patchEither = (arr) => {
+    if (!Array.isArray(arr)) return;
+    arr.forEach((item) => {
+      if (!item || typeof item !== 'object' || !item.telefon) return;
+      const digits = normalizePhoneDigits(item.telefon);
+      const status = leadyStatusByPhone.get(digits) || wycenyStatusByPhone.get(digits);
+      if (status) item.status = status;
+    });
+  };
+  patchEither(parsed.priorytet_dzis);
+  if (parsed.kategorie && typeof parsed.kategorie === 'object') {
+    patchWith(parsed.kategorie.nowe, leadyStatusByPhone);
+    patchWith(parsed.kategorie.wyceny_z_feedbackiem, leadyStatusByPhone);
+    patchWith(parsed.kategorie.inne_z_feedbackiem, leadyStatusByPhone);
+    patchWith(parsed.kategorie.nieodebrane, leadyStatusByPhone);
+    patchWith(parsed.kategorie.wyceny_historyczne, wycenyStatusByPhone);
+  }
+}
+
+// "ilosc_telefonow" — jak status, model ma to pole tylko przepisać z danych
+// wejściowych ("celowo puste"), ale nie ufamy, że to zrobi konsekwentnie w
+// każdym case'ie. Wymuszamy z callCountByPhone (patrz fetchCallCountByPhone)
+// — to jedyne prawdziwe źródło, licz z realnych wierszy "Log zmian".
+function postProcessCallCounts(parsed, callCountByPhone) {
+  const patch = (arr) => {
+    if (!Array.isArray(arr)) return;
+    arr.forEach((item) => {
+      if (!item || typeof item !== 'object' || !item.telefon) return;
+      item.ilosc_telefonow = callCountByPhone.get(normalizePhoneDigits(item.telefon)) || 0;
+    });
+  };
+  patch(parsed.priorytet_dzis);
+  if (parsed.kategorie && typeof parsed.kategorie === 'object') {
+    patch(parsed.kategorie.nowe);
+    patch(parsed.kategorie.wyceny_z_feedbackiem);
+    patch(parsed.kategorie.inne_z_feedbackiem);
+    patch(parsed.kategorie.nieodebrane);
+    // wyceny_historyczne nie ma tego pola w schemacie — celowo pominięte.
+  }
 }
 
 // Model czasem liczy plan.*_count niespójnie z faktyczną długością tablic
@@ -1122,7 +1316,7 @@ Dostajesz dziewięć zestawów danych, każdy jako tablica obiektów JSON z nazw
 **LEADY AKTYWNE z feedbackiem** — leady w innym statusie (nie "Wycena wysłana"/"Stracony"/"Sprzedane") z terminem feedbacku w ostatnich 7 dniach, najstarszy feedback pierwszy.
 **LEADY NIEODEBRANE ostatnie 7 dni** — status "Nie odebrał", limit 10, najwięcej prób nieodebrania pierwsze.
 
-Pola każdego leada: \`id\`, \`id_wyceny\`, \`data_dolaczenia\`, \`imie\`, \`telefon\`, \`email\`, \`status\`, \`opis\`, \`data_feedbacku\`, \`temperatura\`, \`ostatni_kontakt\`, \`ilosc_telefonow\` (celowo puste — nie licz go, przepisz jak jest), \`produkty\`, \`ocena_ai\`, \`link_formularz\`, \`data_wyceny\`, \`kwota\`.
+Pola każdego leada: \`id\`, \`id_wyceny\`, \`data_dolaczenia\`, \`imie\`, \`telefon\`, \`email\`, \`status\`, \`opis\` (notatki handlowca — surowe, do przeczytania i zrozumienia sprawy, ale w WYJŚCIU masz napisać własną syntezę, patrz sekcja "Pole opis w wyjściu" niżej), \`data_feedbacku\`, \`temperatura\`, \`ostatni_kontakt\`, \`ilosc_telefonow\` (już policzone z realnych połączeń — przepisz jak jest, nie licz go), \`produkty\`, \`link_formularz\`, \`data_wyceny\`, \`kwota\`.
 
 **WYCENY HISTORYCZNE** — do 10 wycen: najpierw te z feedbackiem (termin dziś lub wcześniej), potem uzupełnienie najstarszymi otwartymi ("Open"), bez duplikatów po ID. Pola: \`id_wyceny\`, \`data_stworzenia\`, \`data_feedbacku\`, \`komentarz\`, \`typ\`, \`status\`, \`imie\`, \`telefon\`, \`email\`, \`link_formularz\`, \`kwota\`.
 
@@ -1162,6 +1356,9 @@ Nie wrzucaj case'a do priorytetu tylko po to, żeby wypełnić limit 5 — jeśl
 - GORĄCY: konkretny termin, projekt gotowy, elektryk ustalony, pyta o zamówienie
 - LETNI: "muszę pomierzyć", "zastanowię się", "czekam na projekt"
 - ZIMNY: brak kontekstu, wielokrotne nieodebrane, "może kiedyś"
+
+### Pole \`opis\` w wyjściu (dotyczy wszystkich kategorii leadów, nie wyceny_historyczne)
+NIE kopiuj notatek handlowca (wejściowe \`opis\`) 1:1 do wyjścia. Napisz własnymi słowami syntetyczne podsumowanie stanu sprawy, maks. 3 zdania: co się wydarzyło, na czym konkretnie stoi sprawa, jaki jest następny krok — z realnymi szczegółami (kwoty, terminy, produkty, ustalenia), nie ogólnikowo ("kontakt nawiązany", "czeka na odpowiedź"). Jeśli dla tego telefonu jest coś w LOG ZMIAN/LOG TELEFONÓW DZIŚ, uwzględnij to też. To pole zastępuje starą "ocenę AI" — ma być treściwe, nie krótsze niż notatka, tylko lepiej napisane.
 
 ### Komentarz dzienny (pole główne, jedno na całą umowę)
 Max 5 zdań. Piszesz do handlowca, nie do klienta.
@@ -1206,7 +1403,7 @@ Ton: bezpośredni, jakbyś był doświadczonym sprzedawcą który mówi co robi�
     {
       "lp": 0, "row_number": 0, "kategoria": "", "id_wyceny": "", "imie": "", "telefon": "", "email": "",
       "status": "", "opis": "", "data_feedbacku": "", "temperatura": "", "ostatni_kontakt": "",
-      "ilosc_telefonow": "", "produkty": "", "ocena_ai": "", "link_formularz": "", "data_wyceny": "",
+      "ilosc_telefonow": "", "produkty": "", "link_formularz": "", "data_wyceny": "",
       "kwota": 0, "zadzwonil_dzis": false, "zamkniete": 0
     }
   ],
@@ -1215,7 +1412,7 @@ Ton: bezpośredni, jakbyś był doświadczonym sprzedawcą który mówi co robi�
       {
         "lp": 0, "row_number": 0, "id_wyceny": "", "data_dolaczenia": "", "imie": "", "telefon": "", "email": "",
         "status": "", "opis": "", "data_feedbacku": "", "temperatura": "", "ostatni_kontakt": "",
-        "ilosc_telefonow": "", "produkty": "", "ocena_ai": "", "link_formularz": "", "data_wyceny": "",
+        "ilosc_telefonow": "", "produkty": "", "link_formularz": "", "data_wyceny": "",
         "kwota": 0, "zadzwonil_dzis": false, "zamkniete": 0
       }
     ],
@@ -1282,20 +1479,24 @@ app.all('/api/cron/umowa-draft', async (req, res) => {
     const wczoraj = warsawDayRange(-1);
     const dzis = warsawDayRange(0);
 
-    // Osobno, przed resztą — leady-fetche potrzebują tej mapy do wypełnienia
-    // pola produkty.
-    const produktyByPhone = await fetchProduktyByPhone(supabase);
+    // Osobno, przed resztą — leady-fetche potrzebują tych map do wypełnienia
+    // pól produkty/kwota/data_wyceny/link_formularz/id_wyceny/ilosc_telefonow.
+    const [wycenaByPhone, callCountByPhone] = await Promise.all([
+      fetchWycenaByPhone(supabase),
+      fetchCallCountByPhone(supabase),
+    ]);
 
-    const [standupLog, logZmianWczoraj, logZmianDzis, nowe, wycenyZFeedbackiem, inneZFeedbackiem, nieodebrane, wycenyHistoryczne, zalegleRaw] = await Promise.all([
+    const [standupLog, logZmianWczoraj, logZmianDzis, nowe, wycenyZFeedbackiem, inneZFeedbackiem, nieodebrane, wycenyHistoryczne, zalegleRaw, rozmowySpozaBazyRaw] = await Promise.all([
       fetchStandupLog3(supabase),
       fetchLogZmianRange(supabase, wczoraj.start, wczoraj.end),
       fetchLogZmianRange(supabase, dzis.start, dzis.end),
-      fetchNowe(supabase, produktyByPhone),
-      fetchWycenyZFeedbackiem(supabase, produktyByPhone),
-      fetchInneZFeedbackiem(supabase, produktyByPhone),
-      fetchNieodebrane(supabase, produktyByPhone),
+      fetchNowe(supabase, wycenaByPhone, callCountByPhone),
+      fetchWycenyZFeedbackiem(supabase, wycenaByPhone, callCountByPhone),
+      fetchInneZFeedbackiem(supabase, wycenaByPhone, callCountByPhone),
+      fetchNieodebrane(supabase, wycenaByPhone, callCountByPhone),
       fetchWycenyHistoryczne(supabase),
-      fetchZalegleFeedbacki(supabase, produktyByPhone),
+      fetchZalegleFeedbacki(supabase, wycenaByPhone, callCountByPhone),
+      fetchRozmowySpozaBazy(supabase, wycenaByPhone, callCountByPhone),
     ]);
 
     const calledSet = buildCalledTodaySet(logZmianDzis);
@@ -1364,10 +1565,15 @@ app.all('/api/cron/umowa-draft', async (req, res) => {
     }
 
     const { phoneToLp, nextLp } = reassignLps(parsed);
-    applyZalegleFeedbacki(parsed, zalegleRaw, phoneToLp, nextLp);
+    const nextLpPoBazie = applyRozmowySpozaBazy(parsed, rozmowySpozaBazyRaw, phoneToLp, nextLp);
+    applyZalegleFeedbacki(parsed, zalegleRaw, phoneToLp, nextLpPoBazie);
     fixLpMentionsInComment(parsed);
     postProcessCalledToday(parsed, calledSet);
     postProcessCounts(parsed);
+    const leadyStatusByPhone = buildStatusByPhone([...nowe, ...wycenyZFeedbackiem, ...inneZFeedbackiem, ...nieodebrane, ...zalegleRaw]);
+    const wycenyStatusByPhone = buildStatusByPhone(wycenyHistoryczne);
+    postProcessStatus(parsed, leadyStatusByPhone, wycenyStatusByPhone);
+    postProcessCallCounts(parsed, callCountByPhone);
 
     const { error: upsertErr } = await supabase
       .from(STANDUP_TABLE)
@@ -1442,6 +1648,27 @@ app.get('/api/log-polaczen', async (req, res) => {
       .gte('data_zmiany', start.toISOString())
       .lt('data_zmiany', end.toISOString())
       .order('data_zmiany', { ascending: false });
+    if (error) throw error;
+    res.json({ data: data || [] });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// Historia rozmów jednego numeru, chronologicznie — do rozwijanej "Historia
+// rozmów" pod Opisem case'a w app.html. Bez limitu daty (na odróżnienie od
+// /api/log-polaczen, które jest per-dzień) — na telefon i tak nie ma tysięcy
+// wierszy, więc jedno zapytanie po `telefon` wystarcza.
+app.get('/api/log-polaczen/historia', async (req, res) => {
+  try {
+    const supabase = getClient();
+    const digits = normalizePhoneDigits(req.query.telefon);
+    if (!digits) return res.status(400).json({ error: 'Brak parametru telefon' });
+    const { data, error } = await supabase
+      .from(LOG_ZMIAN_TABLE)
+      .select('*')
+      .eq('telefon', digits)
+      .order('data_zmiany', { ascending: true });
     if (error) throw error;
     res.json({ data: data || [] });
   } catch (err) {
