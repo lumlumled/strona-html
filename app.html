@@ -1988,7 +1988,7 @@
       // zawsze widoczny, gdy jest. id_wyceny = numer prawdziwej wyceny
       // (format "#XXXX"), tylko gdy telefon faktycznie dopasował się do
       // wiersza w Wyceny B2C — to dwa różne numery, nie mylić.
-      { key: 'id_lida', label: 'ID lida', hideWhenEmpty: true },
+      { key: 'id_lida', label: 'ID Leada', hideWhenEmpty: true },
       { key: 'id_wyceny', label: 'ID wyceny', hideWhenEmpty: true },
       { key: 'kwota', label: (c) => (c.ma_wycene ? 'Kwota' : 'Proponowana kwota'), currency: true, hideWhenEmpty: true },
       { key: 'produkty', label: (c) => (c.ma_wycene ? 'Produkty z wyceny' : 'Produkty złapane z rozmowy'), wide: true, hideWhenEmpty: true, render: produktyValueNode },
@@ -2841,7 +2841,7 @@
     sendBtn.addEventListener('click', async () => {
       const instruction = composerInput.value.trim();
       if (!instruction || !currentRow || composerBusy) return;
-      setComposerBusy(true, 'AI mini');
+      setComposerBusy(true, 'AI kminię');
       setComposerMsg('');
       try {
         const body = await postJson(`${API_BASE}/api/ai-edit`, {
