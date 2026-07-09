@@ -1,17 +1,21 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
-    "api/index.js": {
-      "includeFiles": "{app.html,assets/**,server/login.html}",
+    "api/backlog-b2c.js": {
+      "includeFiles": "{apps/backlog-b2c/app.html,apps/backlog-b2c/assets/**,apps/backlog-b2c/server/login.html}",
       "maxDuration": 180
     }
   },
   "crons": [
-    { "path": "/api/cron/umowa-draft", "schedule": "0 5 * * 1-5" },
-    { "path": "/api/cron/log-polaczen-closeout", "schedule": "0 20 * * 1-5" },
-    { "path": "/api/cron/podsumowanie-dnia", "schedule": "0 21 * * 1-5" }
+    { "path": "/backlog-b2c/api/cron/umowa-draft", "schedule": "0 5 * * 1-5" },
+    { "path": "/backlog-b2c/api/cron/log-polaczen-closeout", "schedule": "0 20 * * 1-5" },
+    { "path": "/backlog-b2c/api/cron/podsumowanie-dnia", "schedule": "0 21 * * 1-5" }
+  ],
+  "redirects": [
+    { "source": "/backlog-b2c", "destination": "/backlog-b2c/", "permanent": false }
   ],
   "rewrites": [
-    { "source": "/(.*)", "destination": "/api/index" }
+    { "source": "/backlog-b2c/", "destination": "/api/backlog-b2c" },
+    { "source": "/backlog-b2c/:path*", "destination": "/api/backlog-b2c" }
   ]
 }

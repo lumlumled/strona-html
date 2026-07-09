@@ -2,7 +2,7 @@
   "name": "strona-html-repo",
   "version": "1.0.0",
   "private": true,
-  "description": "Deployment wrapper dla Vercel — właściwa implementacja jest w server/",
+  "description": "Deployment wrapper dla Vercel (monorepo pod lumlum.dev — jedno narzędzie na folder w apps/, patrz SETUP.md) — właściwa implementacja każdego narzędzia jest w apps/<narzędzie>/server/",
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
     "cors": "^2.8.5",

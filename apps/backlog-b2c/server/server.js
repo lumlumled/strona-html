@@ -1,4 +1,5 @@
 require('dotenv').config();
+const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
@@ -67,14 +68,18 @@ app.get('/login', (req, res) => {
 });
 
 app.post('/login', (req, res) => {
+  // req.baseUrl jest '' gdy ta appka odpala się sama (lokalny dev, patrz
+  // require.main poniżej) i np. '/backlog-b2c' gdy jest zamontowana pod
+  // prefiksem przez api/backlog-b2c.js (Vercel) — te redirecty/ciasteczko
+  // muszą trafiać pod właściwy prefiks w obu przypadkach.
   if (SITE_PASSWORD && req.body.password === SITE_PASSWORD) {
     res.setHeader(
       'Set-Cookie',
-      `${COOKIE_NAME}=${createSessionToken()}; HttpOnly; Path=/; Max-Age=${SESSION_MAX_AGE_MS / 1000}; SameSite=Lax`
+      `${COOKIE_NAME}=${createSessionToken()}; HttpOnly; Path=${req.baseUrl || '/'}; Max-Age=${SESSION_MAX_AGE_MS / 1000}; SameSite=Lax`
     );
-    return res.redirect('/');
+    return res.redirect(`${req.baseUrl}/`);
   }
-  res.redirect('/login?error=1');
+  res.redirect(`${req.baseUrl}/login?error=1`);
 });
 
 // Endpointy wołane przez zewnętrzne serwisy (webhook Zadarmy, Vercel Cron)
@@ -86,7 +91,7 @@ app.use((req, res, next) => {
   if (PUBLIC_API_PREFIXES.some((p) => req.path.startsWith(p))) return next();
   if (isAuthenticated(req)) return next();
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Wymagane zalogowanie' });
-  return res.redirect('/login');
+  return res.redirect(`${req.baseUrl}/login`);
 });
 
 // Bez express.static — na Vercelu jest ignorowany (statyki trzeba serwować
@@ -102,8 +107,20 @@ app.use((req, res, next) => {
 app.get('/assets/:file', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'assets', req.params.file));
 });
+
+// Wczytany raz przy starcie (plik się nie zmienia w runtime) — app.html
+// czyta `window.API_BASE || ''` dla każdego swojego fetch()a (już tak było
+// napisane), więc trzeba wstrzyknąć prawdziwy prefiks montowania (req.baseUrl:
+// '' lokalnie, '/backlog-b2c' zamontowane pod Vercelem) przed wysłaniem —
+// inaczej fetch('/api/...') trafiałby w root domeny, nie pod ten prefiks.
+const APP_HTML_TEMPLATE = fs.readFileSync(path.join(__dirname, '..', 'app.html'), 'utf8');
+
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'app.html'), { cacheControl: false });
+  const html = APP_HTML_TEMPLATE.replace(
+    '<head>',
+    `<head>\n<script>window.API_BASE = ${JSON.stringify(req.baseUrl)};</script>`
+  );
+  res.type('html').send(html);
 });
 
 function handleError(res, err, fallbackStatus = 400) {
