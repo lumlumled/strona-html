@@ -1258,8 +1258,8 @@ app.all('/api/cron/umowa-draft', async (req, res) => {
   const supabase = getClient();
   let dataIso = null;
   try {
-    requireOpenAiKey();
     if (!isCronAuthorized(req)) return res.status(401).json({ error: 'Brak autoryzacji' });
+    requireOpenAiKey();
 
     const now = new Date();
     const dzisiaj = warsawDateStr(now);
