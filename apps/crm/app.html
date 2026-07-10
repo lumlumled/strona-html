@@ -1,0 +1,1831 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CRM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --surface-1: #ffffff;
+      --page: #f5f5f4;
+      --text-primary: #111111;
+      --text-secondary: #52514e;
+      --text-muted: #8a8984;
+      --border: rgba(17, 17, 17, 0.12);
+      --accent: #111111;
+      --accent-contrast: #ffffff;
+      --accent-soft: #ececea;
+      --good: #0ca30c;
+      --bad: #b5433f;
+      --feedback-overdue: #b5433f;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-1: #161616;
+        --page: #0a0a0a;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted: #8a8984;
+        --border: rgba(255, 255, 255, 0.14);
+        --accent: #ffffff;
+        --accent-contrast: #0a0a0a;
+        --accent-soft: #262626;
+        --good: #16c116;
+        --bad: #e08585;
+        --feedback-overdue: #e08585;
+      }
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--page);
+      color: var(--text-primary);
+      min-height: 100vh;
+    }
+
+    .shell { display: flex; min-height: 100vh; }
+
+    .sidebar {
+      width: 220px;
+      flex: none;
+      background: #000000;
+      color: #ffffff;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      padding: 1.5rem 1rem;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+    }
+
+    .sidebar .logo { height: 28px; width: auto; }
+
+    .sidebar h1 { font-size: 1.1rem; font-weight: 700; letter-spacing: -0.2px; }
+
+    .nav-sections { display: flex; flex-direction: column; gap: 0.25rem; }
+
+    .nav-section {
+      display: block;
+      padding: 0.6rem 0.75rem;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #ffffff;
+      cursor: pointer;
+      background: transparent;
+      border: none;
+      text-align: left;
+    }
+
+    .nav-section.active { background: rgba(255, 255, 255, 0.14); }
+    .nav-section.disabled { color: rgba(255, 255, 255, 0.4); cursor: default; }
+
+    .content {
+      flex: 1;
+      min-width: 0;
+      padding: 2rem 2rem 4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .content-header h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      margin-bottom: 0.9rem;
+    }
+
+    .toolbar { display: flex; align-items: center; gap: 0.65rem; flex-wrap: wrap; }
+
+    .toolbar input[type="text"],
+    .toolbar select {
+      font: inherit;
+      padding: 0.5rem 0.75rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface-1);
+      color: var(--text-primary);
+    }
+
+    .toolbar input[type="text"] { min-width: 220px; }
+
+    .toolbar button {
+      font: inherit;
+      font-weight: 600;
+      padding: 0.5rem 0.9rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface-1);
+      color: var(--text-primary);
+      cursor: pointer;
+    }
+
+    .toolbar button:hover { background: var(--accent-soft); }
+
+    .count-badge { font-size: 0.85rem; color: var(--text-secondary); margin-left: auto; }
+
+    /* ── Pasek AI: pytanie tekstem lub głosem, filtruje listę + karta z
+       odpowiedzią. Komponent celowo generyczny — kolejne sekcje CRM dostają
+       go za darmo (endpoint i prompt są schema-driven po stronie serwera). */
+    .ai-bar { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.6rem; flex-wrap: wrap; }
+
+    .ai-input-wrap { position: relative; flex: 1; min-width: 260px; }
+
+    .ai-input-wrap svg {
+      position: absolute;
+      left: 0.7rem;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      pointer-events: none;
+    }
+
+    #ai-input {
+      width: 100%;
+      font: inherit;
+      font-size: 0.9rem;
+      padding: 0.5rem 0.75rem 0.5rem 2.05rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface-1);
+      color: var(--text-primary);
+    }
+
+    #ai-input:focus { outline: none; border-color: var(--accent); }
+    #ai-input::placeholder { color: var(--text-muted); }
+
+    .ai-bar > button {
+      font: inherit;
+      font-weight: 600;
+      font-size: 0.88rem;
+      padding: 0.5rem 0.9rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface-1);
+      color: var(--text-primary);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .ai-bar > button:hover:not(:disabled) { background: var(--accent-soft); }
+    .ai-bar > button:disabled { opacity: 0.5; cursor: default; }
+    /* display:inline-flex wyżej nadpisałoby atrybut hidden — przywracamy */
+    .ai-bar > button[hidden] { display: none; }
+
+    #ai-mic { padding: 0.5rem 0.65rem; }
+
+    @keyframes mic-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    #ai-mic.recording {
+      border-color: var(--bad);
+      color: var(--bad);
+      animation: mic-pulse 1.2s ease-in-out infinite;
+    }
+
+    .ai-bar > .ai-chip {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: var(--accent-contrast);
+      font-size: 0.8rem;
+      border-radius: 999px;
+    }
+
+    .ai-bar > .ai-chip:hover:not(:disabled) { background: var(--accent); opacity: 0.85; }
+
+    #ai-status { font-size: 0.8rem; color: var(--text-muted); }
+    #ai-status.error { color: var(--bad); }
+
+    /* Karta z odpowiedzią AI — pływająca, nie blokuje listy: można czytać
+       odpowiedź i równolegle przeglądać przefiltrowane leady. */
+    .ai-card {
+      position: fixed;
+      right: 1.25rem;
+      bottom: 1.25rem;
+      width: min(460px, calc(100vw - 2rem));
+      max-height: min(65vh, 560px);
+      display: flex;
+      flex-direction: column;
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+      z-index: 80;
+      overflow: hidden;
+    }
+
+    .ai-card[hidden] { display: none; }
+
+    .ai-card-head {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.7rem 0.9rem;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      font-size: 0.85rem;
+    }
+
+    .ai-card-close {
+      margin-left: auto;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      cursor: pointer;
+      padding: 0.1rem 0.35rem;
+      border-radius: 6px;
+    }
+
+    .ai-card-close:hover { background: var(--accent-soft); color: var(--text-primary); }
+
+    .ai-card-q {
+      padding: 0.55rem 0.9rem 0;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    .ai-card-q:empty { display: none; }
+
+    .ai-card-body {
+      padding: 0.55rem 0.9rem 0.9rem;
+      font-size: 0.88rem;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow-y: auto;
+    }
+
+    #list { display: flex; flex-direction: column; gap: 0.4rem; }
+
+    .lead {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      transition: border-color 0.15s ease;
+    }
+
+    .lead[open] { border-color: var(--text-muted); }
+
+    .lead.status-menu-open { overflow: visible; z-index: 30; }
+    .lead.zamkniete-local { opacity: 0.5; }
+
+    /* Zwinięty wiersz celowo niski (jak lista, nie karta) — na ekranie ma się
+       mieścić dużo leadów naraz; pełna karta pojawia się dopiero po otwarciu. */
+    .lead summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      padding: 0.5rem 0.9rem;
+      min-height: 2.4rem;
+    }
+
+    .lead summary::-webkit-details-marker { display: none; }
+    .lead summary:hover { background: var(--accent-soft); }
+
+    .chevron {
+      flex: 0 0 auto;
+      width: 1.1rem;
+      height: 1.1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .chevron::before {
+      content: '▸';
+      display: inline-block;
+      transition: transform 0.15s ease;
+      color: var(--text-secondary);
+    }
+
+    .lead[open] summary .chevron::before { transform: rotate(90deg); }
+
+    .lp {
+      flex: 0 0 auto;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      min-width: 1.4rem;
+      text-align: right;
+    }
+
+    /* Lokalny, nietrwały odpowiednik "zamknięte" z Backlogu — czysto do
+       osobistej segregacji w widoku, nic nie zapisuje do bazy, resetuje się
+       po odświeżeniu. */
+    .close-checkbox {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 0.95rem;
+      height: 0.95rem;
+      border-radius: 4px;
+      border: 1.5px solid var(--border);
+      background: var(--accent-soft);
+      flex: 0 0 auto;
+      position: relative;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+
+    .close-checkbox:hover { border-color: var(--text-muted); }
+    .close-checkbox:checked { background: var(--text-muted); border-color: var(--text-muted); }
+
+    .close-checkbox:checked::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 42%;
+      width: 0.28rem;
+      height: 0.52rem;
+      border: solid var(--surface-1);
+      border-width: 0 2px 2px 0;
+      transform: translate(-50%, -50%) rotate(45deg);
+    }
+
+    .summary-name {
+      flex: 0 0 auto;
+      max-width: 13rem;
+      font-weight: 600;
+      font-size: 0.88rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .summary-dash { color: var(--text-muted); flex: 0 0 auto; }
+
+    .summary-phone {
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      font-variant-numeric: tabular-nums;
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
+
+    .copy-btn {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.3rem;
+      height: 1.3rem;
+      padding: 0;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+
+    .copy-btn:hover { background: var(--accent-soft); color: var(--text-primary); }
+    .copy-btn.copied { color: var(--good); }
+
+    .right-anchor { margin-left: auto; display: flex; align-items: center; gap: 0.6rem; }
+
+    .summary-feedback {
+      font-size: 0.76rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+
+    .summary-feedback.is-overdue { color: var(--feedback-overdue); }
+
+    .status-wrap { position: relative; flex: 0 0 auto; }
+
+    .status-tag {
+      position: relative;
+      display: inline-block;
+      padding: 0.2rem 1.25rem 0.2rem 0.65rem;
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 600;
+      background: var(--accent-soft);
+      color: var(--text-primary);
+      white-space: nowrap;
+    }
+
+    .status-tag::after {
+      content: '';
+      position: absolute;
+      right: 0.6rem;
+      top: 50%;
+      width: 0.35rem;
+      height: 0.35rem;
+      border-right: 1.5px solid currentColor;
+      border-bottom: 1.5px solid currentColor;
+      transform: translateY(-75%) rotate(45deg);
+      opacity: 0.7;
+      pointer-events: none;
+    }
+
+    .status-menu {
+      display: none;
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: 0.35rem;
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+      padding: 0.35rem;
+      z-index: 40;
+      min-width: 180px;
+    }
+
+    .status-menu.open { display: block; }
+
+    .status-option {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: 0.4rem 0.6rem;
+      border-radius: 8px;
+      border: none;
+      background: transparent;
+      font: inherit;
+      font-size: 0.85rem;
+      cursor: pointer;
+      color: var(--text-primary);
+    }
+
+    .status-option:hover { background: var(--accent-soft); }
+
+    .lead-body {
+      border-top: 1px solid var(--border);
+      padding: 1.1rem 1.15rem 1.2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .opis-wrap { display: flex; flex-direction: column; gap: 0.35rem; }
+
+    .opis-label {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .opis-value {
+      font: inherit;
+      font-size: 0.9rem;
+      line-height: 1.5;
+      color: var(--text-primary);
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      padding: 0.3rem 0.4rem;
+      margin: -0.3rem -0.4rem;
+      resize: vertical;
+      min-height: 2.6rem;
+      width: 100%;
+    }
+
+    .opis-value:hover { background: var(--accent-soft); }
+    .opis-value:focus { background: var(--page); border-color: var(--accent); outline: none; }
+
+    .historia-rozmow { margin-top: 0.1rem; }
+
+    .historia-rozmow > summary {
+      list-style: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .historia-rozmow > summary::-webkit-details-marker { display: none; }
+
+    .historia-rozmow > summary::before {
+      content: '▸';
+      display: inline-block;
+      font-size: 1.15rem;
+      line-height: 0.6;
+      transition: transform 0.15s ease;
+    }
+
+    .historia-rozmow[open] > summary::before { transform: rotate(90deg); }
+
+    /* Oś czasu kontaktów — wszystkie wpisy widoczne od razu po rozwinięciu
+       sekcji (bez klikania każdej rozmowy z osobna): pionowa linia, kropka na
+       osi (wypełniona = odebrane, pusta = nieodebrane), data + czas trwania
+       w jednej dyskretnej linii, pełna treść podsumowania pod spodem. */
+    .historia-rozmow-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.9rem;
+      margin-top: 0.65rem;
+      margin-left: 0.3rem;
+      padding-left: 1.1rem;
+      border-left: 1px solid var(--border);
+    }
+
+    .historia-rozmow-entry { font-size: 0.85rem; position: relative; }
+
+    .historia-rozmow-entry::before {
+      content: '';
+      position: absolute;
+      left: calc(-1.1rem - 4.5px);
+      top: 0.28rem;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-secondary);
+      border: 1.5px solid var(--text-secondary);
+    }
+
+    .historia-rozmow-entry.nieodebrane::before {
+      background: var(--surface-1);
+      border-color: var(--text-muted);
+    }
+
+    .historia-rozmow-head {
+      display: flex;
+      align-items: baseline;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .historia-rozmow-data {
+      font-size: 0.74rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .historia-rozmow-czas {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      background: var(--accent-soft);
+      border-radius: 999px;
+      padding: 0.05rem 0.5rem;
+    }
+
+    .historia-rozmow-notatka {
+      color: var(--text-primary);
+      margin-top: 0.25rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+
+    .historia-rozmow-entry.nieodebrane .historia-rozmow-notatka,
+    .historia-rozmow-notatka.brak-tresci { color: var(--text-muted); }
+
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+      gap: 0.7rem 1.1rem;
+      align-items: start;
+    }
+
+    .field-grid + .field-grid {
+      margin-top: 0.35rem;
+      padding-top: 0.9rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .field-grid .field.wide,
+    .field-grid .field-collapse.wide { grid-column: 1 / -1; }
+
+    .field { min-width: 0; }
+
+    .field .label {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      display: block;
+      margin-bottom: 0.2rem;
+    }
+
+    .field .value {
+      font: inherit;
+      font-size: 0.86rem;
+      color: var(--text-primary);
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      padding: 0.15rem 0.3rem;
+      margin: -0.15rem -0.3rem;
+      width: 100%;
+      resize: vertical;
+    }
+
+    .field .value:not(.readonly):hover { background: var(--accent-soft); }
+    .field .value:not(.readonly):focus { background: var(--page); border-color: var(--accent); outline: none; }
+
+    .field .value.readonly {
+      color: var(--text-secondary);
+      cursor: default;
+      background: transparent;
+      border-color: transparent;
+      padding: 0.15rem 0;
+      margin: -0.15rem 0;
+      display: inline-block;
+    }
+
+    .field .value.with-copy {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    /* Pola z dużą ilością treści (transkrypcje, oceny AI, lista produktów) —
+       domyślnie zwinięte do jednowierszowego podglądu, rozwijane po kliknięciu,
+       żeby karta leada nie robiła się nieczytelnie długa. */
+    .field-collapse > summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: baseline;
+      gap: 0.5rem;
+      min-width: 0;
+    }
+
+    .field-collapse > summary::-webkit-details-marker { display: none; }
+
+    .field-collapse > summary::before {
+      content: '▸';
+      display: inline-block;
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      transition: transform 0.15s ease;
+      flex: 0 0 auto;
+    }
+
+    .field-collapse[open] > summary::before { transform: rotate(90deg); }
+
+    .field-collapse > summary .label { margin-bottom: 0; flex: 0 0 auto; }
+
+    .field-collapse > summary .preview {
+      color: var(--text-secondary);
+      font-size: 0.86rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }
+
+    .field-collapse[open] > summary .preview { display: none; }
+
+    .field-collapse .value { margin-top: 0.4rem; }
+
+    .field .value.with-copy input {
+      flex: 1;
+      border: none;
+      background: transparent;
+      padding: 0;
+      margin: 0;
+      font: inherit;
+      color: inherit;
+    }
+
+    .empty-note { color: var(--text-muted); font-style: italic; font-size: 0.85rem; }
+
+    .wycena-meta { display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; margin-bottom: 0.6rem; font-size: 0.85rem; }
+    .wycena-meta div span.label { color: var(--text-muted); margin-right: 0.3rem; }
+    .wycena-meta a { color: var(--accent); }
+    .field .value a { color: var(--accent); word-break: break-all; text-decoration: none; }
+    .field .value a:hover { text-decoration: underline; }
+
+    table.produkty { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+
+    table.produkty th,
+    table.produkty td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--border); }
+
+    table.produkty th { color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.72rem; }
+
+    @media (max-width: 720px) {
+      .shell { flex-direction: column; }
+      .sidebar { width: 100%; height: auto; position: static; flex-direction: row; align-items: center; }
+      .content { padding: 1.25rem 1rem 3rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav class="sidebar">
+      <img class="logo" src="assets/lumlum-logo-white.svg" alt="LumLum">
+      <h1>CRM</h1>
+      <div class="nav-sections" id="nav-sections"></div>
+    </nav>
+    <main class="content">
+      <header class="content-header">
+        <h2 id="section-title">Leady B2C</h2>
+        <div class="toolbar">
+          <input type="text" id="search" placeholder="Szukaj po imieniu lub telefonie…">
+          <select id="status-filter">
+            <option value="">Wszystkie statusy</option>
+          </select>
+          <button id="refresh">Odśwież</button>
+          <span class="count-badge" id="count"></span>
+        </div>
+        <div class="ai-bar">
+          <div class="ai-input-wrap">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M12 2l1.8 5.6L19.5 9l-5.7 1.4L12 16l-1.8-5.6L4.5 9l5.7-1.4L12 2z"/><path d="M19 14l.9 2.6 2.6.9-2.6.9L19 21l-.9-2.6-2.6-.9 2.6-.9L19 14z"/></svg>
+            <input type="text" id="ai-input" placeholder="Zapytaj AI o leady — np. „kto ma zaległy feedback?”, „do kogo najlepiej dziś zadzwonić?”">
+          </div>
+          <button id="ai-mic" type="button" title="Dyktuj pytanie (kliknij, mów, kliknij ponownie)">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+          </button>
+          <button id="ai-ask" type="button">Zapytaj</button>
+          <button id="ai-clear" class="ai-chip" type="button" hidden></button>
+          <span id="ai-status"></span>
+        </div>
+      </header>
+      <div id="list"></div>
+    </main>
+  </div>
+
+  <div class="ai-card" id="ai-card" hidden>
+    <div class="ai-card-head">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M12 2l1.8 5.6L19.5 9l-5.7 1.4L12 16l-1.8-5.6L4.5 9l5.7-1.4L12 2z"/></svg>
+      <span>Odpowiedź AI</span>
+      <button class="ai-card-close" id="ai-card-close" type="button" title="Zamknij">✕</button>
+    </div>
+    <div class="ai-card-q" id="ai-card-q"></div>
+    <div class="ai-card-body" id="ai-card-body"></div>
+  </div>
+
+  <script>
+    const API_BASE = window.API_BASE || '';
+
+    const NAV_SECTIONS = [
+      { key: 'leady-b2c', label: 'Leady B2C', enabled: true },
+      // Kolejne sekcje CRM (np. B2B, sprzedaż) dochodzą tu jako kolejne wpisy —
+      // struktura celowo gotowa na to już teraz.
+    ];
+
+    const STATUS_OPTIONS = [
+      'Błędne dane',
+      'Lekko zainteresowany',
+      'Nie odebrał',
+      'Nowy',
+      'Po pierwszym telefonie',
+      'Przyszłościowy',
+      'Sprzedane',
+      'Stracony',
+      'Wycena wysłana',
+      'Zadzwonić jeszcze raz',
+    ];
+
+    const STATUS_COLORS = {
+      'błędne dane': '#e4e3e0',
+      'lekko zainteresowany': '#cfceca',
+      'nie odebrał': '#1a56db',
+      'nowy': '#a8c8f0',
+      'po pierwszym tel': '#f5b995',
+      'po pierwszym telefonie': '#f5b995',
+      'przyszłościowy': '#f0b23d',
+      'sprzedane': '#a9d9a0',
+      'stracony': '#7a1220',
+      'wycena wysłana': '#b13fc0',
+      'zadzwonić jeszcze raz': '#f0993d',
+    };
+
+    // "Kontakt" — zawsze widoczne (nawet puste, żeby dało się od razu wpisać
+    // wartość — to CRM ma być edytowalne jak arkusz, nie tylko podgląd).
+    // Ilość telefonów/Skontaktowane dziś są READ-ONLY: liczone live z "Log
+    // zmian" po stronie serwera (_ilosc_polaczen/_kontakt_dzisiaj), nie z
+    // legacy skażonej kolumny "Ilość telefonów" w Leady B2C — patrz komentarz
+    // przy fetchCallStatsByPhone w apps/crm/server/server.js.
+    const KONTAKT_FIELDS = [
+      { col: 'Ostatni kontakt', label: 'Ostatni kontakt', formatDisplay: (v) => formatDateOnly(v, true) },
+      { col: '_ilosc_polaczen', label: 'Ilość telefonów', readonly: true },
+      { col: 'Temperatura', label: 'Temperatura' },
+      { col: '_kontakt_dzisiaj', label: 'Skontaktowane dziś', readonly: true, bool: true },
+      { col: 'Data Feedbacku', label: 'Data feedbacku', datePicker: true },
+      { col: 'Email', label: 'Email', wide: true, copy: true },
+      // Ręczna notatka handlowca — po restrukturyzacji "Notes" nie zawiera
+      // już zlepka rozmów (te żyją w "Historia rozmów"), a na górze karty
+      // wyświetla się "Podsumowanie AI" (kolumna "Ocena AI kontaktu").
+      { col: 'Notes', label: 'Notatka', textarea: true, wide: true },
+    ];
+
+    // "Transakcja" — pola tożsamościowe (read-only) + wycena/oferta. Etykiety
+    // Data wyceny/Kwota/Produkty zmieniają się zależnie od tego, czy lead ma
+    // realnie wygenerowaną Wycenę (link do formularza) — 1:1 z logiką
+    // ma_wycene w Backlogu (apps/backlog-b2c/app.html DEAL_FIELDS). Pola z
+    // dużą ilością treści (produkty/transkrypcja/ocena AI) są "collapsible" —
+    // zwinięte do jednowierszowego podglądu, rozwijane po kliknięciu.
+    const TRANSAKCJA_FIELDS = [
+      { col: 'Date', label: 'Data dodania', formatDisplay: (v) => formatDateOnly(v) },
+      { col: 'Name', label: 'Imię' },
+      { col: 'ID Leada', label: 'ID Leada', readonly: true },
+      { col: 'ID', label: 'ID wyceny', readonly: true, hideWhenEmpty: true },
+      { col: 'Data wysłania wyceny', label: (l) => (l._ma_wycene ? 'Data wyceny' : 'Data przedstawienia oferty'), formatDisplay: (v) => formatDateOnly(v) },
+      { col: 'Kwota wyceny', label: (l) => (l._ma_wycene ? 'Kwota' : 'Proponowana kwota'), number: true },
+      // Produkty/link chowane całkiem, gdy lead ma realną Wycenę — te pola
+      // na leadzie są wtedy puste/zdublowane, a kompletna wersja (pozycje,
+      // kwota, link) i tak jest w osobnej sekcji "Wycena" na dole.
+      { col: 'Produkty z wyceny', label: 'Produkty złapane z rozmowy', textarea: true, wide: true, collapsible: true, hide: (l) => l._ma_wycene },
+      { col: 'Link do formularza', label: 'Link do formularza', wide: true, link: true, hideWhenEmpty: true, hide: (l) => l._ma_wycene },
+      // "Treść ostatniej rozmowy" i "Skrócony opis kontaktu" celowo
+      // usunięte z tej sekcji: pełne rozmowy widać w "Historia rozmów",
+      // a skrócony opis ("Ocena AI kontaktu") jest teraz głównym opisem
+      // na górze karty ("Podsumowanie AI").
+      { col: 'Źródło', label: 'Źródło', readonly: true, hideWhenEmpty: true },
+      { col: 'ad_name', label: 'Reklama', readonly: true, hideWhenEmpty: true },
+      { col: 'Facebook Leads ID', label: 'Facebook Leads ID', readonly: true, hideWhenEmpty: true },
+    ];
+
+    function contrastTextColor(hex) {
+      const c = hex.replace('#', '');
+      const r = parseInt(c.substring(0, 2), 16);
+      const g = parseInt(c.substring(2, 4), 16);
+      const b = parseInt(c.substring(4, 6), 16);
+      const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      return luminance > 0.6 ? '#111111' : '#ffffff';
+    }
+
+    function applyStatusColor(el, status) {
+      const key = String(status || '').trim().toLowerCase();
+      const matchKey = STATUS_COLORS[key] ? key : Object.keys(STATUS_COLORS).find((k) => key.startsWith(k));
+      const bg = matchKey && STATUS_COLORS[matchKey];
+      if (!bg) {
+        el.style.background = '';
+        el.style.color = '';
+        return;
+      }
+      el.style.background = bg;
+      el.style.color = contrastTextColor(bg);
+    }
+
+    function parseAnyDate(value) {
+      if (!value) return null;
+      const s = String(value).trim();
+      // DD.MM.YYYY sprawdzamy PRZED new Date() — część silników (Node,
+      // niektóre Chrome) parsuje "08.07.2026" po amerykańsku jako MM.DD.YYYY
+      // (7 sierpnia!), inne odrzucają; kolejność regex-najpierw daje ten sam
+      // wynik wszędzie.
+      const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[ T](\d{1,2}):(\d{2}))?/.exec(s);
+      if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]), Number(m[4] || 0), Number(m[5] || 0));
+      // Czyste liczby (np. surowy numer seryjny Excela "46166" w kolumnie
+      // Date) nie są datą, którą umiemy zinterpretować — nie zgaduj.
+      if (/^\d+$/.test(s)) return null;
+      const d = new Date(s);
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
+
+    function formatPlDateTime(value) {
+      const d = parseAnyDate(value);
+      if (!d) return '—';
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const hh = String(d.getHours()).padStart(2, '0');
+      const min = String(d.getMinutes()).padStart(2, '0');
+      return `${dd}.${mm}.${d.getFullYear()} ${hh}:${min}`;
+    }
+
+    // Formatowanie WYŁĄCZNIE do wyświetlania w polu edytowalnym — jeśli
+    // wartości nie da się sparsować jako datę, zwraca ją bez zmian (żeby
+    // nigdy nie zgubić/nie zniekształcić surowych danych). buildField()
+    // porównuje input.value z tym sformatowanym stringiem (nie z surowym
+    // lead[col]) przy blur, więc samo formatowanie NIGDY nie wywoła zapisu —
+    // zapis leci tylko gdy użytkownik faktycznie coś zmieni.
+    function formatDateOnly(value, withTime) {
+      if (!value) return '';
+      const d = parseAnyDate(value);
+      if (!d) return value;
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      let out = `${dd}.${mm}.${d.getFullYear()}`;
+      if (withTime) {
+        const hh = String(d.getHours()).padStart(2, '0');
+        const min = String(d.getMinutes()).padStart(2, '0');
+        out += ` ${hh}:${min}`;
+      }
+      return out;
+    }
+
+    // Konwersje dla natywnego <input type="date"> (kalendarzyk): przeglądarka
+    // wymaga/zwraca zawsze "YYYY-MM-DD". Zapisujemy z powrotem do Supabase w
+    // "DD.MM.YYYY", bo Backlog (apps/backlog-b2c/app.html) parsuje "Data
+    // Feedbacku" WYŁĄCZNIE w tym formacie (sztywny regex) — inny format
+    // wygląda tam na pusty/niewybieralny.
+    function toIsoDateValue(value) {
+      const d = parseAnyDate(value);
+      if (!d) return '';
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+
+    function fromIsoDateValue(isoValue) {
+      if (!isoValue) return '';
+      const [y, m, d] = isoValue.split('-');
+      return `${d}.${m}.${y}`;
+    }
+
+    // "dziś 16:53" / "wczoraj 22:40" / "08.07.2026 22:40" — relatywne
+    // etykiety tylko dla dwóch ostatnich dni, dalej pełna data (handlowiec
+    // analizuje historię wstecz, konkretna data jest ważniejsza niż "5 dni temu").
+    function formatRelativeDateTime(value) {
+      const d = parseAnyDate(value);
+      if (!d) return '—';
+      const hh = String(d.getHours()).padStart(2, '0');
+      const min = String(d.getMinutes()).padStart(2, '0');
+      const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+      const diffDays = Math.round((startOfDay(new Date()) - startOfDay(d)) / 86400000);
+      if (diffDays === 0) return `dziś ${hh}:${min}`;
+      if (diffDays === 1) return `wczoraj ${hh}:${min}`;
+      return formatPlDateTime(value);
+    }
+
+    function formatDurationS(totalS) {
+      const s = Number(totalS) || 0;
+      if (s < 60) return `${s}s`;
+      const m = Math.floor(s / 60);
+      const rest = s % 60;
+      return rest ? `${m}min ${rest}s` : `${m}min`;
+    }
+
+    function isOverdue(value) {
+      const d = parseAnyDate(value);
+      if (!d) return false;
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      return d.getTime() < today.getTime();
+    }
+
+    let allLeady = [];
+
+    // Aktywny filtr z AI: Set stringów "ID Leada" albo null (brak filtra).
+    // Nakłada się NA istniejące filtry (szukajka + status), patrz matchesFilters.
+    let aiFilterIds = null;
+
+    // Sortowanie po "ID Leada" malejąco, NIE po kolumnie "Date" — "Date" ma
+    // niespójne formaty (ISO / DD.MM.YYYY / co najmniej jeden surowy numer
+    // seryjny Excela, np. lead 271 ma Date="46166"), więc porządek po niej
+    // nie trzyma kolejności zgłoszeń. "ID Leada" to licznik nadawany przy
+    // utworzeniu — zawsze ściśle rosnący, czyli malejąco = najnowsze na górze.
+    function byIdLeadaDesc(a, b) {
+      return (Number(b['ID Leada']) || 0) - (Number(a['ID Leada']) || 0);
+    }
+
+    function renderNav() {
+      const wrap = document.getElementById('nav-sections');
+      wrap.innerHTML = '';
+      NAV_SECTIONS.forEach((section) => {
+        const btn = document.createElement('button');
+        btn.className = 'nav-section' + (section.enabled ? ' active' : ' disabled');
+        btn.textContent = section.label + (section.enabled ? '' : ' (wkrótce)');
+        btn.disabled = !section.enabled;
+        wrap.appendChild(btn);
+      });
+    }
+
+    function renderStatusFilterOptions() {
+      const select = document.getElementById('status-filter');
+      STATUS_OPTIONS.forEach((status) => {
+        const opt = document.createElement('option');
+        opt.value = status;
+        opt.textContent = status;
+        select.appendChild(opt);
+      });
+    }
+
+    async function saveField(lead, field, value) {
+      const res = await fetch(`${API_BASE}/api/leady/${lead['ID Leada']}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ field, value }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'Błąd zapisu');
+      lead[field] = value;
+    }
+
+    function buildCopyButton(getValue) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'copy-btn';
+      btn.title = 'Kopiuj';
+      btn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const value = getValue();
+        if (!value) return;
+        navigator.clipboard.writeText(value).then(() => {
+          btn.classList.add('copied');
+          setTimeout(() => btn.classList.remove('copied'), 1200);
+        });
+      });
+      return btn;
+    }
+
+    function buildStatusPill(lead) {
+      const wrap = document.createElement('div');
+      wrap.className = 'status-wrap';
+      const tag = document.createElement('span');
+      tag.className = 'status-tag';
+      tag.textContent = lead['Deal stage'] || '—';
+      applyStatusColor(tag, lead['Deal stage']);
+
+      const menu = document.createElement('div');
+      menu.className = 'status-menu';
+      STATUS_OPTIONS.forEach((status) => {
+        const option = document.createElement('button');
+        option.type = 'button';
+        option.className = 'status-option';
+        option.textContent = status;
+        option.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          menu.classList.remove('open');
+          wrap.closest('.lead').classList.remove('status-menu-open');
+          const prev = tag.textContent;
+          tag.textContent = status;
+          applyStatusColor(tag, status);
+          try {
+            await saveField(lead, 'Deal stage', status);
+          } catch (err) {
+            tag.textContent = prev;
+            applyStatusColor(tag, prev);
+            alert(`Błąd zapisu statusu: ${err.message}`);
+          }
+        });
+        menu.appendChild(option);
+      });
+
+      tag.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const isOpen = menu.classList.toggle('open');
+        wrap.closest('.lead').classList.toggle('status-menu-open', isOpen);
+      });
+
+      wrap.append(tag, menu);
+      return wrap;
+    }
+
+    function truncatePreview(text, max) {
+      const flat = String(text || '').replace(/\s+/g, ' ').trim();
+      if (!flat) return '—';
+      return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+    }
+
+    // Linki z automatyzacji Make bywają brudne ("...formularz?id=#1852",
+    // "...id=''1683") — normalizacja przy każdym renderze, żeby nowe brudne
+    // wpisy nie psuły klikalności (dane w bazie czyści osobny, jednorazowy
+    // skrypt fix-link-formularza.js).
+    function cleanFormLink(url) {
+      return String(url || '').trim().replace(/[#']/g, '');
+    }
+
+    function buildField(lead, spec) {
+      // Pole warunkowo nieobecne (np. Produkty/Link gdy jest sekcja Wycena)
+      // — zwracamy null, caller pomija.
+      if (spec.hide && spec.hide(lead)) return null;
+
+      const labelText = typeof spec.label === 'function' ? spec.label(lead) : spec.label;
+
+      if (spec.link) {
+        const wrap = document.createElement('div');
+        wrap.className = 'field' + (spec.wide ? ' wide' : '');
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.textContent = labelText;
+        const value = document.createElement('span');
+        value.className = 'value readonly';
+        const url = cleanFormLink(lead[spec.col]);
+        if (url) {
+          const a = document.createElement('a');
+          a.href = url;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          a.textContent = url;
+          a.addEventListener('click', (e) => e.stopPropagation());
+          value.appendChild(a);
+        } else {
+          value.textContent = '—';
+        }
+        wrap.append(label, value);
+        return wrap;
+      }
+
+      if (spec.bool || spec.readonly) {
+        const wrap = document.createElement('div');
+        wrap.className = 'field' + (spec.wide ? ' wide' : '');
+        if (spec.hideWhenEmpty && !lead[spec.col]) wrap.style.display = 'none';
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.textContent = labelText;
+        const value = document.createElement('span');
+        value.className = 'value readonly';
+        if (spec.bool) {
+          value.textContent = lead[spec.col] ? 'Tak' : 'Nie';
+        } else {
+          value.textContent = lead[spec.col] === null || lead[spec.col] === undefined || lead[spec.col] === ''
+            ? '—'
+            : lead[spec.col];
+        }
+        wrap.append(label, value);
+        return wrap;
+      }
+
+      // Natywny kalendarzyk dla pól dat — wartość w bazie zostaje w formacie
+      // DD.MM.YYYY (patrz toIsoDateValue/fromIsoDateValue). Zapis na 'change',
+      // NIE na blur — natywne date inputy nie odpalają blur niezawodnie po
+      // wyborze daty z kalendarza we wszystkich przeglądarkach.
+      if (spec.datePicker) {
+        const wrap = document.createElement('div');
+        wrap.className = 'field' + (spec.wide ? ' wide' : '');
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.textContent = labelText;
+        const input = document.createElement('input');
+        input.type = 'date';
+        input.className = 'value';
+        let baselineIso = toIsoDateValue(lead[spec.col]);
+        input.value = baselineIso;
+        input.addEventListener('click', (e) => e.stopPropagation());
+        input.addEventListener('change', async () => {
+          if (input.value === baselineIso) return;
+          const stored = fromIsoDateValue(input.value);
+          try {
+            await saveField(lead, spec.col, stored);
+            baselineIso = input.value;
+            // Odśwież datę feedbacku w zwiniętym nagłówku wiersza, żeby nie
+            // pokazywał starej wartości do następnego przeładowania.
+            const summaryFeedback = input.closest('.lead')?.querySelector('.summary-feedback');
+            if (summaryFeedback) {
+              summaryFeedback.textContent = stored ? `Data feedbacku: ${stored}` : '';
+              summaryFeedback.classList.toggle('is-overdue', isOverdue(stored));
+            }
+          } catch (err) {
+            input.value = baselineIso;
+            alert(`Błąd zapisu pola "${labelText}": ${err.message}`);
+          }
+        });
+        wrap.append(label, input);
+        return wrap;
+      }
+
+      // Bazowa (nieedytowana) wartość pokazana w polu — sformatowana jeśli
+      // spec.formatDisplay podane (np. data), inaczej surowa. Zapis leci
+      // tylko gdy input.value faktycznie odbiegnie od tej bazy (patrz blur
+      // niżej) — samo formatowanie nigdy nie wywoła zapisu.
+      let baseline = lead[spec.col] === null || lead[spec.col] === undefined ? '' : String(lead[spec.col]);
+      if (spec.formatDisplay) baseline = spec.formatDisplay(baseline);
+
+      const input = document.createElement(spec.textarea ? 'textarea' : 'input');
+      input.className = spec.collapsible ? '' : 'value' + (spec.copy ? ' with-copy' : '');
+      if (!spec.textarea) input.type = spec.number ? 'number' : 'text';
+      input.placeholder = '—';
+      input.value = baseline;
+      input.addEventListener('click', (e) => e.stopPropagation());
+      input.addEventListener('blur', async () => {
+        const raw = input.value;
+        if (raw === baseline) return;
+        const value = spec.number ? (raw === '' ? null : Number(raw)) : raw;
+        try {
+          await saveField(lead, spec.col, value);
+          baseline = raw;
+        } catch (err) {
+          input.value = baseline;
+          alert(`Błąd zapisu pola "${labelText}": ${err.message}`);
+        }
+      });
+
+      if (spec.collapsible) {
+        const details = document.createElement('details');
+        details.className = 'field-collapse field' + (spec.wide ? ' wide' : '');
+        const summary = document.createElement('summary');
+        summary.addEventListener('click', (e) => e.stopPropagation());
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.textContent = labelText;
+        const preview = document.createElement('span');
+        preview.className = 'preview';
+        preview.textContent = truncatePreview(lead[spec.col], 90);
+        summary.append(label, preview);
+        input.className = 'value';
+        details.append(summary, input);
+        return details;
+      }
+
+      const wrap = document.createElement('div');
+      wrap.className = 'field' + (spec.wide ? ' wide' : '');
+      const label = document.createElement('span');
+      label.className = 'label';
+      label.textContent = labelText;
+      wrap.appendChild(label);
+
+      if (spec.copy) {
+        const copyWrap = document.createElement('div');
+        copyWrap.className = 'value with-copy';
+        copyWrap.appendChild(input);
+        copyWrap.appendChild(buildCopyButton(() => input.value));
+        wrap.appendChild(copyWrap);
+        return wrap;
+      }
+
+      wrap.appendChild(input);
+      return wrap;
+    }
+
+    function isSurowyOpisPoll(opis) {
+      return /^\S+,\s*\d+s\s*\(from\s+\S+\s+to\s+\S+\)$/i.test(String(opis || '').trim());
+    }
+
+    // Kolumna "Historia rozmów": jeden wpis na linię, najnowsze na górze,
+    // format "DD.MM.YYYY[ HH:mm] - treść" (pisze ją webhook Zadarmy, stare
+    // wpisy przeniesione z Notes migracją + syncem z arkusza).
+    function parseHistoriaRozmow(raw) {
+      return String(raw || '')
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const m = /^(\d{1,2}\.\d{1,2}\.\d{4})(?: +(\d{1,2}:\d{2}))? *[-–—] *([\s\S]*)$/.exec(line);
+          if (!m) return { data: null, czas: null, tresc: line };
+          return { data: m[1], czas: m[2] || null, tresc: m[3].trim() };
+        });
+    }
+
+    function renderHistoriaFromColumn(entries, container) {
+      const list = document.createElement('div');
+      list.className = 'historia-rozmow-list';
+      entries.forEach((row) => {
+        const nieodebrane = /^nie odebrał/i.test(row.tresc);
+        const entry = document.createElement('div');
+        entry.className = 'historia-rozmow-entry' + (nieodebrane ? ' nieodebrane' : '');
+        const head = document.createElement('div');
+        head.className = 'historia-rozmow-head';
+        const when = document.createElement('span');
+        when.className = 'historia-rozmow-data';
+        when.textContent = row.data ? `${row.data}${row.czas ? ` ${row.czas}` : ''}` : '—';
+        head.appendChild(when);
+        const note = document.createElement('div');
+        note.className = 'historia-rozmow-notatka';
+        if (nieodebrane) {
+          note.textContent = row.tresc;
+          note.classList.add('brak-tresci');
+        } else {
+          note.textContent = row.tresc || 'Odebrane — brak zapisanego podsumowania (starszy wpis)';
+          if (!row.tresc) note.classList.add('brak-tresci');
+        }
+        entry.append(head, note);
+        list.appendChild(entry);
+      });
+      container.innerHTML = '';
+      container.appendChild(list);
+    }
+
+    async function loadHistoria(lead, container) {
+      // Główne źródło: kolumna "Historia rozmów" (kompletna — wpisy z
+      // arkusza sprzed webhooka też). Fallback na Log zmian tylko, gdy
+      // kolumna pusta, a licznik połączeń twierdzi, że rozmowy były.
+      const entries = parseHistoriaRozmow(lead['Historia rozmów']);
+      if (entries.length) {
+        renderHistoriaFromColumn(entries, container);
+        return;
+      }
+      container.innerHTML = '<p class="empty-note">Wczytywanie…</p>';
+      try {
+        const res = await fetch(`${API_BASE}/api/leady/${lead._telefon_digits}/historia`);
+        const body = await res.json();
+        const rows = body.data || [];
+        if (!rows.length) {
+          container.innerHTML = '<p class="empty-note">Brak zarejestrowanych rozmów.</p>';
+          return;
+        }
+        const list = document.createElement('div');
+        list.className = 'historia-rozmow-list';
+        // Najnowsze rozmowy na górze — kolejność odwrotna do zapytania
+        // (które sortuje rosnąco, żeby /api/log-polaczen dalej działał
+        // chronologicznie dla innych konsumentów tego samego endpointu).
+        // Płaska oś czasu: pełna treść każdego wpisu widoczna od razu, bez
+        // rozwijania pojedynczych rozmów (wycofane zagnieżdżone <details>).
+        [...rows].reverse().forEach((row) => {
+          const nieodebrane = row.disposition === 'no_answer';
+          const entry = document.createElement('div');
+          entry.className = 'historia-rozmow-entry' + (nieodebrane ? ' nieodebrane' : '');
+          const head = document.createElement('div');
+          head.className = 'historia-rozmow-head';
+          const when = document.createElement('span');
+          when.className = 'historia-rozmow-data';
+          when.textContent = formatRelativeDateTime(row.data_zmiany);
+          head.appendChild(when);
+          if (row.czas_trwania_s) {
+            const czas = document.createElement('span');
+            czas.className = 'historia-rozmow-czas';
+            czas.textContent = formatDurationS(row.czas_trwania_s);
+            head.appendChild(czas);
+          }
+          const note = document.createElement('div');
+          note.className = 'historia-rozmow-notatka';
+          const hasRealOpis = row.opis && !isSurowyOpisPoll(row.opis);
+          if (hasRealOpis) {
+            note.textContent = row.opis;
+          } else {
+            note.textContent = nieodebrane ? 'Nieodebrane' : 'Odebrane — brak zapisanego podsumowania (starszy wpis)';
+            note.classList.add('brak-tresci');
+          }
+          entry.append(head, note);
+          list.appendChild(entry);
+        });
+        container.innerHTML = '';
+        container.appendChild(list);
+      } catch (err) {
+        container.innerHTML = `<p class="empty-note">Błąd wczytywania: ${err.message}</p>`;
+      }
+    }
+
+    async function loadWycena(lead, container) {
+      container.innerHTML = '<p class="empty-note">Wczytywanie…</p>';
+      try {
+        const res = await fetch(`${API_BASE}/api/leady/${lead._telefon_digits}/wycena`);
+        const body = await res.json();
+        const wycena = body.data;
+        if (!wycena) {
+          container.innerHTML = '<p class="empty-note">Brak dopasowanej wyceny.</p>';
+          return;
+        }
+        container.innerHTML = '';
+        const meta = document.createElement('div');
+        meta.className = 'wycena-meta';
+        [
+          ['ID', wycena['ID']],
+          ['Status', wycena['Status']],
+          ['Kwota', wycena['Kwota']],
+          ['Komentarz', wycena['Komentarz']],
+        ].forEach(([label, value]) => {
+          const div = document.createElement('div');
+          div.innerHTML = `<span class="label">${label}:</span>${value ?? '—'}`;
+          meta.appendChild(div);
+        });
+        if (wycena['Link do formularza']) {
+          const link = document.createElement('a');
+          link.href = cleanFormLink(wycena['Link do formularza']);
+          link.target = '_blank';
+          link.rel = 'noopener';
+          link.textContent = 'Link do formularza wyceny →';
+          meta.appendChild(link);
+        }
+        container.appendChild(meta);
+
+        const produkty = Array.isArray(wycena.produkty_json) ? wycena.produkty_json : [];
+        if (produkty.length) {
+          const table = document.createElement('table');
+          table.className = 'produkty';
+          table.innerHTML = `
+            <thead><tr><th>Nazwa</th><th>SKU</th><th>Ilość</th><th>Jedn.</th><th>Cena</th><th>VAT</th></tr></thead>
+            <tbody></tbody>
+          `;
+          const tbody = table.querySelector('tbody');
+          produkty.forEach((p) => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td>${p.name ?? ''}</td>
+              <td>${p.SKU ?? ''}</td>
+              <td>${p.quantity ?? ''}</td>
+              <td>${p.unit ?? ''}</td>
+              <td>${p.price ?? ''}</td>
+              <td>${p.VAT ?? ''}</td>
+            `;
+            tbody.appendChild(tr);
+          });
+          container.appendChild(table);
+        }
+      } catch (err) {
+        container.innerHTML = `<p class="empty-note">Błąd wczytywania: ${err.message}</p>`;
+      }
+    }
+
+    function buildNestedDetails(className, titleText, loader) {
+      const details = document.createElement('details');
+      details.className = className;
+      const summary = document.createElement('summary');
+      summary.textContent = titleText;
+      const body = document.createElement('div');
+      details.append(summary, body);
+
+      let loaded = false;
+      details.addEventListener('toggle', () => {
+        if (details.open && !loaded) {
+          loaded = true;
+          loader(body);
+        }
+      });
+      return details;
+    }
+
+    function leadKey(lead) {
+      return String(lead['ID Leada']);
+    }
+
+    function leadRow(lead) {
+      const details = document.createElement('details');
+      details.className = 'lead';
+      // Klucz do chirurgicznych podmian wierszy przy pollingu (patrz
+      // applyRemoteUpdate) — bez pełnego re-renderu listy.
+      details.dataset.leadId = leadKey(lead);
+
+      const summary = document.createElement('summary');
+      const chevron = document.createElement('span');
+      chevron.className = 'chevron';
+
+      // Numer to "ID Leada" (stały, unikalny, nadany raz przy utworzeniu
+      // leada), NIE pozycja w liście — pozycja przesuwałaby się przy każdym
+      // nowym leadzie/filtrowaniu, psując numerację, na którą ktoś mógłby się
+      // powołać ("case 47"). Lista jest sortowana najnowsze-na-górze, więc
+      // te numery i tak naturalnie maleją od góry do dołu.
+      const lp = document.createElement('span');
+      lp.className = 'lp';
+      lp.textContent = lead['ID Leada'];
+
+      const closeCheckbox = document.createElement('input');
+      closeCheckbox.type = 'checkbox';
+      closeCheckbox.className = 'close-checkbox';
+      closeCheckbox.title = 'Oznacz jako zaopiekowane (lokalnie, nie zapisuje się)';
+      closeCheckbox.addEventListener('click', (e) => e.stopPropagation());
+      closeCheckbox.addEventListener('change', () => {
+        details.classList.toggle('zamkniete-local', closeCheckbox.checked);
+      });
+
+      const name = document.createElement('span');
+      name.className = 'summary-name';
+      name.textContent = lead['Name'] || '(bez imienia)';
+
+      const dash = document.createElement('span');
+      dash.className = 'summary-dash';
+      dash.textContent = '—';
+
+      const phone = document.createElement('span');
+      phone.className = 'summary-phone';
+      phone.textContent = lead._telefon_formatted || '—';
+
+      const phoneCopy = buildCopyButton(() => lead._telefon_formatted);
+
+      const rightAnchor = document.createElement('div');
+      rightAnchor.className = 'right-anchor';
+
+      const feedback = document.createElement('span');
+      feedback.className = 'summary-feedback' + (isOverdue(lead['Data Feedbacku']) ? ' is-overdue' : '');
+      feedback.textContent = lead['Data Feedbacku'] ? `Data feedbacku: ${formatDateOnly(lead['Data Feedbacku'])}` : '';
+
+      const statusPill = buildStatusPill(lead);
+      rightAnchor.append(feedback, statusPill);
+
+      summary.append(chevron, lp, closeCheckbox, name, dash, phone, phoneCopy, rightAnchor);
+
+      const body = document.createElement('div');
+      body.className = 'lead-body';
+
+      // Na górze karty: "Podsumowanie AI" — skrócony opis kontaktu (kolumna
+      // "Ocena AI kontaktu", regenerowana przez GPT po każdej rozmowie), NIE
+      // ręczna notatka. Notatka ("Notes") żyje niżej w sekcji Kontakt.
+      const opisWrap = document.createElement('div');
+      opisWrap.className = 'opis-wrap';
+      const opisLabel = document.createElement('span');
+      opisLabel.className = 'opis-label';
+      opisLabel.textContent = 'Podsumowanie AI';
+      const opisValue = document.createElement('textarea');
+      opisValue.className = 'opis-value';
+      opisValue.placeholder = '—';
+      opisValue.value = lead['Ocena AI kontaktu'] || '';
+      opisValue.rows = 2;
+      opisValue.addEventListener('click', (e) => e.stopPropagation());
+      opisValue.addEventListener('blur', async () => {
+        if (opisValue.value === (lead['Ocena AI kontaktu'] ?? '')) return;
+        try {
+          await saveField(lead, 'Ocena AI kontaktu', opisValue.value);
+        } catch (err) {
+          opisValue.value = lead['Ocena AI kontaktu'] || '';
+          alert(`Błąd zapisu podsumowania: ${err.message}`);
+        }
+      });
+      opisWrap.append(opisLabel, opisValue);
+
+      // Licznik w nagłówku ("Historia rozmów · 3") + auto-rozwinięcie przy
+      // otwarciu leada — analiza historii kontaktów to główny scenariusz
+      // użycia, więc nie każemy klikać drugi raz; da się zwinąć ręcznie.
+      // Liczymy z kolumny "Historia rozmów" (jedna linia = jedna rozmowa,
+      // razem z historycznymi wpisami z arkusza), nie z Log zmian, który
+      // zna tylko rozmowy z ery webhooka.
+      const historiaEntries = parseHistoriaRozmow(lead['Historia rozmów']);
+      const historiaCount = historiaEntries.length || lead._ilosc_polaczen;
+      const historiaLabel = 'Historia rozmów' + (historiaCount ? ` · ${historiaCount}` : '');
+      const historia = buildNestedDetails('historia-rozmow', historiaLabel, (container) => loadHistoria(lead, container));
+      details.addEventListener('toggle', () => {
+        if (details.open && historiaCount) historia.open = true;
+      });
+
+      const kontaktGrid = document.createElement('div');
+      kontaktGrid.className = 'field-grid';
+      KONTAKT_FIELDS.forEach((spec) => {
+        const el = buildField(lead, spec);
+        if (el) kontaktGrid.appendChild(el);
+      });
+
+      const transakcjaGrid = document.createElement('div');
+      transakcjaGrid.className = 'field-grid';
+      TRANSAKCJA_FIELDS.forEach((spec) => {
+        const el = buildField(lead, spec);
+        if (el) transakcjaGrid.appendChild(el);
+      });
+
+      body.append(opisWrap, historia, kontaktGrid, transakcjaGrid);
+
+      if (lead._ma_wycene) {
+        const wycena = buildNestedDetails('historia-rozmow', 'Wycena', (container) => loadWycena(lead, container));
+        body.appendChild(wycena);
+      }
+
+      details.append(summary, body);
+      return details;
+    }
+
+    function matchesFilters(lead, query, statusFilter) {
+      if (aiFilterIds && !aiFilterIds.has(leadKey(lead))) return false;
+      if (statusFilter && lead['Deal stage'] !== statusFilter) return false;
+      if (!query) return true;
+      const haystack = `${lead['Name'] || ''} ${lead._telefon_formatted || ''}`.toLowerCase();
+      return haystack.includes(query);
+    }
+
+    function matchesCurrentFilters(lead) {
+      const query = document.getElementById('search').value.trim().toLowerCase();
+      const statusFilter = document.getElementById('status-filter').value;
+      return matchesFilters(lead, query, statusFilter);
+    }
+
+    function updateCount() {
+      const filteredCount = allLeady.filter(matchesCurrentFilters).length;
+      document.getElementById('count').textContent = `${filteredCount} / ${allLeady.length} leadów`;
+    }
+
+    function renderList() {
+      const filtered = allLeady.filter(matchesCurrentFilters);
+      const list = document.getElementById('list');
+      list.innerHTML = '';
+      filtered.forEach((lead) => list.appendChild(leadRow(lead)));
+      updateCount();
+    }
+
+    async function loadLeady() {
+      const list = document.getElementById('list');
+      list.innerHTML = '<p class="empty-note">Wczytywanie…</p>';
+      try {
+        const res = await fetch(`${API_BASE}/api/leady`);
+        if (res.status === 401) {
+          window.location.href = `${API_BASE}/login`;
+          return;
+        }
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || 'Błąd wczytywania');
+        allLeady = (body.data || []).sort(byIdLeadaDesc);
+        renderList();
+      } catch (err) {
+        list.innerHTML = `<p class="empty-note">Błąd wczytywania: ${err.message}</p>`;
+      }
+    }
+
+    document.addEventListener('click', () => {
+      document.querySelectorAll('.status-menu.open').forEach((menu) => {
+        menu.classList.remove('open');
+        menu.closest('.lead').classList.remove('status-menu-open');
+      });
+    });
+
+    document.getElementById('search').addEventListener('input', renderList);
+    document.getElementById('status-filter').addEventListener('change', renderList);
+    document.getElementById('refresh').addEventListener('click', loadLeady);
+
+    // ── AI: pytanie → filtr listy + karta z odpowiedzią ─────────────────────
+    const aiInput = document.getElementById('ai-input');
+    const aiAskBtn = document.getElementById('ai-ask');
+    const aiMicBtn = document.getElementById('ai-mic');
+    const aiStatus = document.getElementById('ai-status');
+    const aiClearBtn = document.getElementById('ai-clear');
+    const aiCard = document.getElementById('ai-card');
+
+    function setAiStatus(text, isError) {
+      aiStatus.textContent = text || '';
+      aiStatus.classList.toggle('error', Boolean(isError));
+    }
+
+    function setAiBusy(busy) {
+      [aiInput, aiAskBtn, aiMicBtn].forEach((el) => { el.disabled = busy; });
+    }
+
+    function clearAiFilter() {
+      aiFilterIds = null;
+      aiClearBtn.hidden = true;
+      renderList();
+    }
+
+    async function runAiQuery(question) {
+      const q = String(question || '').trim();
+      if (!q) return;
+      setAiBusy(true);
+      setAiStatus('AI analizuje leady…');
+      try {
+        const res = await fetch(`${API_BASE}/api/ai/query`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ section: 'leady-b2c', question: q }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+
+        if (Array.isArray(body.ids) && body.ids.length) {
+          aiFilterIds = new Set(body.ids.map(String));
+          aiClearBtn.textContent = `✕ Filtr AI: ${aiFilterIds.size}`;
+          aiClearBtn.title = 'Wyczyść filtr AI (pokaż wszystkie leady)';
+          aiClearBtn.hidden = false;
+        } else {
+          // pytanie ogólne/statystyczne — AI świadomie nie filtruje widoku
+          aiFilterIds = null;
+          aiClearBtn.hidden = true;
+        }
+        renderList();
+
+        if (body.answer) {
+          document.getElementById('ai-card-q').textContent = q;
+          document.getElementById('ai-card-body').textContent = body.answer;
+          aiCard.hidden = false;
+        }
+        setAiStatus('');
+      } catch (err) {
+        setAiStatus(err.message, true);
+      } finally {
+        setAiBusy(false);
+      }
+    }
+
+    aiAskBtn.addEventListener('click', () => runAiQuery(aiInput.value));
+    aiInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') runAiQuery(aiInput.value); });
+    aiClearBtn.addEventListener('click', clearAiFilter);
+    document.getElementById('ai-card-close').addEventListener('click', () => { aiCard.hidden = true; });
+
+    // ── Dyktowanie pytania: MediaRecorder → POST /api/transcribe (OpenAI) ──
+    // Ten sam sprawdzony wzorzec co composer w Backlogu; nagranie nigdzie nie
+    // jest przechowywane. Po transkrypcji pytanie od razu leci do AI.
+    let mediaRecorder = null;
+    let audioChunks = [];
+
+    aiMicBtn.addEventListener('click', async () => {
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
+        mediaRecorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+        audioChunks = [];
+        mediaRecorder.addEventListener('dataavailable', (e) => {
+          if (e.data.size) audioChunks.push(e.data);
+        });
+        mediaRecorder.addEventListener('stop', async () => {
+          stream.getTracks().forEach((t) => t.stop());
+          aiMicBtn.classList.remove('recording');
+          const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+          if (!blob.size) return;
+          setAiStatus('Transkrybuję…');
+          try {
+            const res = await fetch(`${API_BASE}/api/transcribe`, {
+              method: 'POST',
+              headers: { 'Content-Type': blob.type || 'audio/webm' },
+              body: blob,
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+            if (body.text) {
+              aiInput.value = body.text;
+              setAiStatus('');
+              runAiQuery(body.text);
+            } else {
+              setAiStatus('');
+            }
+          } catch (err) {
+            setAiStatus(err.message, true);
+          }
+        });
+        mediaRecorder.start();
+        aiMicBtn.classList.add('recording');
+        setAiStatus('Nagrywam — kliknij mikrofon ponownie, żeby zakończyć.');
+      } catch (err) {
+        setAiStatus(`Brak dostępu do mikrofonu: ${err.message}`, true);
+      }
+    });
+
+    // ── Synchronizacja Supabase → widok (polling) ───────────────────────────
+    // Druga połowa dwukierunkowej synchronizacji (edycje z tego widoku i tak
+    // idą od razu do bazy przez PUT). Co POLL_INTERVAL_MS dociągamy świeże
+    // dane i CHIRURGICZNIE podmieniamy tylko zmienione wiersze — nigdy pełny
+    // re-render, żeby nie zamykać rozwiniętych kart i nie wyrzucać kursora
+    // z edytowanego pola. Wiersz rozwinięty albo z fokusem pomijamy — jego
+    // zmiany dojadą w kolejnym cyklu, gdy użytkownik skończy.
+    const POLL_INTERVAL_MS = 30000;
+
+    function isRowBusy(el) {
+      return Boolean(el && (el.open || el.contains(document.activeElement)));
+    }
+
+    function insertRowSorted(listEl, lead) {
+      const newEl = leadRow(lead);
+      const id = Number(lead['ID Leada']) || 0;
+      const rows = [...listEl.querySelectorAll(':scope > .lead')];
+      const before = rows.find((el) => (Number(el.dataset.leadId) || 0) < id);
+      if (before) listEl.insertBefore(newEl, before);
+      else listEl.appendChild(newEl);
+    }
+
+    function applyRemoteUpdate(freshRows) {
+      const listEl = document.getElementById('list');
+      const oldById = new Map(allLeady.map((l) => [leadKey(l), l]));
+      const freshById = new Map(freshRows.map((l) => [leadKey(l), l]));
+      const rowEl = (id) => listEl.querySelector(`.lead[data-lead-id="${CSS.escape(id)}"]`);
+
+      const merged = [];
+
+      // Leady usunięte z bazy znikają z listy — chyba że ktoś ma je właśnie
+      // otwarte (wtedy zostają do następnego cyklu).
+      allLeady.forEach((lead) => {
+        const id = leadKey(lead);
+        if (freshById.has(id)) return;
+        const el = rowEl(id);
+        if (isRowBusy(el)) { merged.push(lead); return; }
+        if (el) el.remove();
+      });
+
+      freshRows.forEach((freshLead) => {
+        const id = leadKey(freshLead);
+        const oldLead = oldById.get(id);
+        if (!oldLead) {
+          merged.push(freshLead);
+          if (matchesCurrentFilters(freshLead)) insertRowSorted(listEl, freshLead);
+          return;
+        }
+        if (JSON.stringify(oldLead) === JSON.stringify(freshLead)) {
+          merged.push(oldLead);
+          return;
+        }
+        const el = rowEl(id);
+        if (isRowBusy(el)) { merged.push(oldLead); return; }
+        merged.push(freshLead);
+        if (el) {
+          // zachowaj lokalny "ptaszek zaopiekowania" przy podmianie wiersza
+          const wasChecked = el.querySelector('.close-checkbox')?.checked;
+          const newEl = leadRow(freshLead);
+          if (wasChecked) {
+            newEl.classList.add('zamkniete-local');
+            newEl.querySelector('.close-checkbox').checked = true;
+          }
+          el.replaceWith(newEl);
+        }
+      });
+
+      merged.sort(byIdLeadaDesc);
+      allLeady = merged;
+      updateCount();
+    }
+
+    async function pollRemote() {
+      if (document.hidden) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/leady`);
+        if (!res.ok) return;
+        const body = await res.json();
+        applyRemoteUpdate((body.data || []).sort(byIdLeadaDesc));
+      } catch {
+        /* cichy błąd sieci — kolejna próba za POLL_INTERVAL_MS */
+      }
+    }
+
+    setInterval(pollRemote, POLL_INTERVAL_MS);
+
+    renderNav();
+    renderStatusFilterOptions();
+    loadLeady();
+  </script>
+</body>
+</html>

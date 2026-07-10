@@ -8,14 +8,20 @@ folderze pod `apps/`, dostępne pod `lumlum.dev/<narzędzie>/...` (routing po
 
 ```
 apps/
-  backlog-b2c/            — CRM/standup dashboard Lorenzzo (pierwsze i na
-    app.html                 razie jedyne narzędzie)
+  backlog-b2c/            — standup dashboard Lorenzzo (wykuratorowany przez
+    app.html                 AI dzienny wycinek leadów, Umowa/Podsumowanie)
     assets/
     server/
       server.js, login.html, package.json, scripts/*.js, .env (lokalnie)
+  crm/                    — CRM wewnętrzny, wieloczęściowy (sekcje w bocznej
+    app.html                 nawigacji; dziś: "Leady B2C" — pełna, edytowalna
+    assets/                  lista WSZYSTKICH leadów z tej samej tabeli
+    server/                  Supabase co backlog-b2c, styl arkusza kalkulacyjnego)
+      server.js, login.html, package.json, .env (lokalnie)
 api/
   backlog-b2c.js          — cienki wrapper: montuje apps/backlog-b2c/server
                             pod /backlog-b2c (Express app.use)
+  crm.js                  — analogiczny wrapper dla apps/crm/server pod /crm
 vercel.json               — jedna funkcja per narzędzie + crony, wszystko
                             prefiksowane ścieżką narzędzia
 package.json              — root, TYLKO żeby Vercel miał skąd zainstalować
@@ -55,14 +61,17 @@ package.json              — root, TYLKO żeby Vercel miał skąd zainstalować
 
 ### Cross-referencing danych między narzędziami
 
-Jeszcze niezaprojektowane (stan na 2026-07-09) — na razie tylko
-`backlog-b2c` istnieje i ma własny Supabase (`SUPABASE_URL`/
-`SUPABASE_SERVICE_ROLE_KEY` w `apps/backlog-b2c/server/.env`). Gdy powstanie
-drugie narzędzie potrzebujące tych samych danych, do ustalenia wtedy:
-ten sam projekt Supabase (współdzielony klient) czy osobne bazy z
-synchronizacją; jeśli wspólny — czy każde narzędzie dostaje własny,
-osobny plik `.env` wskazujący na TEN SAM `SUPABASE_URL`, czy `.env`
-faktycznie staje się współdzielony na poziomie repo (root), nie per-`apps/*`.
+**Rozstrzygnięte 2026-07-10** (przy dodaniu `apps/crm/`, pierwszego drugiego
+narzędzia): jeden wspólny projekt Supabase dla wszystkich narzędzi, nie
+osobne bazy z synchronizacją. Każde narzędzie ma **własny plik**
+`apps/<narzędzie>/server/.env`, ale wskazujący na TEN SAM `SUPABASE_URL`/
+`SUPABASE_SERVICE_ROLE_KEY` co pozostałe — `.env` NIE staje się wspólny na
+poziomie repo (root), zostaje per-`apps/*`, tylko z powtórzonymi tymi samymi
+wartościami. Konsekwencja: zapis w jednym narzędziu (np. edycja pola w
+`apps/crm`) jest natychmiast widoczny w drugim (np. `apps/backlog-b2c`) bez
+żadnej synchronizacji do zbudowania — to jedna baza, nie dwie. Każde
+narzędzie nadal ma OSOBNĄ bramkę hasła (`SITE_PASSWORD`, osobna sesja per
+prefiks ścieżki) — to nie jest współdzielone SSO, tylko współdzielone dane.
 
 ## 1. Dane dostępowe z Supabase (per narzędzie, na razie tylko backlog-b2c)
 

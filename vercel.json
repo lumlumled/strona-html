@@ -4,6 +4,10 @@
     "api/backlog-b2c.js": {
       "includeFiles": "{apps/backlog-b2c/app.html,apps/backlog-b2c/assets/**,apps/backlog-b2c/server/login.html}",
       "maxDuration": 180
+    },
+    "api/crm.js": {
+      "includeFiles": "{apps/crm/app.html,apps/crm/assets/**,apps/crm/server/login.html}",
+      "maxDuration": 180
     }
   },
   "crons": [
@@ -12,10 +16,13 @@
     { "path": "/backlog-b2c/api/cron/podsumowanie-dnia", "schedule": "0 21 * * 1-5" }
   ],
   "redirects": [
-    { "source": "/backlog-b2c", "destination": "/backlog-b2c/", "permanent": false }
+    { "source": "/backlog-b2c", "destination": "/backlog-b2c/", "permanent": false },
+    { "source": "/crm", "destination": "/crm/", "permanent": false }
   ],
   "rewrites": [
     { "source": "/backlog-b2c/", "destination": "/api/backlog-b2c" },
-    { "source": "/backlog-b2c/:path*", "destination": "/api/backlog-b2c" }
+    { "source": "/backlog-b2c/:path*", "destination": "/api/backlog-b2c" },
+    { "source": "/crm/", "destination": "/api/crm" },
+    { "source": "/crm/:path*", "destination": "/api/crm" }
   ]
 }

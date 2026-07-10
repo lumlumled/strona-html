@@ -487,7 +487,7 @@ app.post('/api/transcribe', express.raw({ type: 'audio/*', limit: '8mb' }), asyn
 // zapowiedzi wysłania ("wysłał LUB obiecał wysłać") — w praktyce łapało to
 // też przypadki typu "wyślę ofertę na maila", gdzie nic jeszcze nie zostało
 // wysłane. Teraz wymaga potwierdzonego faktu wysłania.
-function buildCallAnalysisPrompt(dzisiaj, kierunek) {
+function buildCallAnalysisPrompt(dzisiaj, kierunek, poprzedniOpis) {
   const kierunekOpis = kierunek === 'wychodzące'
     ? 'To handlowiec dzwoni do klienta (połączenie wychodzące).'
     : kierunek === 'przychodzące'
@@ -548,10 +548,20 @@ Przelicz względem DZISIAJ i zwróć w formacie DD.MM.YYYY.
 Brak wyraźnego umówienia kontaktu → null.
 
 ===== ZASADY opis =====
-Zwięzłe podsumowanie najważniejszych informacji z rozmowy.
+Zwięzłe podsumowanie najważniejszych informacji z TEJ rozmowy.
 Styl: konkretna notatka handlowca, bez lania wody.
 Zawiera: czego klient szuka, gdzie montaż, jaki etap projektu, co ustalono, co jest następnym krokiem.
 Długość dopasuj do treści, nie pomijaj ważnych rzeczy, nie dodawaj zbędnych.
+
+===== ZASADY skrocony_opis =====
+To "żywa pigułka" wiedzy o kliencie — skrócony opis CAŁEGO kontaktu, nie tylko tej rozmowy. Po każdej rozmowie regenerowany od nowa.
+DOTYCHCZASOWY SKRÓCONY OPIS (może być pusty — wtedy piszesz pierwszy):
+"""
+${poprzedniOpis || ''}
+"""
+Przepisz go na nowo uwzględniając tę rozmowę: zachowaj fakty wciąż aktualne, usuń nieaktualne, dodaj nowe ustalenia.
+Maksymalnie 3-4 zdania: czego klient szuka, na jakim etapie jest sprawa, kluczowe konkrety (produkty, metraż, kwoty, terminy), jaki jest następny krok.
+BEZ chronologii poszczególnych rozmów i ich dat (od tego jest osobna historia rozmów), bez ogólników.
 
 ===== ZASADY KOREKT =====
 Jeśli pada korekta (np. "3000K... nie, jednak 4000K") → bierz OSTATNIĄ wartość.
@@ -677,6 +687,7 @@ Brak → null.
   "status": "",
   "data_feedbacku": "DD.MM.YYYY lub null",
   "opis": "",
+  "skrocony_opis": "",
   "wycena": "tak lub nie",
   "typ_klienta": "B2B lub B2C",
   "produkty": "",
@@ -707,8 +718,8 @@ Pole typ_klienta: jeśli brak sygnałów B2B → zawsze "B2C".`;
 // Zastępuje dawne summarizeCall — zamiast samego streszczenia, pełna analiza
 // rozmowy (status/data_feedbacku/produkty/kwota/jakość leada/zamknięcie na
 // dziś), przeniesiona z promptu, który wcześniej żył w scenariuszu Make.
-async function analyzeCall(transcript, { kierunek, dzisiaj }) {
-  const fallback = { status: null, data_feedbacku: null, opis: transcript ? transcript.slice(0, 200) : null, produkty: '', cena_zaproponowana: null, jakosc_leada: null, uzasadnienie_jakosci: '', zamkniete_dzis: false };
+async function analyzeCall(transcript, { kierunek, dzisiaj, poprzedniOpis }) {
+  const fallback = { status: null, data_feedbacku: null, opis: transcript ? transcript.slice(0, 200) : null, skrocony_opis: null, produkty: '', cena_zaproponowana: null, jakosc_leada: null, uzasadnienie_jakosci: '', zamkniete_dzis: false };
   if (!OPENAI_API_KEY || !transcript) return fallback;
   try {
     const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -719,7 +730,7 @@ async function analyzeCall(transcript, { kierunek, dzisiaj }) {
         response_format: { type: 'json_object' },
         reasoning_effort: 'minimal',
         messages: [
-          { role: 'system', content: buildCallAnalysisPrompt(dzisiaj, kierunek) },
+          { role: 'system', content: buildCallAnalysisPrompt(dzisiaj, kierunek, poprzedniOpis) },
           { role: 'user', content: transcript },
         ],
       }),
@@ -918,10 +929,20 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
 
     // Pełna analiza GPT tylko dla odebranych połączeń z transkrypcją — dla
     // nieodebranych nie ma czego analizować (patrz statusAfter niżej).
+    // poprzedniOpis: dotychczasowy skrócony opis kontaktu ("Ocena AI
+    // kontaktu") — GPT regeneruje go po każdej rozmowie jako żywą pigułkę
+    // całego kontaktu (pole skrocony_opis w odpowiedzi).
     const analysis = (answered && transcript)
-      ? await analyzeCall(transcript, { kierunek, dzisiaj: warsawDateStr(new Date()) })
+      ? await analyzeCall(transcript, { kierunek, dzisiaj: warsawDateStr(new Date()), poprzedniOpis: lead ? lead['Ocena AI kontaktu'] : null })
       : null;
     const opis = analysis?.opis || (transcript ? transcript.slice(0, 200) : label);
+
+    // Wpis do "Historia rozmów" — jedna linia na rozmowę, najnowsze na
+    // górze, format zgodny z historycznymi wpisami migrowanymi z Notes
+    // ("DD.MM.YYYY HH:mm - treść") — podsumowania rozmów NIE trafiają już
+    // do Notes (opis = ręczna notatka handlowca).
+    const callStartDate = call.callstart ? new Date(call.callstart) : new Date();
+    const historiaEntry = `${warsawDateTimeStr(Number.isNaN(callStartDate.getTime()) ? new Date() : callStartDate)} - ${answered ? opis : 'Nie odebrał'}`;
 
     // Status nigdy nie cofa się w dół lejka — patrz STATUS_RANK/statusRank.
     // "Nie odebrał" traktowane osobno (nie przez rangę): wolno wejść w nie
@@ -964,7 +985,11 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
           'Phone number': Number(customerDigits),
           Date: warsawDateStr(new Date()),
           'Deal stage': 'Nowy',
-          Notes: opis,
+          // Notes zostaje puste — to ręczna notatka handlowca. Podsumowanie
+          // rozmowy idzie do skróconego opisu (Ocena AI kontaktu) i do
+          // Historii rozmów.
+          'Ocena AI kontaktu': analysis?.skrocony_opis || (answered ? opis : null),
+          'Historia rozmów': historiaEntry,
           'Ostatni kontakt': call.callstart || null,
           Źródło: 'Zadarma — rozmowa bez dopasowania w bazie',
           'Treść rozmowy': transcript || null,
@@ -1023,18 +1048,20 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
         // (status_po), żeby oba miejsca nigdy się nie rozjechały.
         'Deal stage': statusAfter,
         'Data Feedbacku': feedbackAfter,
+        // Historia rozmów rośnie przy KAŻDYM połączeniu (odebranym i nie) —
+        // nowy wpis na górę, dotychczasowe bez zmian.
+        'Historia rozmów': lead['Historia rozmów'] ? `${historiaEntry}\n${lead['Historia rozmów']}` : historiaEntry,
       };
-      // Produkty/kwota/ocena AI: nadpisujemy TYLKO gdy ta rozmowa faktycznie
-      // coś nowego dorzuciła — pusty wynik analizy nie ma czyścić tego, co
-      // już wcześniej ustalono w poprzednich rozmowach.
+      // Produkty/kwota/skrócony opis: nadpisujemy TYLKO gdy ta rozmowa
+      // faktycznie coś nowego dorzuciła — pusty wynik analizy nie ma czyścić
+      // tego, co już wcześniej ustalono w poprzednich rozmowach.
       if (analysis?.produkty) patch['Produkty z wyceny'] = analysis.produkty;
       const cenaZaproponowana = parseKwotaZlotych(analysis?.cena_zaproponowana);
       if (cenaZaproponowana !== null) patch['Kwota wyceny'] = cenaZaproponowana;
-      if (analysis?.jakosc_leada) {
-        const typ = analysis.typ_klienta ? ` (${analysis.typ_klienta})` : '';
-        const uzasadnienie = analysis.uzasadnienie_jakosci ? ` — ${analysis.uzasadnienie_jakosci}` : '';
-        patch['Ocena AI kontaktu'] = `${analysis.jakosc_leada}${typ}${uzasadnienie}`;
-      }
+      // "Ocena AI kontaktu" = skrócony opis kontaktu: żywa pigułka całego
+      // kontaktu, regenerowana przez GPT po każdej odebranej rozmowie na
+      // podstawie poprzedniej wersji + tej rozmowy (patrz analyzeCall).
+      if (analysis?.skrocony_opis) patch['Ocena AI kontaktu'] = analysis.skrocony_opis;
 
       // RPC zamiast zwykłego .update() — ustawia transaction-local flagę
       // bypass, żeby trigger log_zmian_from_leady (patrz migracja
@@ -1050,6 +1077,7 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
         p_produkty: patch['Produkty z wyceny'] ?? null,
         p_kwota: patch['Kwota wyceny'] ?? null,
         p_ocena_ai: patch['Ocena AI kontaktu'] ?? null,
+        p_historia: patch['Historia rozmów'] ?? null,
       });
       if (updateErr) console.error('Błąd update Leady B2C:', updateErr.message);
 
@@ -1129,7 +1157,10 @@ app.get('/api/leady/nowe', async (req, res) => {
         imie: row['Name'] || '',
         email: row['Email'] || '',
         status: row['Deal stage'] || '',
-        opis: row['Notes'] || '',
+        // Notes to teraz czysta ręczna notatka handlowca (podsumowania rozmów
+    // żyją w "Historia rozmów"/"Ocena AI kontaktu") — gdy notatki brak,
+    // dawaj modelowi skrócony opis kontaktu, żeby case nie był pustką.
+    opis: row['Notes'] || row['Ocena AI kontaktu'] || '',
         data_feedbacku: row['Data Feedbacku'] || '',
         temperatura: row['Temperatura'] || '',
         ostatni_kontakt: row['Ostatni kontakt'] || '',
@@ -1180,6 +1211,10 @@ function warsawParts(date = new Date()) {
 function warsawDateStr(date = new Date()) {
   const { y, m, d } = warsawParts(date);
   return `${String(d).padStart(2, '0')}.${String(m).padStart(2, '0')}.${y}`;
+}
+function warsawDateTimeStr(date = new Date()) {
+  const { y, m, d, hh, mm } = warsawParts(date);
+  return `${String(d).padStart(2, '0')}.${String(m).padStart(2, '0')}.${y} ${hh}:${mm}`;
 }
 
 function warsawTimeStr(date = new Date()) {
@@ -1301,7 +1336,10 @@ function mapLeadRow(row, wycenaByPhone, callCountByPhone) {
     telefon: formatPhonePlus(row['Phone number']),
     email: row['Email'] || '',
     status: row['Deal stage'] || '',
-    opis: row['Notes'] || '',
+    // Notes to teraz czysta ręczna notatka handlowca (podsumowania rozmów
+    // żyją w "Historia rozmów"/"Ocena AI kontaktu") — gdy notatki brak,
+    // dawaj modelowi skrócony opis kontaktu, żeby case nie był pustką.
+    opis: row['Notes'] || row['Ocena AI kontaktu'] || '',
     data_feedbacku: formatPlDate(row['Data Feedbacku']),
     temperatura: row['Temperatura'] || '',
     ostatni_kontakt: row['Ostatni kontakt'] || '',
