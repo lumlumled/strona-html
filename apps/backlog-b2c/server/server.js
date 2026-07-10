@@ -1,11 +1,11 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const { getClient } = require('./supabase');
 const { registerLeadyEndpoints, NIE_TELEFON_ZRODLA } = require('../../shared/server/leady-endpoints');
+const { createAuth, clientPayload, panelLinks } = require('../../shared/server/auth');
 
 const app = express();
 app.use(cors());
@@ -25,82 +25,16 @@ app.use((req, res, next) => {
   next();
 });
 
-const SITE_PASSWORD = process.env.SITE_PASSWORD;
-const COOKIE_NAME = 'lumlum_session';
-const SESSION_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 30; // 30 dni
-
-// Bez bazy użytkowników — jedno wspólne hasło. Token sesji jest podpisany
-// HMAC-em (kluczem jest samo SITE_PASSWORD), więc jego ważność da się
-// zweryfikować bezstanowo, bez trzymania listy sesji w pamięci procesu —
-// ważne na serverless (Vercel), gdzie kolejne requesty mogą trafić do innej,
-// nie współdzielącej pamięci instancji funkcji.
-function sign(value) {
-  return crypto.createHmac('sha256', SITE_PASSWORD || '').update(value).digest('hex');
-}
-
-function createSessionToken() {
-  const expires = String(Date.now() + SESSION_MAX_AGE_MS);
-  return `${expires}.${sign(expires)}`;
-}
-
-function isValidSessionToken(token) {
-  if (!token || !SITE_PASSWORD) return false;
-  const [expires, sig] = token.split('.');
-  if (!expires || !sig) return false;
-  const expected = sign(expires);
-  if (expected.length !== sig.length) return false;
-  if (!crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sig))) return false;
-  return Number(expires) > Date.now();
-}
-
-function readCookie(req, name) {
-  const header = req.headers.cookie;
-  if (!header) return null;
-  const match = header.split(';').map((s) => s.trim()).find((s) => s.startsWith(`${name}=`));
-  return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
-}
-
-function isAuthenticated(req) {
-  return isValidSessionToken(readCookie(req, COOKIE_NAME));
-}
-
-app.get('/login', (req, res) => {
-  res.sendFile(path.join(__dirname, 'login.html'), { cacheControl: false });
-});
-
-app.post('/login', (req, res) => {
-  // req.baseUrl jest '' gdy ta appka odpala się sama (lokalny dev, patrz
-  // require.main poniżej) i np. '/backlog-b2c' gdy jest zamontowana pod
-  // prefiksem przez api/backlog-b2c.js (Vercel) — te redirecty/ciasteczko
-  // muszą trafiać pod właściwy prefiks w obu przypadkach.
-  if (SITE_PASSWORD && req.body.password === SITE_PASSWORD) {
-    // Path=/ (nie per-appka): jedno logowanie obowiązuje w całym lumlum.dev —
-    // hub, Backlog i CRM podpisują sesję tym samym SITE_PASSWORD, więc każda
-    // appka honoruje ten sam token (patrz apps/hub/server/server.js).
-    res.setHeader(
-      'Set-Cookie',
-      `${COOKIE_NAME}=${createSessionToken()}; HttpOnly; Path=/; Max-Age=${SESSION_MAX_AGE_MS / 1000}; SameSite=Lax`
-    );
-    return res.redirect(`${req.baseUrl}/`);
-  }
-  res.redirect(`${req.baseUrl}/login?error=1`);
-});
-
-// Endpointy wołane przez zewnętrzne serwisy (webhook Zadarmy, Vercel Cron)
-// nie mają ciasteczka sesji — mają własną autoryzację (podpis Zadarmy /
-// CRON_SECRET), więc pomijają bramkę hasła.
-const PUBLIC_API_PREFIXES = ['/api/webhooks/', '/api/cron/'];
-
-app.use((req, res, next) => {
-  if (PUBLIC_API_PREFIXES.some((p) => req.path.startsWith(p))) return next();
-  if (isAuthenticated(req)) return next();
-  if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Wymagane zalogowanie' });
-  return res.redirect(`${req.baseUrl}/login`);
-});
-
+// Indywidualne konta (tabela app_users) — wspólny moduł auth
+// (apps/shared/server/auth.js) rejestruje /login, /logout i bramkę panelu
+// 'backlog-b2c'. Endpointy wołane przez zewnętrzne serwisy (webhook Zadarmy,
+// Vercel Cron) nie mają ciasteczka sesji — mają własną autoryzację (podpis
+// Zadarmy / CRON_SECRET), więc pomijają bramkę.
 // Bez express.static — na Vercelu jest ignorowany (statyki trzeba serwować
 // z public/**, a to zepsułoby bramkę hasła dla strony). sendFile działa
-// wszędzie tak samo, więc zamiast tego jest zwykły route.
+// wszędzie tak samo, więc zamiast tego jest zwykły route. Assets/shared
+// PRZED bramką auth — strona logowania też potrzebuje logo, a to statyki
+// bez wrażliwych danych.
 //
 // Plik nazywa się app.html, NIE index.html: Vercel sprawdza filesystem
 // PRZED rewrites (potwierdzone w ich dokumentacji — "precedence is given
@@ -118,6 +52,14 @@ app.get('/shared/:file', (req, res) => {
   res.sendFile(path.join(__dirname, '..', '..', 'shared', req.params.file));
 });
 
+const auth = createAuth({
+  getClient,
+  panelKey: 'backlog-b2c',
+  publicPrefixes: ['/api/webhooks/', '/api/cron/'],
+  loginTitle: 'Backlog B2C',
+});
+auth.register(app);
+
 // Wczytany raz przy starcie (plik się nie zmienia w runtime) — app.html
 // czyta `window.API_BASE || ''` dla każdego swojego fetch()a (już tak było
 // napisane), więc trzeba wstrzyknąć prawdziwy prefiks montowania (req.baseUrl:
@@ -126,9 +68,13 @@ app.get('/shared/:file', (req, res) => {
 const APP_HTML_TEMPLATE = fs.readFileSync(path.join(__dirname, '..', 'app.html'), 'utf8');
 
 app.get('/', (req, res) => {
+  // Poza API_BASE wstrzykujemy zalogowanego użytkownika i linki między
+  // panelami — konsumuje je wspólny topbar (apps/shared/topbar.js).
   const html = APP_HTML_TEMPLATE.replace(
     '<head>',
-    `<head>\n<script>window.API_BASE = ${JSON.stringify(req.baseUrl)};</script>`
+    `<head>\n<script>window.API_BASE = ${JSON.stringify(req.baseUrl)};\n` +
+    `window.LUMLUM_USER = ${JSON.stringify(clientPayload(req.user))};\n` +
+    `window.LUMLUM_LINKS = ${JSON.stringify(panelLinks())};</script>`
   );
   res.type('html').send(html);
 });

@@ -18,7 +18,10 @@ const NOTATKA_MODEL = process.env.OPENAI_UMOWA_MODEL || 'gpt-5-mini';
 
 // Kolumny "Leady B2C" edytowalne z karty (styl arkusza — zapis wprost do
 // bazy). Celowo WYŁĄCZONE: "Phone number" (klucz łączący z Log zmian/Wyceny
-// B2C), "ID"/"ID Leada" (numeracja systemowa), "Źródło" (tylko webhook).
+// B2C), "ID"/"ID Leada" (numeracja systemowa), "Źródło" (tylko webhook),
+// "Kwota wyceny" (decyzja Antoniego 2026-07-11: kwotę zmienia się z poziomu
+// wyceny — przyszły panel Wyceny — nie z poziomu leada; webhook/RPC dalej
+// ją zapisuje, bo idzie poza tą listą).
 const EDITABLE_LEAD_FIELDS = [
   'Date',
   'Name',
@@ -31,7 +34,6 @@ const EDITABLE_LEAD_FIELDS = [
   'Ilość telefonów',
   'Treść rozmowy',
   'Produkty z wyceny',
-  'Kwota wyceny',
   'Data wysłania wyceny',
   'Link do formularza',
   'Ocena AI kontaktu',
@@ -169,12 +171,19 @@ async function analyzeNotatka(tresc, { dzisiaj, poprzedniaAkcja }) {
   }
 }
 
-function registerLeadyEndpoints(app, { getClient }) {
+// requireView/requireEdit — opcjonalne middleware uprawnień (CRM egzekwuje
+// nimi dostęp per arkusz: podgląd dla odczytów, edycja dla zapisów). Backlog
+// ich nie przekazuje — dostęp do panelu Backlog = pełny dzienny workflow.
+function registerLeadyEndpoints(app, { getClient, requireView, requireEdit }) {
+  const passthrough = (req, res, next) => next();
+  const view = requireView || passthrough;
+  const edit = requireEdit || passthrough;
+
   // PUT /api/leady/:idLeada — { field, value } — zapis JEDNEGO pola, zwykły
   // update (celowo NIE przez RPC) — trigger trg_log_zmian_from_leady sam
   // loguje zmianę do "Log zmian" z zrodlo='manual_crm'. Klucz to "ID Leada"
   // (unikalny), NIE telefon — 5 numerów jest współdzielonych przez >1 wiersz.
-  app.put('/api/leady/:idLeada', async (req, res) => {
+  app.put('/api/leady/:idLeada', edit, async (req, res) => {
     try {
       const { field, value } = req.body || {};
       if (!EDITABLE_LEAD_FIELDS.includes(field)) {
@@ -203,7 +212,7 @@ function registerLeadyEndpoints(app, { getClient }) {
   // GET /api/leady/pelny?telefon= — surowy wiersz Leady B2C wzbogacony o pola
   // wyliczane, w DOKŁADNIE tym samym kształcie co elementy listy z GET
   // /api/leady w CRM — zasila wspólną kartę leada w Backlogu.
-  app.get('/api/leady/pelny', async (req, res) => {
+  app.get('/api/leady/pelny', view, async (req, res) => {
     try {
       const supabase = getClient();
       const digits = normalizePhoneDigits(req.query.telefon);
@@ -247,7 +256,7 @@ function registerLeadyEndpoints(app, { getClient }) {
 
   // GET /api/leady/:telefon/historia — cała historia połączeń/zmian tego
   // telefonu z Log zmian, chronologicznie (fallback Historii rozmów w karcie).
-  app.get('/api/leady/:telefon/historia', async (req, res) => {
+  app.get('/api/leady/:telefon/historia', view, async (req, res) => {
     try {
       const supabase = getClient();
       const digits = normalizePhoneDigits(req.params.telefon);
@@ -266,7 +275,7 @@ function registerLeadyEndpoints(app, { getClient }) {
 
   // GET /api/leady/:telefon/wycena — surowy wiersz Wyceny B2C dopasowany po
   // telefonie, z produkty_json jako tablicą. Read-only z założenia.
-  app.get('/api/leady/:telefon/wycena', async (req, res) => {
+  app.get('/api/leady/:telefon/wycena', view, async (req, res) => {
     try {
       const supabase = getClient();
       const digits = normalizePhoneDigits(req.params.telefon);
@@ -280,7 +289,7 @@ function registerLeadyEndpoints(app, { getClient }) {
   // POST /api/leady/notatka — ręczna notatka handlowca. Dual-write: wiersz w
   // Log zmian (zrodlo: notatka_handlowca) + linia "[Notatka]" na górze kolumny
   // "Historia rozmów". GPT po drodze wyciąga akcję/termin/datę feedbacku.
-  app.post('/api/leady/notatka', async (req, res) => {
+  app.post('/api/leady/notatka', edit, async (req, res) => {
     try {
       const digits = normalizePhoneDigits(req.body?.telefon);
       const tresc = String(req.body?.tresc || '').trim();
@@ -340,7 +349,7 @@ function registerLeadyEndpoints(app, { getClient }) {
   // Puste `akcja` = skasowanie; z flagą `wykonane: true` = "zrobione dziś"
   // (ptaszek na pigułce/karcie): czyści akcję, loguje wykonanie i dopisuje
   // linię "[Akcja] Zrobione: ..." do kolumny "Historia rozmów".
-  app.post('/api/leady/akcja', async (req, res) => {
+  app.post('/api/leady/akcja', edit, async (req, res) => {
     try {
       const digits = normalizePhoneDigits(req.body?.telefon);
       if (!digits) return res.status(400).json({ error: 'Brak numeru telefonu' });

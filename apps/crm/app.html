@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="shared/lead-card.css">
+  <link rel="stylesheet" href="shared/topbar.css">
   <style>
     :root {
       color-scheme: light dark;
@@ -51,58 +52,56 @@
       min-height: 100vh;
     }
 
-    .shell { display: flex; min-height: 100vh; }
-
-    .sidebar {
-      width: 220px;
-      flex: none;
-      background: #000000;
-      color: #ffffff;
-      display: flex;
-      flex-direction: column;
-      gap: 1.5rem;
-      padding: 1.5rem 1rem;
-      position: sticky;
-      top: 0;
-      height: 100vh;
-    }
-
-    .sidebar .logo { height: 28px; width: auto; }
-
-    .sidebar h1 { font-size: 1.1rem; font-weight: 700; letter-spacing: -0.2px; }
-
-    .nav-sections { display: flex; flex-direction: column; gap: 0.25rem; }
-
-    .nav-section {
-      display: block;
-      padding: 0.6rem 0.75rem;
-      border-radius: 10px;
-      font-size: 0.9rem;
-      font-weight: 600;
-      color: #ffffff;
-      cursor: pointer;
-      background: transparent;
-      border: none;
-      text-align: left;
-    }
-
-    .nav-section.active { background: rgba(255, 255, 255, 0.14); }
-    .nav-section.disabled { color: rgba(255, 255, 255, 0.4); cursor: default; }
-
+    /* Sidebar zastąpiony wspólnym topbarem (apps/shared/topbar.*) — sekcje
+       CRM ("arkusze") żyją teraz jako pigułki nad tytułem, spójnie z
+       przełącznikiem dokumentów w Backlogu i lepiej na mobile. */
     .content {
-      flex: 1;
+      width: 100%;
+      max-width: 1100px;
+      margin: 0 auto;
       min-width: 0;
-      padding: 2rem 2rem 4rem;
+      padding: 1.6rem 1.5rem 4rem;
       display: flex;
       flex-direction: column;
       gap: 1.25rem;
     }
+
+    .nav-sections { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+
+    .nav-section {
+      font: inherit;
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 0.32rem 0.9rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface-1);
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+
+    .nav-section.active { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
+    .nav-section.disabled { opacity: 0.5; cursor: default; }
 
     .content-header h2 {
       font-size: 1.5rem;
       font-weight: 700;
       letter-spacing: -0.3px;
       margin-bottom: 0.9rem;
+    }
+
+    .view-badge {
+      display: inline-block;
+      vertical-align: 0.25rem;
+      margin-left: 0.5rem;
+      font-size: 0.64rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.14rem 0.55rem;
     }
 
     .toolbar { display: flex; align-items: center; gap: 0.65rem; flex-wrap: wrap; }
@@ -453,6 +452,10 @@
 
     .status-menu.open { display: block; }
 
+    /* Tryb podglądu: status to zwykła pigułka bez strzałki i menu. */
+    .crm-readonly .status-tag { padding-right: 0.65rem; cursor: default; }
+    .crm-readonly .status-tag::after { display: none; }
+
     .status-option {
       display: block;
       width: 100%;
@@ -475,22 +478,20 @@
     .empty-note { color: var(--text-muted); font-style: italic; font-size: 0.85rem; }
 
     @media (max-width: 720px) {
-      .shell { flex-direction: column; }
-      .sidebar { width: 100%; height: auto; position: static; flex-direction: row; align-items: center; }
       .content { padding: 1.25rem 1rem 3rem; }
+      /* Zwinięty wiersz na małym ekranie: bez myślnika i daty feedbacku,
+         żeby imię + telefon + status mieściły się bez ucinania. */
+      .summary-dash, .summary-feedback { display: none; }
+      .summary-name { max-width: 9rem; }
     }
   </style>
 </head>
 <body>
-  <div class="shell">
-    <nav class="sidebar">
-      <img class="logo" src="assets/lumlum-logo-white.svg" alt="LumLum">
-      <h1>CRM</h1>
+  <header id="site-header"></header>
+  <main class="content">
+    <header class="content-header">
       <div class="nav-sections" id="nav-sections"></div>
-    </nav>
-    <main class="content">
-      <header class="content-header">
-        <h2 id="section-title">Leady B2C</h2>
+      <h2 id="section-title">Leady B2C</h2>
         <div class="toolbar">
           <input type="text" id="search" placeholder="Szukaj po imieniu lub telefonie…">
           <select id="status-filter">
@@ -511,10 +512,9 @@
           <button id="ai-clear" class="ai-chip" type="button" hidden></button>
           <span id="ai-status"></span>
         </div>
-      </header>
-      <div id="list"></div>
-    </main>
-  </div>
+    </header>
+    <div id="list"></div>
+  </main>
 
   <div class="ai-card" id="ai-card" hidden>
     <div class="ai-card-head">
@@ -526,9 +526,27 @@
     <div class="ai-card-body" id="ai-card-body"></div>
   </div>
 
+  <script src="shared/topbar.js"></script>
   <script src="shared/lead-card.js"></script>
   <script>
     const API_BASE = window.API_BASE || '';
+
+    LumTopbar.mount({ active: 'crm', into: document.getElementById('site-header') });
+
+    // Uprawnienie do arkusza "Leady B2C" przyznaje panel Pozwolenia: 'edit'
+    // = pełna edycja, 'view' = sam podgląd. Serwer i tak egzekwuje to na
+    // endpointach — tu tylko chowamy edycyjne UI, żeby nie kusiło.
+    const SHEET_LEVEL = (window.LUMLUM_USER && window.LUMLUM_USER.crmSheets
+      ? window.LUMLUM_USER.crmSheets['leady-b2c']
+      : 'edit') || null;
+    const READ_ONLY = SHEET_LEVEL !== 'edit';
+    if (READ_ONLY) {
+      const badge = document.createElement('span');
+      badge.className = 'view-badge';
+      badge.textContent = 'tylko podgląd';
+      document.getElementById('section-title').appendChild(badge);
+      document.body.classList.add('crm-readonly');
+    }
 
     const NAV_SECTIONS = [
       { key: 'leady-b2c', label: 'Leady B2C', enabled: true },
@@ -664,6 +682,7 @@
       tag.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (READ_ONLY) return; // podgląd: status bez menu zmiany
         const isOpen = menu.classList.toggle('open');
         wrap.closest('.lead').classList.toggle('status-menu-open', isOpen);
       });
@@ -736,6 +755,7 @@
       const { el: body } = LeadKarta.buildBody(lead, {
         apiBase: API_BASE,
         hostDetails: details,
+        readOnly: READ_ONLY,
         onFeedbackDate: (stored) => {
           feedback.textContent = stored ? `Data feedbacku: ${formatDateOnly(stored)}` : '';
           feedback.classList.toggle('is-overdue', isOverdue(stored));
@@ -786,9 +806,24 @@
         if (!res.ok) throw new Error(body.error || 'Błąd wczytywania');
         allLeady = (body.data || []).sort(byIdLeadaDesc);
         renderList();
+        openLeadFromUrl();
       } catch (err) {
         list.innerHTML = `<p class="empty-note">Błąd wczytywania: ${err.message}</p>`;
       }
+    }
+
+    // Deep-link z ekranu głównego (lumlum.dev/crm/?lead=123): po pierwszym
+    // załadowaniu listy otwiera wskazanego leada i zjeżdża do niego.
+    let deepLinkDone = false;
+    function openLeadFromUrl() {
+      if (deepLinkDone) return;
+      deepLinkDone = true;
+      const id = new URLSearchParams(window.location.search).get('lead');
+      if (!id) return;
+      const el = document.querySelector(`.lead[data-lead-id="${CSS.escape(id)}"]`);
+      if (!el) return;
+      el.open = true;
+      el.scrollIntoView({ block: 'center' });
     }
 
     document.addEventListener('click', () => {

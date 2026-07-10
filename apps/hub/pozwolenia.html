@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pozwolenia — LumLum</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared/topbar.css">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --surface-1: #ffffff;
+      --page: #f5f5f4;
+      --text-primary: #111111;
+      --text-secondary: #52514e;
+      --text-muted: #8a8984;
+      --border: rgba(17, 17, 17, 0.12);
+      --accent: #111111;
+      --accent-contrast: #ffffff;
+      --accent-soft: #ececea;
+      --good: #0ca30c;
+      --bad: #b5433f;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-1: #161616;
+        --page: #0a0a0a;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted: #8a8984;
+        --border: rgba(255, 255, 255, 0.14);
+        --accent: #ffffff;
+        --accent-contrast: #0a0a0a;
+        --accent-soft: #262626;
+        --good: #16c116;
+        --bad: #e08585;
+      }
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--page);
+      color: var(--text-primary);
+      min-height: 100vh;
+    }
+
+    main {
+      width: 100%;
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 2.2rem 1.25rem 4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.4rem;
+    }
+
+    h1 { font-size: 1.45rem; font-weight: 700; letter-spacing: -0.4px; }
+    .lead-text { color: var(--text-secondary); font-size: 0.88rem; margin-top: 0.3rem; line-height: 1.5; }
+
+    .card {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 1.2rem 1.25rem 1.3rem;
+    }
+
+    .card h2 { font-size: 1rem; font-weight: 700; margin-bottom: 0.9rem; }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 0.7rem;
+      margin-bottom: 0.9rem;
+    }
+
+    label.f {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    input[type="text"], input[type="email"], input[type="password"], select {
+      font: inherit;
+      font-size: 0.88rem;
+      padding: 0.5rem 0.7rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--page);
+      color: var(--text-primary);
+      width: 100%;
+    }
+
+    input:focus, select:focus { outline: none; border-color: var(--accent); }
+
+    .perm-title {
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin: 0.7rem 0 0.4rem;
+    }
+
+    .perm-row { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
+    .perm-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.28rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 500;
+      cursor: pointer;
+      user-select: none;
+      color: var(--text-secondary);
+      transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .perm-pill input { display: none; }
+    .perm-pill.on { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+
+    .sheet-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+    .sheet-row .sheet-name { font-size: 0.84rem; font-weight: 600; }
+    .sheet-row select { width: auto; }
+
+    .actions { display: flex; align-items: center; gap: 0.6rem; margin-top: 1rem; flex-wrap: wrap; }
+
+    button.primary {
+      font: inherit;
+      font-weight: 600;
+      font-size: 0.88rem;
+      padding: 0.5rem 1.2rem;
+      border-radius: 999px;
+      border: none;
+      background: var(--accent);
+      color: var(--accent-contrast);
+      cursor: pointer;
+    }
+
+    button.primary:hover { opacity: 0.9; }
+    button.primary:disabled { opacity: 0.5; cursor: default; }
+
+    .msg { font-size: 0.8rem; color: var(--text-muted); }
+    .msg.err { color: var(--bad); }
+    .msg.ok { color: var(--good); font-weight: 600; }
+
+    /* Lista użytkowników */
+    .user-card { display: flex; flex-direction: column; }
+
+    .user-head {
+      display: flex;
+      align-items: center;
+      gap: 0.7rem;
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .user-head::-webkit-details-marker { display: none; }
+
+    .user-avatar {
+      width: 2.1rem;
+      height: 2.1rem;
+      border-radius: 50%;
+      background: var(--accent);
+      color: var(--accent-contrast);
+      font-weight: 700;
+      font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+    }
+
+    .user-id { min-width: 0; }
+    .user-name { font-size: 0.95rem; font-weight: 700; }
+    .user-email { font-size: 0.78rem; color: var(--text-muted); overflow-wrap: anywhere; }
+
+    .user-tags { margin-left: auto; display: flex; gap: 0.35rem; flex-wrap: wrap; justify-content: flex-end; }
+
+    .tag {
+      font-size: 0.66rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: 999px;
+      padding: 0.14rem 0.55rem;
+      white-space: nowrap;
+    }
+
+    .tag.admin { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+    .tag.inactive { color: var(--bad); border-color: var(--bad); }
+
+    details.user-card[open] .user-head { margin-bottom: 1rem; }
+
+    .hint { font-size: 0.76rem; color: var(--text-muted); margin-top: 0.35rem; line-height: 1.45; }
+  </style>
+</head>
+<body>
+  <main>
+    <div>
+      <h1>Pozwolenia</h1>
+      <p class="lead-text">Konta i dostępy do narzędzi lumlum.dev. Panel przydziela dostęp do paneli oraz — w CRM — do poszczególnych arkuszy (podgląd lub edycja). Zmiany działają od razu, bez ponownego logowania użytkownika.</p>
+    </div>
+
+    <section class="card" id="add-card">
+      <h2>Dodaj użytkownika</h2>
+      <div class="form-grid">
+        <label class="f">Imię / nazwa<input type="text" id="add-name" placeholder="np. Lorenzo"></label>
+        <label class="f">E-mail<input type="email" id="add-email" placeholder="lorenzo@lumlum.co"></label>
+        <label class="f">Hasło startowe<input type="password" id="add-password" placeholder="min. 8 znaków" autocomplete="new-password"></label>
+      </div>
+      <div class="perm-title">Dostęp do paneli</div>
+      <div class="perm-row" id="add-panels"></div>
+      <div class="perm-title">Arkusze CRM</div>
+      <div id="add-sheets"></div>
+      <div class="actions">
+        <button type="button" class="primary" id="add-save">Dodaj użytkownika</button>
+        <span class="msg" id="add-msg"></span>
+      </div>
+      <p class="hint">Nowe konto dostaje tylko zaznaczone wyżej dostępy. Hasło przekaż użytkownikowi — może je potem zmienić w menu na ekranie głównym.</p>
+    </section>
+
+    <section>
+      <div id="users-list" style="display:flex; flex-direction:column; gap:0.8rem;">
+        <p class="msg">Wczytywanie użytkowników…</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="shared/topbar.js"></script>
+  <script>
+    const API_BASE = window.API_BASE || '';
+    const ME = window.LUMLUM_USER || {};
+    const PANELS = (window.LUMLUM_PANELS || []).filter((p) => !p.adminOnly);
+    const SHEETS = window.LUMLUM_CRM_SHEETS || [];
+
+    LumTopbar.mount({ active: 'pozwolenia' });
+
+    // ── Wspólne kontrolki uprawnień (formularz dodawania + karty userów) ──
+
+    function panelPills(container, selected) {
+      container.innerHTML = '';
+      const state = new Set(selected || []);
+      PANELS.forEach((panel) => {
+        const label = document.createElement('label');
+        label.className = 'perm-pill' + (state.has(panel.key) ? ' on' : '');
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = state.has(panel.key);
+        input.addEventListener('change', () => {
+          if (input.checked) state.add(panel.key); else state.delete(panel.key);
+          label.classList.toggle('on', input.checked);
+        });
+        const text = document.createElement('span');
+        text.textContent = panel.label + (panel.status === 'soon' ? ' (wkrótce)' : '');
+        label.append(input, text);
+        container.appendChild(label);
+      });
+      return () => [...state];
+    }
+
+    function sheetSelects(container, selected) {
+      container.innerHTML = '';
+      const state = { ...(selected || {}) };
+      SHEETS.forEach((sheet) => {
+        const row = document.createElement('div');
+        row.className = 'sheet-row';
+        const name = document.createElement('span');
+        name.className = 'sheet-name';
+        name.textContent = sheet.label;
+        const select = document.createElement('select');
+        [['', 'brak dostępu'], ['view', 'podgląd'], ['edit', 'podgląd + edycja']].forEach(([value, label]) => {
+          const opt = document.createElement('option');
+          opt.value = value;
+          opt.textContent = label;
+          select.appendChild(opt);
+        });
+        select.value = state[sheet.key] || '';
+        select.addEventListener('change', () => {
+          if (select.value) state[sheet.key] = select.value; else delete state[sheet.key];
+        });
+        row.append(name, select);
+        container.appendChild(row);
+      });
+      return () => ({ ...state });
+    }
+
+    // ── Dodawanie użytkownika ──
+
+    const getAddPanels = panelPills(document.getElementById('add-panels'), []);
+    const getAddSheets = sheetSelects(document.getElementById('add-sheets'), {});
+    const addMsg = document.getElementById('add-msg');
+
+    document.getElementById('add-save').addEventListener('click', async () => {
+      addMsg.className = 'msg';
+      addMsg.textContent = 'Zapisuję…';
+      try {
+        const res = await fetch(`${API_BASE}/api/users`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: document.getElementById('add-name').value,
+            email: document.getElementById('add-email').value,
+            password: document.getElementById('add-password').value,
+            permissions: { panels: getAddPanels(), crm_sheets: getAddSheets() },
+          }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+        addMsg.textContent = 'Dodano ✓';
+        addMsg.classList.add('ok');
+        ['add-name', 'add-email', 'add-password'].forEach((id) => { document.getElementById(id).value = ''; });
+        loadUsers();
+      } catch (err) {
+        addMsg.textContent = err.message;
+        addMsg.classList.add('err');
+      }
+    });
+
+    // ── Lista użytkowników ──
+
+    function userCard(user) {
+      const details = document.createElement('details');
+      details.className = 'card user-card';
+      if (user.id === ME.id) details.open = true;
+
+      const head = document.createElement('summary');
+      head.className = 'user-head';
+      const avatar = document.createElement('span');
+      avatar.className = 'user-avatar';
+      avatar.textContent = (user.name || '?').trim().charAt(0).toUpperCase();
+      const idWrap = document.createElement('div');
+      idWrap.className = 'user-id';
+      const name = document.createElement('div');
+      name.className = 'user-name';
+      name.textContent = user.name + (user.id === ME.id ? ' (Ty)' : '');
+      const email = document.createElement('div');
+      email.className = 'user-email';
+      email.textContent = user.email;
+      idWrap.append(name, email);
+      const tags = document.createElement('div');
+      tags.className = 'user-tags';
+      if (user.role === 'admin') {
+        const t = document.createElement('span');
+        t.className = 'tag admin';
+        t.textContent = 'admin';
+        tags.appendChild(t);
+      }
+      if (user.active === false) {
+        const t = document.createElement('span');
+        t.className = 'tag inactive';
+        t.textContent = 'wyłączone';
+        tags.appendChild(t);
+      }
+      const panelCount = user.role === 'admin' ? 'wszystko' : `${(user.permissions.panels || []).length} paneli`;
+      const t2 = document.createElement('span');
+      t2.className = 'tag';
+      t2.textContent = panelCount;
+      tags.appendChild(t2);
+      head.append(avatar, idWrap, tags);
+      details.appendChild(head);
+
+      const body = document.createElement('div');
+
+      const grid = document.createElement('div');
+      grid.className = 'form-grid';
+      const nameLabel = document.createElement('label');
+      nameLabel.className = 'f';
+      nameLabel.textContent = 'Imię / nazwa';
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.value = user.name;
+      nameLabel.appendChild(nameInput);
+      const pwLabel = document.createElement('label');
+      pwLabel.className = 'f';
+      pwLabel.textContent = 'Nowe hasło (puste = bez zmiany)';
+      const pwInput = document.createElement('input');
+      pwInput.type = 'password';
+      pwInput.autocomplete = 'new-password';
+      pwInput.placeholder = '••••••••';
+      pwLabel.appendChild(pwInput);
+      grid.append(nameLabel, pwLabel);
+      body.appendChild(grid);
+
+      let getPanels = () => user.permissions.panels || [];
+      let getSheets = () => user.permissions.crm_sheets || {};
+      let activeCheckbox = null;
+
+      if (user.role === 'admin') {
+        const note = document.createElement('p');
+        note.className = 'hint';
+        note.textContent = 'Administrator ma zawsze pełny dostęp do wszystkich paneli i arkuszy.';
+        body.appendChild(note);
+      } else {
+        const pt = document.createElement('div');
+        pt.className = 'perm-title';
+        pt.textContent = 'Dostęp do paneli';
+        const pRow = document.createElement('div');
+        pRow.className = 'perm-row';
+        getPanels = panelPills(pRow, user.permissions.panels || []);
+        const st = document.createElement('div');
+        st.className = 'perm-title';
+        st.textContent = 'Arkusze CRM';
+        const sWrap = document.createElement('div');
+        getSheets = sheetSelects(sWrap, user.permissions.crm_sheets || {});
+        body.append(pt, pRow, st, sWrap);
+
+        const at = document.createElement('div');
+        at.className = 'perm-title';
+        at.textContent = 'Konto';
+        const aRow = document.createElement('div');
+        aRow.className = 'perm-row';
+        const aLabel = document.createElement('label');
+        aLabel.className = 'perm-pill' + (user.active !== false ? ' on' : '');
+        activeCheckbox = document.createElement('input');
+        activeCheckbox.type = 'checkbox';
+        activeCheckbox.checked = user.active !== false;
+        activeCheckbox.addEventListener('change', () => aLabel.classList.toggle('on', activeCheckbox.checked));
+        const aText = document.createElement('span');
+        aText.textContent = 'konto aktywne';
+        aLabel.append(activeCheckbox, aText);
+        aRow.appendChild(aLabel);
+        body.append(at, aRow);
+      }
+
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      const save = document.createElement('button');
+      save.type = 'button';
+      save.className = 'primary';
+      save.textContent = 'Zapisz zmiany';
+      const msg = document.createElement('span');
+      msg.className = 'msg';
+      actions.append(save, msg);
+      body.appendChild(actions);
+
+      save.addEventListener('click', async () => {
+        msg.className = 'msg';
+        msg.textContent = 'Zapisuję…';
+        save.disabled = true;
+        try {
+          const patch = { name: nameInput.value };
+          if (pwInput.value) patch.password = pwInput.value;
+          if (user.role !== 'admin') {
+            patch.permissions = { panels: getPanels(), crm_sheets: getSheets() };
+            patch.active = activeCheckbox.checked;
+          }
+          const res = await fetch(`${API_BASE}/api/users/${user.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch),
+          });
+          const resBody = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(resBody.error || `Błąd ${res.status}`);
+          msg.textContent = 'Zapisano ✓';
+          msg.classList.add('ok');
+          pwInput.value = '';
+          loadUsers();
+        } catch (err) {
+          msg.textContent = err.message;
+          msg.classList.add('err');
+        } finally {
+          save.disabled = false;
+        }
+      });
+
+      details.appendChild(body);
+      return details;
+    }
+
+    async function loadUsers() {
+      const list = document.getElementById('users-list');
+      try {
+        const res = await fetch(`${API_BASE}/api/users`);
+        if (res.status === 401) { window.location.href = `${API_BASE}/login`; return; }
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+        // Zachowaj rozwinięte karty przy przeładowaniu listy.
+        const openIds = new Set([...list.querySelectorAll('details[open]')].map((d) => d.dataset.userId));
+        list.innerHTML = '';
+        (body.data || []).forEach((user) => {
+          const card = userCard(user);
+          card.dataset.userId = String(user.id);
+          if (openIds.has(String(user.id))) card.open = true;
+          list.appendChild(card);
+        });
+      } catch (err) {
+        list.innerHTML = '';
+        const p = document.createElement('p');
+        p.className = 'msg err';
+        p.textContent = `Nie udało się wczytać użytkowników: ${err.message}`;
+        list.appendChild(p);
+      }
+    }
+
+    loadUsers();
+  </script>
+</body>
+</html>

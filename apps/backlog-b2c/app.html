@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="shared/lead-card.css">
+  <link rel="stylesheet" href="shared/topbar.css">
   <style>
     /* Paleta i typografia dopasowane do stylu lumlum.co: monochromatyczna
        czerń/biel, font Inter, mocno zaokrąglone rogi, pigułkowe znaczniki. */
@@ -68,22 +69,19 @@
       padding: 2rem 1rem 4rem;
     }
 
-    /* Pełnej szerokości pasek, niezależny od 80vw .wrap — celowo poza nim w DOM. */
+    /* Pełnej szerokości pasek, niezależny od 80vw .wrap — celowo poza nim w
+       DOM. Zawartość (logo → hub, pigułki paneli, menu użytkownika) renderuje
+       wspólny topbar (apps/shared/topbar.js) — tu tylko sticky + subtelne
+       skalowanie logo przy scrollu (stary efekt Backlogu, zachowany). */
     .site-header {
       position: sticky;
       top: 0;
-      z-index: 50;
+      z-index: 90;
       width: 100%;
       background: #000000;
-      display: flex;
-      justify-content: center;
-      padding: 1.1rem 0;
     }
 
     .site-header .site-logo {
-      height: 36px;
-      width: auto;
-      display: block;
       transform-origin: center;
       /* transform (nie height/padding) żeby zmiana rozmiaru przy scrollu nie zmieniała
          wysokości sticky elementu — inaczej zmiana layoutu przesuwa scrollY tuż przy
@@ -96,7 +94,7 @@
     }
 
     .site-header.scrolled .site-logo {
-      transform: scale(0.7);
+      transform: scale(0.85);
     }
 
     .top-row {
@@ -1722,9 +1720,7 @@
   </style>
 </head>
 <body>
-  <header class="site-header" id="site-header">
-    <img src="assets/lumlum-logo-white.svg" alt="LumLum" class="site-logo">
-  </header>
+  <header class="site-header" id="site-header"></header>
 
   <div class="wrap">
     <div class="top-row">
@@ -1816,6 +1812,7 @@
     </div>
   </div>
 
+  <script src="shared/topbar.js"></script>
   <script src="shared/lead-card.js"></script>
   <script>
     // Ten sam origin co strona (lokalnie: http://localhost:3001, na Vercelu:
@@ -3774,6 +3771,7 @@
     }
 
     const siteHeader = document.getElementById('site-header');
+    LumTopbar.mount({ active: 'backlog-b2c', into: siteHeader });
     window.addEventListener('scroll', () => {
       siteHeader.classList.toggle('scrolled', window.scrollY > 24);
     }, { passive: true });

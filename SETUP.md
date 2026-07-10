@@ -8,17 +8,32 @@ folderze pod `apps/`, dostępne pod `lumlum.dev/<narzędzie>/...` (routing po
 
 ```
 apps/
+  hub/                    — panel główny lumlum.dev/: ekran startowy ("Do
+    app.html                 zrobienia dziś" + kafelki paneli wg uprawnień),
+    pozwolenia.html          panel Pozwolenia (użytkownicy/dostępy, admin),
+    wkrotce.html             szablon stron-atrap (Wyceny/Wiadomości/Statystyki)
+    assets/
+    server/
+      server.js, supabase.js, .env (lokalnie)
   backlog-b2c/            — standup dashboard Lorenzzo (wykuratorowany przez
     app.html                 AI dzienny wycinek leadów, Umowa/Podsumowanie)
     assets/
     server/
-      server.js, login.html, package.json, scripts/*.js, .env (lokalnie)
-  crm/                    — CRM wewnętrzny, wieloczęściowy (sekcje w bocznej
-    app.html                 nawigacji; dziś: "Leady B2C" — pełna, edytowalna
+      server.js, package.json, scripts/*.js, .env (lokalnie)
+  crm/                    — CRM wewnętrzny, wieloczęściowy (sekcje jako
+    app.html                 pigułki; dziś: "Leady B2C" — pełna, edytowalna
     assets/                  lista WSZYSTKICH leadów z tej samej tabeli
     server/                  Supabase co backlog-b2c, styl arkusza kalkulacyjnego)
-      server.js, login.html, package.json, .env (lokalnie)
+      server.js, package.json, .env (lokalnie)
+  shared/                 — kod wspólny WSZYSTKICH appek:
+    lead-card.js/.css        wspólna karta leada (CRM + Backlog)
+    topbar.js/.css           wspólny górny pasek nawigacji (wszystkie appki)
+    server/
+      auth.js                logowanie + uprawnienia (konta app_users)
+      login.html             wspólna strona logowania (email + hasło)
+      leady-endpoints.js     wspólne endpointy karty leada
 api/
+  index.js                — wrapper huba (montowany w korzeniu domeny)
   backlog-b2c.js          — cienki wrapper: montuje apps/backlog-b2c/server
                             pod /backlog-b2c (Express app.use)
   crm.js                  — analogiczny wrapper dla apps/crm/server pod /crm
@@ -69,9 +84,10 @@ osobne bazy z synchronizacją. Każde narzędzie ma **własny plik**
 poziomie repo (root), zostaje per-`apps/*`, tylko z powtórzonymi tymi samymi
 wartościami. Konsekwencja: zapis w jednym narzędziu (np. edycja pola w
 `apps/crm`) jest natychmiast widoczny w drugim (np. `apps/backlog-b2c`) bez
-żadnej synchronizacji do zbudowania — to jedna baza, nie dwie. Każde
-narzędzie nadal ma OSOBNĄ bramkę hasła (`SITE_PASSWORD`, osobna sesja per
-prefiks ścieżki) — to nie jest współdzielone SSO, tylko współdzielone dane.
+żadnej synchronizacji do zbudowania — to jedna baza, nie dwie. Logowanie
+JEST współdzielone (patrz sekcja 5): jedno ciasteczko `lumlum_session` z
+`Path=/` honorowane przez wszystkie appki — zalogowanie w dowolnej z nich
+loguje do całego lumlum.dev, w granicach uprawnień konta.
 
 ## 1. Dane dostępowe z Supabase (per narzędzie, na razie tylko backlog-b2c)
 
@@ -96,7 +112,9 @@ SUPABASE_SERVICE_ROLE_KEY=twoj_service_role_key
 SITE_PASSWORD=haslo_do_wejscia_na_strone
 ```
 
-`SITE_PASSWORD` to jedno wspólne hasło chroniące dostęp do tego narzędzia (bez kont użytkowników — patrz sekcja 5).
+`SITE_PASSWORD` pełni dziś rolę sekretu podpisującego sesje (fallback dla
+`SESSION_SECRET`) — samo logowanie odbywa się na indywidualne konta z tabeli
+`app_users` (patrz sekcja 5).
 
 **Wklej te wartości bezpośrednio do pliku `.env`** (np. w edytorze), a nie na czacie z asystentem — dzięki temu żaden sekret nie trafi do historii konwersacji.
 
@@ -116,12 +134,34 @@ Wejdź na `http://localhost:3001/` w przeglądarce (lokalnie, bez prefiksu — `
 
 Uwaga: endpointy `POST/PUT/DELETE /api/tables/:table[/:id]` zakładają kolumnę `id` jako klucz główny — nie wszystkie tabele ją mają (np. `Standup Log Lorenzo` używa `Data` jako identyfikatora), więc edycja/usuwanie działa tylko na tabelach z `id`. Samo wyświetlanie (`GET`) działa niezależnie od tego.
 
-## 5. Bezpieczeństwo
+## 5. Bezpieczeństwo — konta użytkowników i uprawnienia (od 2026-07-11)
 
-Strona ma bramkę logowania: jedno wspólne hasło (`SITE_PASSWORD`, bez kont użytkowników), sesja w ciasteczku `HttpOnly` ważnym 30 dni, podpisana HMAC-em (nie wymaga pamięci serwera — działa też na serverless). Ograniczenia, o których warto wiedzieć:
-- Jedno hasło dla wszystkich — jeśli ma je więcej osób i chcesz komuś zabrać dostęp, trzeba zmienić `SITE_PASSWORD` dla wszystkich naraz.
-1- Brak limitu prób logowania (brute-force nie jest blokowany) — akceptowalne dla wewnętrznego narzędzia z niepublicznym adresem, ale nie traktuj tego jak pełnego zabezpieczenia przed celowym atakiem.
-- `service_role` nadal ma pełny dostęp do bazy z pominięciem RLS — bramka hasła chroni dostęp do *strony*, nie zastępuje właściwych uprawnień w Supabase.
+Logowanie na **indywidualne konta** (email + hasło) z tabeli Supabase
+`app_users` — wspólny moduł `apps/shared/server/auth.js` używany przez
+wszystkie appki. Jak to działa:
+
+- **Sesja**: ciasteczko `lumlum_session` (`HttpOnly`, `Path=/`, 30 dni) w
+  formacie `u.<idUsera>.<expiry>.<hmac>`, podpisane `SESSION_SECRET`
+  (fallback: `SITE_PASSWORD`) — bezstanowe, działa na serverless. Jedno
+  logowanie obowiązuje w całej domenie (hub, Backlog, CRM).
+- **Hasła**: scrypt z solą (`hashPassword` w auth.js), nigdy plaintext.
+- **Uprawnienia** (kolumna jsonb `permissions`): `panels` — lista paneli,
+  do których konto wchodzi; `crm_sheets` — per arkusz CRM `view` (podgląd)
+  albo `edit` (podgląd + edycja). `role='admin'` = pełny dostęp do
+  wszystkiego + panel Pozwolenia. Egzekwowane SERVER-SIDE: bramka panelu w
+  każdej appce (strony → 403, API → 401/403) + `requireSheet` na
+  endpointach CRM; UI tylko dodatkowo chowa to, czego nie wolno.
+- **Zarządzanie**: panel **Pozwolenia** (`lumlum.dev/pozwolenia`, tylko
+  admin) — dodawanie użytkowników, hasła, panele, arkusze CRM,
+  dezaktywacja konta (natychmiastowa — cache uprawnień per instancja
+  funkcji trzyma się maks. 30 s). Każdy użytkownik może zmienić własne
+  hasło w menu na ekranie głównym.
+- **Migracja**: `apps/backlog-b2c/server/scripts/create-app-users.js`
+  tworzy tabelę i seeduje admina (Antoni). Idempotentny.
+
+Ograniczenia, o których warto wiedzieć:
+- Brak limitu prób logowania (brute-force nie jest blokowany) — akceptowalne dla wewnętrznego narzędzia z niepublicznym adresem, ale nie traktuj tego jak pełnego zabezpieczenia przed celowym atakiem.
+- `service_role` nadal ma pełny dostęp do bazy z pominięciem RLS — bramka chroni dostęp do *stron/API*, nie zastępuje właściwych uprawnień w Supabase.
 
 ## 6. Wdrożenie na Vercel
 
@@ -136,7 +176,7 @@ Repo jest już przygotowane pod Vercel (zero dodatkowej konfiguracji poza zmienn
 ### Jak to jest zbudowane (żeby nikt tego przez pomyłkę nie cofnął)
 
 - `api/backlog-b2c.js` — cienki wrapper: montuje `apps/backlog-b2c/server/server.js` (Express app) pod `/backlog-b2c` (`express().use('/backlog-b2c', app)`). Cała logika zostaje w `server.js`, więc lokalny `cd apps/backlog-b2c/server && npm start` działa identycznie jak wcześniej (bez prefiksu — patrz sekcja 0/4).
-- `vercel.json` — `rewrites` kieruje `/backlog-b2c/:path*` do tej funkcji, `redirects` dopina bare `/backlog-b2c` (bez slasha) → `/backlog-b2c/` (patrz sekcja 0 pkt 4 czemu to musi być redirect, nie rewrite), `includeFiles` dołącza `apps/backlog-b2c/{app.html,assets/**,server/login.html}` do paczki funkcji, żeby `res.sendFile`/wczytanie szablonu miało co wysłać.
+- `vercel.json` — `rewrites` kieruje `/backlog-b2c/:path*` do tej funkcji, `redirects` dopina bare `/backlog-b2c` (bez slasha) → `/backlog-b2c/` (patrz sekcja 0 pkt 4 czemu to musi być redirect, nie rewrite), `includeFiles` dołącza `apps/backlog-b2c/{app.html,assets/**}` i `apps/shared/**` (wspólna karta leada, topbar, strona logowania) do paczki funkcji, żeby `res.sendFile`/wczytanie szablonu miało co wysłać. Hub (api/index.js) dostaje dodatkowo rewrites na `/pozwolenia`, `/wyceny`, `/wiadomosci`, `/statystyki`, `/logout`, `/shared/:path*` i `/api/:path*` (funkcje `/api/crm` i `/api/backlog-b2c` mają pierwszeństwo przed tym ostatnim, bo istnieją w filesystemie).
 - **Strona nazywa się `app.html`, nie `index.html`.** To nieoczywiste, ale kluczowe: Vercel sprawdza filesystem *przed* `rewrites` (ich własna dokumentacja: "precedence is given to the filesystem prior to rewrites being applied"). Plik `index.html` w katalogu głównym repo kolidowałby z domyślnym mapowaniem `/` → `index.html`, więc Vercel serwowałby go bezpośrednio z CDN jako statyk — z pominięciem funkcji, a więc i całej bramki logowania. Tak się właśnie stało przy pierwszym wdrożeniu, zanim plik przemianowano. **Nie twórz `index.html` w katalogu głównym repo.**
 - Root-level `package.json`/`package-lock.json` — Vercel instaluje zależności z katalogu głównego repo, a nie z `apps/*/server/`, stąd te pliki mimo że każde narzędzie ma własne (dla lokalnego dev).
 - Serwer wymusza `Cache-Control: no-store` na wszystkim poza `/assets/**` (patrz `apps/backlog-b2c/server/server.js`) — bez tego CDN Vercela cache'owałby odpowiedzi (w tym dane z Supabase) i serwował je kolejnym odwiedzającym bez sprawdzania ciasteczka sesji. Nie usuwaj tego middleware'u.

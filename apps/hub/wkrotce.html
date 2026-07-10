@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{TITLE}} — LumLum</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared/topbar.css">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --surface-1: #ffffff;
+      --page: #f5f5f4;
+      --text-primary: #111111;
+      --text-secondary: #52514e;
+      --text-muted: #8a8984;
+      --border: rgba(17, 17, 17, 0.12);
+      --accent: #111111;
+      --accent-contrast: #ffffff;
+      --accent-soft: #ececea;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-1: #161616;
+        --page: #0a0a0a;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted: #8a8984;
+        --border: rgba(255, 255, 255, 0.14);
+        --accent: #ffffff;
+        --accent-contrast: #0a0a0a;
+        --accent-soft: #262626;
+      }
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--page);
+      color: var(--text-primary);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    main {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1.25rem 4rem;
+    }
+
+    .soon-card {
+      max-width: 420px;
+      width: 100%;
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 2.4rem 2rem;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.8rem;
+    }
+
+    .soon-badge {
+      font-size: 0.68rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.2rem 0.75rem;
+    }
+
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.4px; }
+
+    p { color: var(--text-secondary); font-size: 0.9rem; line-height: 1.55; }
+
+    a.back {
+      margin-top: 0.6rem;
+      display: inline-block;
+      background: var(--accent);
+      color: var(--accent-contrast);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.88rem;
+      padding: 0.55rem 1.3rem;
+      border-radius: 999px;
+    }
+
+    a.back:hover { opacity: 0.9; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="soon-card">
+      <span class="soon-badge">wkrótce</span>
+      <h1>{{TITLE}}</h1>
+      <p>{{DESC}}</p>
+      <p>Ten panel jest w przygotowaniu — kafelek już rezerwuje mu miejsce w systemie, a dostępy można nadawać w Pozwoleniach od dziś.</p>
+      <a class="back" href="" id="back-link">← Ekran główny</a>
+    </div>
+  </main>
+  <script src="shared/topbar.js"></script>
+  <script>
+    LumTopbar.mount({});
+    document.getElementById('back-link').href = (window.LUMLUM_LINKS || {}).hub || '/';
+  </script>
+</body>
+</html>

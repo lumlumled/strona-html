@@ -217,30 +217,42 @@ window.LeadKarta = (() => {
 
   // ── Definicje pól (1:1 z CRM) ─────────────────────────────────────────────
 
-  // "Kontakt" — zawsze widoczne. Ilość telefonów/Skontaktowane dziś READ-ONLY:
-  // liczone live z "Log zmian" po stronie serwera, nie z legacy skażonej
-  // kolumny "Ilość telefonów".
+  // "Kontakt" — Ilość telefonów/Skontaktowane dziś READ-ONLY: liczone live
+  // z "Log zmian" po stronie serwera, nie z legacy skażonej kolumny "Ilość
+  // telefonów". Pola bez keepWhenEmpty chowają się, gdy są puste — wracają
+  // przełącznikiem "+ puste pola" na końcu siatki (decyzja Antoniego:
+  // nie wyświetlamy pustych danych na siłę, ale da się je uzupełnić).
   const KONTAKT_FIELDS = [
     { col: 'Ostatni kontakt', label: 'Ostatni kontakt', formatDisplay: (v) => formatDateOnly(v, true) },
     { col: '_ilosc_polaczen', label: 'Ilość telefonów', readonly: true },
     { col: 'Temperatura', label: 'Temperatura' },
     { col: '_kontakt_dzisiaj', label: 'Skontaktowane dziś', readonly: true, bool: true },
-    { col: 'Data Feedbacku', label: 'Data feedbacku', datePicker: true },
-    { col: 'Email', label: 'Email', wide: true, copy: true },
+    { col: 'Data Feedbacku', label: 'Data feedbacku', datePicker: true, keepWhenEmpty: true },
+    { col: 'Email', label: 'Email', wide: true, copy: true, keepWhenEmpty: true },
     // Ręczna notatka handlowca — zlepek rozmów żyje w "Historia rozmów",
     // a "Podsumowanie AI" (Ocena AI kontaktu) na górze karty.
-    { col: 'Notes', label: 'Notatka', textarea: true, wide: true },
+    { col: 'Notes', label: 'Notatka', textarea: true, wide: true, keepWhenEmpty: true },
   ];
 
   // "Transakcja" — pola tożsamościowe + wycena/oferta; etykiety zależne od
-  // _ma_wycene (1:1 z logiką ma_wycene w Backlogu).
+  // _ma_wycene (1:1 z logiką ma_wycene w Backlogu). ID Leada / ID wyceny /
+  // Kwota wyceny READ-ONLY: identyfikatory są stałe, a kwotę zmienia się
+  // z poziomu wyceny (przyszły panel Wyceny), nie z poziomu leada — serwer
+  // też tego pilnuje (EDITABLE_LEAD_FIELDS).
   const TRANSAKCJA_FIELDS = [
-    { col: 'Date', label: 'Data dodania', formatDisplay: (v) => formatDateOnly(v) },
-    { col: 'Name', label: 'Imię' },
+    { col: 'Date', label: 'Data dodania', formatDisplay: (v) => formatDateOnly(v), keepWhenEmpty: true },
+    { col: 'Name', label: 'Imię', keepWhenEmpty: true },
     { col: 'ID Leada', label: 'ID Leada', readonly: true },
     { col: 'ID', label: 'ID wyceny', readonly: true, hideWhenEmpty: true },
     { col: 'Data wysłania wyceny', label: (l) => (l._ma_wycene ? 'Data wyceny' : 'Data przedstawienia oferty'), formatDisplay: (v) => formatDateOnly(v) },
-    { col: 'Kwota wyceny', label: (l) => (l._ma_wycene ? 'Kwota' : 'Proponowana kwota'), number: true },
+    {
+      col: 'Kwota wyceny',
+      label: (l) => (l._ma_wycene ? 'Kwota' : 'Proponowana kwota'),
+      readonly: true,
+      formatDisplay: (v) => (v === '' || v === null || v === undefined || Number.isNaN(Number(v))
+        ? v
+        : `${Number(v).toLocaleString('pl-PL')} zł`),
+    },
     // Produkty/link chowane, gdy lead ma realną Wycenę — kompletna wersja
     // jest wtedy w sekcji "Wycena" na dole karty.
     { col: 'Produkty z wyceny', label: 'Produkty złapane z rozmowy', textarea: true, wide: true, collapsible: true, hide: (l) => l._ma_wycene },
@@ -267,6 +279,12 @@ window.LeadKarta = (() => {
 
   function buildField(lead, spec, ctx) {
     if (spec.hide && spec.hide(lead)) return null;
+
+    // Tryb podglądu (użytkownik bez prawa edycji arkusza): każde pole
+    // renderuje się jak readonly — serwer i tak odrzuca zapisy (403).
+    if (ctx.readOnly && !spec.link && !spec.readonly && !spec.bool) {
+      spec = { ...spec, readonly: true, datePicker: false };
+    }
 
     const labelText = typeof spec.label === 'function' ? spec.label(lead) : spec.label;
 
@@ -305,10 +323,10 @@ window.LeadKarta = (() => {
       value.className = 'lk-value readonly';
       if (spec.bool) {
         value.textContent = lead[spec.col] ? 'Tak' : 'Nie';
+      } else if (lead[spec.col] === null || lead[spec.col] === undefined || lead[spec.col] === '') {
+        value.textContent = '—';
       } else {
-        value.textContent = lead[spec.col] === null || lead[spec.col] === undefined || lead[spec.col] === ''
-          ? '—'
-          : lead[spec.col];
+        value.textContent = spec.formatDisplay ? spec.formatDisplay(lead[spec.col]) : lead[spec.col];
       }
       wrap.append(label, value);
       return wrap;
@@ -617,7 +635,10 @@ window.LeadKarta = (() => {
   function buildBody(lead, opts = {}) {
     const apiBase = opts.apiBase || '';
     const digits = lead._telefon_digits || '';
-    const ctx = { apiBase, onFeedbackDate: opts.onFeedbackDate, feedbackSetters: [] };
+    // readOnly: użytkownik ma tylko podgląd arkusza (uprawnienia z panelu
+    // Pozwolenia) — cała karta renderuje się bez edycji, notatek i akcji.
+    const readOnly = Boolean(opts.readOnly);
+    const ctx = { apiBase, onFeedbackDate: opts.onFeedbackDate, feedbackSetters: [], readOnly };
 
     const body = document.createElement('div');
     body.className = 'lk-lead-body';
@@ -647,9 +668,10 @@ window.LeadKarta = (() => {
       const meta = [currentAkcja.termin, currentAkcja.owner].filter(Boolean).join(' · ');
       akcjaLabel.textContent = 'Najbliższa akcja' + (meta ? ` · ${meta}` : '');
       akcjaValue.value = currentAkcja.akcja;
-      akcjaDone.classList.toggle('visible', Boolean(currentAkcja.akcja));
+      akcjaDone.classList.toggle('visible', Boolean(currentAkcja.akcja) && !readOnly);
     };
     renderAkcjaUi();
+    if (readOnly) akcjaValue.disabled = true;
 
     const applyAkcjaLocally = (a) => {
       currentAkcja = a && a.akcja
@@ -721,6 +743,7 @@ window.LeadKarta = (() => {
     opisValue.placeholder = '—';
     opisValue.value = lead['Ocena AI kontaktu'] || '';
     opisValue.rows = 2;
+    if (readOnly) opisValue.disabled = true;
     opisValue.addEventListener('click', (e) => e.stopPropagation());
     opisValue.addEventListener('blur', async () => {
       if (opisValue.value === (lead['Ocena AI kontaktu'] ?? '')) return;
@@ -762,7 +785,7 @@ window.LeadKarta = (() => {
     // ── Własny komentarz handlowca (plusik — wzorzec z Backlogu) ──
     const notatkaSekcja = document.createElement('div');
     notatkaSekcja.className = 'lk-notatka-sekcja';
-    if (digits) {
+    if (digits && !readOnly) {
       const addBtn = document.createElement('button');
       addBtn.type = 'button';
       addBtn.className = 'lk-notatka-btn';
@@ -849,21 +872,55 @@ window.LeadKarta = (() => {
     }
 
     // ── Siatki Kontakt / Transakcja ──
-    const kontaktGrid = document.createElement('div');
-    kontaktGrid.className = 'lk-field-grid';
-    KONTAKT_FIELDS.forEach((spec) => {
-      const el = buildField(lead, spec, ctx);
-      if (el) kontaktGrid.appendChild(el);
-    });
+    // Puste pola nie zaśmiecają karty: chowamy je i doklejamy na końcu siatki
+    // dyskretny przełącznik "+ N pustych pól" (bez niego nie dałoby się
+    // uzupełnić brakujących danych). Pola hideWhenEmpty (identyfikatory
+    // systemowe) pozostają schowane na stałe — nie wliczają się do licznika.
+    function isEmptyValue(v) {
+      return v === null || v === undefined || String(v).trim() === '';
+    }
 
-    const transakcjaGrid = document.createElement('div');
-    transakcjaGrid.className = 'lk-field-grid';
-    TRANSAKCJA_FIELDS.forEach((spec) => {
-      const el = buildField(lead, spec, ctx);
-      if (el) transakcjaGrid.appendChild(el);
-    });
+    function buildGrid(fields) {
+      const grid = document.createElement('div');
+      grid.className = 'lk-field-grid';
+      let hiddenCount = 0;
+      fields.forEach((spec) => {
+        const el = buildField(lead, spec, ctx);
+        if (!el) return;
+        if (!spec.keepWhenEmpty && !spec.hideWhenEmpty && !spec.bool && isEmptyValue(lead[spec.col])) {
+          el.classList.add('lk-empty-hidden');
+          hiddenCount += 1;
+        }
+        grid.appendChild(el);
+      });
+      if (hiddenCount) {
+        const toggleWrap = document.createElement('div');
+        toggleWrap.className = 'lk-field wide lk-empty-toggle-wrap';
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'lk-empty-toggle';
+        const setLabel = () => {
+          toggle.textContent = grid.classList.contains('lk-show-empty')
+            ? '− Schowaj puste pola'
+            : `+ Puste pola (${hiddenCount})`;
+        };
+        setLabel();
+        toggle.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          grid.classList.toggle('lk-show-empty');
+          setLabel();
+        });
+        toggleWrap.appendChild(toggle);
+        grid.appendChild(toggleWrap);
+      }
+      return grid;
+    }
 
-    if (digits) body.appendChild(notatkaSekcja);
+    const kontaktGrid = buildGrid(KONTAKT_FIELDS);
+    const transakcjaGrid = buildGrid(TRANSAKCJA_FIELDS);
+
+    if (digits && !readOnly) body.appendChild(notatkaSekcja);
     body.append(akcjaWrap, opisWrap, historia, kontaktGrid, transakcjaGrid);
 
     if (lead._ma_wycene) {
