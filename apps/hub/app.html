@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LumLum — narzędzia</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* Celowo minimalny panel główny (karta startowa narzędzi wewnętrznych) —
+       nad wyglądem jeszcze nie pracujemy, ma tylko prowadzić do appek.
+       Paleta/typografia 1:1 z Backlogiem/CRM (styl lumlum.co). */
+    :root {
+      color-scheme: light dark;
+      --surface-1: #ffffff;
+      --page: #f5f5f4;
+      --text-primary: #111111;
+      --text-secondary: #52514e;
+      --text-muted: #8a8984;
+      --border: rgba(17, 17, 17, 0.12);
+      --accent: #111111;
+      --accent-soft: #ececea;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-1: #161616;
+        --page: #0a0a0a;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted: #8a8984;
+        --border: rgba(255, 255, 255, 0.14);
+        --accent: #ffffff;
+        --accent-soft: #262626;
+      }
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--page);
+      color: var(--text-primary);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .site-header {
+      width: 100%;
+      background: #000000;
+      display: flex;
+      justify-content: center;
+      padding: 1.1rem 0;
+    }
+
+    .site-header img { height: 36px; width: auto; display: block; }
+
+    main {
+      flex: 1;
+      width: 100%;
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 3rem 1.25rem 4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+
+    .apps { display: flex; flex-direction: column; gap: 0.8rem; }
+
+    .app-card {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.15rem 1.3rem;
+      text-decoration: none;
+      color: var(--text-primary);
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+
+    .app-card:hover { border-color: var(--text-muted); background: var(--accent-soft); }
+
+    .app-card .app-name { font-size: 1.05rem; font-weight: 700; letter-spacing: -0.2px; }
+    .app-card .app-desc { font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.15rem; }
+    .app-card .arrow { margin-left: auto; color: var(--text-muted); font-size: 1.1rem; }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <img src="assets/lumlum-logo-white.svg" alt="LumLum">
+  </header>
+  <main>
+    <h1>Narzędzia wewnętrzne</h1>
+    <div class="apps">
+      <a class="app-card" href="/backlog-b2c/">
+        <div>
+          <div class="app-name">Backlog B2C</div>
+          <div class="app-desc">Dzienny standup: Nowe, Umowa, priorytety, podsumowanie dnia</div>
+        </div>
+        <span class="arrow">→</span>
+      </a>
+      <a class="app-card" href="/crm/">
+        <div>
+          <div class="app-name">CRM</div>
+          <div class="app-desc">Leady B2C: edytowalny arkusz, karta leada, pytania do AI</div>
+        </div>
+        <span class="arrow">→</span>
+      </a>
+    </div>
+  </main>
+</body>
+</html>

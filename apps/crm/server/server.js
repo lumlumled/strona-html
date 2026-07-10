@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const { getClient } = require('./supabase');
+const { registerLeadyEndpoints, EDITABLE_LEAD_FIELDS, NIE_TELEFON_ZRODLA } = require('../../shared/server/leady-endpoints');
 
 const app = express();
 app.use(cors());
@@ -66,9 +67,12 @@ app.post('/login', (req, res) => {
   // req.baseUrl: '' lokalnie (odpalone samodzielnie), '/crm' zamontowane pod
   // Vercelem przez api/crm.js — patrz SETUP.md §0 pkt 2.
   if (SITE_PASSWORD && req.body.password === SITE_PASSWORD) {
+    // Path=/ (nie per-appka): jedno logowanie obowiązuje w całym lumlum.dev —
+    // hub, Backlog i CRM podpisują sesję tym samym SITE_PASSWORD, więc każda
+    // appka honoruje ten sam token (patrz apps/hub/server/server.js).
     res.setHeader(
       'Set-Cookie',
-      `${COOKIE_NAME}=${createSessionToken()}; HttpOnly; Path=${req.baseUrl || '/'}; Max-Age=${SESSION_MAX_AGE_MS / 1000}; SameSite=Lax`
+      `${COOKIE_NAME}=${createSessionToken()}; HttpOnly; Path=/; Max-Age=${SESSION_MAX_AGE_MS / 1000}; SameSite=Lax`
     );
     return res.redirect(`${req.baseUrl}/`);
   }
@@ -83,6 +87,12 @@ app.use((req, res, next) => {
 
 app.get('/assets/:file', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'assets', req.params.file));
+});
+
+// Wspólna karta leada (apps/shared/) — te same pliki serwuje Backlog pod
+// swoim /shared/, żeby obie appki renderowały leada identycznie.
+app.get('/shared/:file', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', '..', 'shared', req.params.file));
 });
 
 const APP_HTML_TEMPLATE = fs.readFileSync(path.join(__dirname, '..', 'app.html'), 'utf8');
@@ -116,34 +126,9 @@ function formatPhonePlus(raw) {
   return digits.startsWith('48') ? `+${digits}` : `+48${digits}`;
 }
 
-// Kolumny "Leady B2C" edytowalne z tego panelu (styl arkusza — dowolna
-// wartość, zapis wprost do bazy). Celowo WYŁĄCZONE spoza tej listy:
-// "Phone number" (klucz łączący z Log zmian/Wyceny B2C w całym systemie —
-// ręczna zmiana zerwałaby te powiązania), "ID"/"ID Leada" (numeracja
-// systemowa/derywowana, kolizje z licznikiem max+1 w webhooku Zadarmy),
-// "Źródło" (ustawiane tylko przez webhook). Patrz plan wise-beaming-biscuit.
-const EDITABLE_LEAD_FIELDS = [
-  'Date',
-  'Name',
-  'Email',
-  'Deal stage',
-  'Notes',
-  'Data Feedbacku',
-  'Temperatura',
-  'Ostatni kontakt',
-  'Ilość telefonów',
-  'Treść rozmowy',
-  'Produkty z wyceny',
-  'Kwota wyceny',
-  'Data wysłania wyceny',
-  'Link do formularza',
-  'Ocena AI kontaktu',
-  // Krótki następny krok z leadem — to samo pole co pigułka akcji w Backlogu
-  // (zasilane analizą rozmów Zadarmy / notatką handlowca). Kolumny-metadane
-  // ("... termin"/"... owner") celowo poza listą: edytuje je automat i
-  // edytor pigułki w Backlogu, w arkuszu byłyby szumem.
-  'Najbliższa akcja',
-];
+// Lista kolumn edytowalnych z panelu żyje teraz we wspólnym module
+// (apps/shared/server/leady-endpoints.js) razem z PUT /api/leady/:idLeada —
+// jedno źródło prawdy dla CRM i Backlogu.
 
 // Wszystkie kolumny zwracane do frontu (edytowalne + identyfikacyjne
 // tylko-do-odczytu) — surowe nazwy kolumn Supabase używane 1:1 jako klucze,
@@ -172,15 +157,15 @@ async function fetchWycenaByPhone(supabase) {
 // tam liczonego z dziennego JSON-a Umowy — tu liczymy live z tej samej
 // tabeli, bo CRM nie ma dziennego dokumentu).
 async function fetchCallStatsByPhone(supabase) {
-  // Notatki handlowca i ręczne zmiany akcji żyją w tej samej tabeli
-  // (zrodlo: notatka_handlowca / manual_akcja, patrz POST /api/leady/notatka
-  // i /api/leady/akcja w Backlogu) — to nie są telefony, nie liczymy ich.
+  // Notatki handlowca, ręczne zmiany akcji i edycje pól złapane triggerem
+  // manual_crm żyją w tej samej tabeli — to nie są telefony, nie liczymy ich
+  // (pełna lista źródeł: NIE_TELEFON_ZRODLA we wspólnym module).
   const { data, error } = await supabase.from(LOG_ZMIAN_TABLE).select('telefon,data_zmiany,zrodlo');
   if (error) throw error;
   const todayKey = new Date().toISOString().slice(0, 10);
   const map = new Map();
   (data || []).forEach((row) => {
-    if (row['zrodlo'] === 'notatka_handlowca' || row['zrodlo'] === 'manual_akcja') return;
+    if (NIE_TELEFON_ZRODLA.has(row['zrodlo'])) return;
     const digits = normalizePhoneDigits(row['telefon']);
     if (!digits) return;
     const entry = map.get(digits) || { count: 0, dzisiaj: false };
@@ -232,80 +217,11 @@ app.get('/api/leady', async (req, res) => {
   }
 });
 
-// PUT /api/leady/:idLeada — { field, value } — zapis JEDNEGO pola, zwykły
-// update (celowo NIE przez RPC app_update_leady_after_call, która jest
-// specyficzna dla webhooka Zadarmy) — dzięki temu istniejący trigger Postgresa
-// trg_log_zmian_from_leady (patrz add-log-zmian-manual-capture.js) sam loguje
-// zmianę do "Log zmian" z zrodlo='manual_crm', bez dodatkowego kodu tutaj.
-//
-// Klucz to "ID Leada" (unikalny, potwierdzone na żywych danych: 406/406
-// unikalnych wartości), NIE numer telefonu — w "Leady B2C" 5 numerów
-// telefonu jest dziś współdzielonych przez więcej niż jeden wiersz (duplikaty
-// z historii importu/Make), więc `.eq('Phone number', ...)` update'owałby
-// WSZYSTKIE pasujące wiersze naraz. "ID Leada" nie ma tego problemu.
-app.put('/api/leady/:idLeada', async (req, res) => {
-  try {
-    const { field, value } = req.body || {};
-    if (!EDITABLE_LEAD_FIELDS.includes(field)) {
-      return res.status(400).json({ error: `Pole "${field}" nie jest edytowalne` });
-    }
-    const idLeada = Number(req.params.idLeada);
-    if (!Number.isFinite(idLeada)) return res.status(400).json({ error: 'Brak parametru ID Leada' });
-
-    const supabase = getClient();
-    const { data: updated, error: updateErr } = await supabase
-      .from(LEADY_B2C_TABLE)
-      .update({ [field]: value === '' ? null : value })
-      .eq('ID Leada', idLeada)
-      .select('"ID Leada"');
-    if (updateErr) throw updateErr;
-    if (!updated || !updated.length) {
-      return res.status(404).json({ error: 'Nie znaleziono leada o tym ID Leada' });
-    }
-
-    res.json({ ok: true });
-  } catch (err) {
-    handleError(res, err, 502);
-  }
-});
-
-// GET /api/leady/:telefon/historia — kopia /api/log-polaczen/historia z
-// Backlogu: cała historia połączeń/zmian tego telefonu, chronologicznie.
-app.get('/api/leady/:telefon/historia', async (req, res) => {
-  try {
-    const supabase = getClient();
-    const digits = normalizePhoneDigits(req.params.telefon);
-    if (!digits) return res.status(400).json({ error: 'Brak parametru telefon' });
-    const { data, error } = await supabase
-      .from(LOG_ZMIAN_TABLE)
-      .select('*')
-      .eq('telefon', digits)
-      .order('data_zmiany', { ascending: true });
-    if (error) throw error;
-    res.json({ data: data || [] });
-  } catch (err) {
-    handleError(res, err, 502);
-  }
-});
-
-// GET /api/leady/:telefon/wycena — surowy wiersz Wyceny B2C dopasowany po
-// telefonie, z produkty_json jako prawdziwą tablicą (nie spłaszczony string
-// jak formatProdukty() w Backlogu) — do pokazania pełnej tabeli pozycji.
-// Read-only z założenia: Wyceny B2C nigdy nie jest zapisywane przez żadną
-// appkę, zasila ją Make/arkusz Google (patrz project-crm-lorenzzo-migration).
-app.get('/api/leady/:telefon/wycena', async (req, res) => {
-  try {
-    const supabase = getClient();
-    const digits = normalizePhoneDigits(req.params.telefon);
-    if (!digits) return res.status(400).json({ error: 'Brak parametru telefon' });
-    const { data, error } = await supabase.from(WYCENY_B2C_TABLE).select('*');
-    if (error) throw error;
-    const row = (data || []).find((r) => normalizePhoneDigits(r['Telefon']) === digits);
-    res.json({ data: row || null });
-  } catch (err) {
-    handleError(res, err, 502);
-  }
-});
+// Wspólne endpointy karty leada — PUT /api/leady/:idLeada, GET
+// /api/leady/pelny, GET /api/leady/:telefon/historia, GET
+// /api/leady/:telefon/wycena, POST /api/leady/notatka, POST /api/leady/akcja
+// (te same ścieżki rejestruje Backlog; implementacja w jednym miejscu).
+registerLeadyEndpoints(app, { getClient });
 
 // ── AI: dyktowanie + uniwersalny filtr/odpowiedzi ───────────────────────────
 

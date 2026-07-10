@@ -1,12 +1,16 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
+    "api/index.js": {
+      "includeFiles": "{apps/hub/app.html,apps/hub/assets/**,apps/hub/server/login.html}",
+      "maxDuration": 30
+    },
     "api/backlog-b2c.js": {
-      "includeFiles": "{apps/backlog-b2c/app.html,apps/backlog-b2c/assets/**,apps/backlog-b2c/server/login.html}",
+      "includeFiles": "{apps/backlog-b2c/app.html,apps/backlog-b2c/assets/**,apps/backlog-b2c/server/login.html,apps/shared/**}",
       "maxDuration": 180
     },
     "api/crm.js": {
-      "includeFiles": "{apps/crm/app.html,apps/crm/assets/**,apps/crm/server/login.html}",
+      "includeFiles": "{apps/crm/app.html,apps/crm/assets/**,apps/crm/server/login.html,apps/shared/**}",
       "maxDuration": 180
     }
   },
@@ -23,6 +27,9 @@
     { "source": "/backlog-b2c/", "destination": "/api/backlog-b2c" },
     { "source": "/backlog-b2c/:path*", "destination": "/api/backlog-b2c" },
     { "source": "/crm/", "destination": "/api/crm" },
-    { "source": "/crm/:path*", "destination": "/api/crm" }
+    { "source": "/crm/:path*", "destination": "/api/crm" },
+    { "source": "/", "destination": "/api/index" },
+    { "source": "/login", "destination": "/api/index" },
+    { "source": "/assets/:path*", "destination": "/api/index" }
   ]
 }

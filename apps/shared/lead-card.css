@@ -1,0 +1,371 @@
+/* ── Wspólna karta leada (Backlog B2C + CRM) ─────────────────────────────────
+   Jedno źródło wyglądu rozwiniętego leada — styl przeniesiony 1:1 z CRM
+   (apps/crm/app.html sprzed refaktoru). Klasy mają prefiks "lk-", żeby nie
+   kolidować ze starszymi stylami Backlogu (.field-grid, .historia-rozmow itd.
+   nadal tam istnieją dla fallbacku case'ów bez telefonu).
+   Zmienne kolorów (--surface-1, --accent-soft, ...) dostarcza strona-host —
+   obie appki mają identyczną paletę lumlum; --bad ma fallback, bo Backlog
+   definiuje tylko --feedback-overdue. */
+
+.lk-lead-body {
+  border-top: 1px solid var(--border);
+  padding: 1.1rem 1.15rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.lk-opis-wrap { display: flex; flex-direction: column; gap: 0.35rem; }
+
+.lk-opis-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.lk-opis-value {
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 0.3rem 0.4rem;
+  margin: -0.3rem -0.4rem;
+  resize: vertical;
+  min-height: 2.6rem;
+  width: 100%;
+}
+
+.lk-opis-value:hover { background: var(--accent-soft); }
+.lk-opis-value:focus { background: var(--page); border-color: var(--accent); outline: none; }
+
+/* Najbliższa akcja: wiersz z ptaszkiem "zrobione dziś" po prawej — widoczny
+   po najechaniu, gdy akcja istnieje i pole nie jest w trybie edycji. */
+.lk-akcja-wrap { position: relative; }
+
+.lk-akcja-wrap .lk-opis-value { min-height: 2.2rem; padding-right: 2.2rem; }
+
+.lk-akcja-done {
+  position: absolute;
+  right: 0.1rem;
+  bottom: 0.15rem;
+  width: 1.6rem;
+  height: 1.6rem;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 1rem;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.lk-akcja-wrap:hover .lk-akcja-done.visible { display: inline-flex; }
+.lk-akcja-wrap:focus-within .lk-akcja-done { display: none; }
+.lk-akcja-done:hover { background: var(--accent-soft); color: var(--good); }
+
+/* Własny komentarz handlowca — plusik + rozwijany edytor (wzorzec z Backlogu). */
+.lk-notatka-sekcja { display: flex; flex-direction: column; gap: 0.45rem; }
+
+.lk-notatka-btn {
+  align-self: flex-start;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--accent-soft);
+  border: none;
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  cursor: pointer;
+}
+
+.lk-notatka-btn:hover { color: var(--text-primary); }
+
+.lk-notatka-editor { display: none; flex-direction: column; gap: 0.4rem; }
+.lk-notatka-editor.open { display: flex; }
+
+.lk-notatka-editor textarea {
+  font: inherit;
+  font-size: 0.88rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  padding: 0.5rem 0.6rem;
+  min-height: 3.4rem;
+  resize: vertical;
+}
+
+.lk-notatka-actions { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+
+.lk-notatka-actions .lk-notatka-send {
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--surface-1);
+  background: var(--accent);
+  border: none;
+  border-radius: 999px;
+  padding: 0.28rem 0.85rem;
+  cursor: pointer;
+}
+
+.lk-notatka-actions .lk-notatka-cancel,
+.lk-notatka-actions .lk-notatka-mic {
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  padding: 0.28rem 0.5rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+
+.lk-notatka-actions .lk-notatka-mic.recording { color: var(--bad, var(--feedback-overdue, #b5433f)); }
+.lk-notatka-actions button:disabled { opacity: 0.5; cursor: default; }
+
+.lk-notatka-msg { font-size: 0.75rem; color: var(--text-muted); }
+.lk-notatka-msg.err { color: var(--bad, var(--feedback-overdue, #b5433f)); }
+
+/* Historia rozmów — oś czasu (kropka wypełniona = odebrane, pusta = nieodebrane). */
+.lk-historia-rozmow { margin-top: 0.1rem; }
+
+.lk-historia-rozmow > summary {
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.lk-historia-rozmow > summary::-webkit-details-marker { display: none; }
+
+.lk-historia-rozmow > summary::before {
+  content: '▸';
+  display: inline-block;
+  font-size: 1.15rem;
+  line-height: 0.6;
+  transition: transform 0.15s ease;
+}
+
+.lk-historia-rozmow[open] > summary::before { transform: rotate(90deg); }
+
+.lk-historia-rozmow-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  margin-top: 0.65rem;
+  margin-left: 0.3rem;
+  padding-left: 1.1rem;
+  border-left: 1px solid var(--border);
+}
+
+.lk-historia-rozmow-entry { font-size: 0.85rem; position: relative; }
+
+.lk-historia-rozmow-entry::before {
+  content: '';
+  position: absolute;
+  left: calc(-1.1rem - 4.5px);
+  top: 0.28rem;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  border: 1.5px solid var(--text-secondary);
+}
+
+.lk-historia-rozmow-entry.nieodebrane::before {
+  background: var(--surface-1);
+  border-color: var(--text-muted);
+}
+
+.lk-historia-rozmow-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.lk-historia-rozmow-data {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.lk-historia-rozmow-czas {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+}
+
+.lk-historia-rozmow-notatka {
+  color: var(--text-primary);
+  margin-top: 0.25rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.lk-historia-rozmow-entry.nieodebrane .lk-historia-rozmow-notatka,
+.lk-historia-rozmow-notatka.brak-tresci { color: var(--text-muted); }
+
+/* Siatki pól Kontakt/Transakcja. */
+.lk-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.7rem 1.1rem;
+  align-items: start;
+}
+
+.lk-field-grid + .lk-field-grid {
+  margin-top: 0.35rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+
+.lk-field-grid .lk-field.wide,
+.lk-field-grid .lk-field-collapse.wide { grid-column: 1 / -1; }
+
+.lk-field { min-width: 0; }
+
+.lk-field .lk-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  display: block;
+  margin-bottom: 0.2rem;
+}
+
+.lk-field .lk-value {
+  font: inherit;
+  font-size: 0.86rem;
+  color: var(--text-primary);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0.15rem 0.3rem;
+  margin: -0.15rem -0.3rem;
+  width: 100%;
+  resize: vertical;
+}
+
+.lk-field .lk-value:not(.readonly):hover { background: var(--accent-soft); }
+.lk-field .lk-value:not(.readonly):focus { background: var(--page); border-color: var(--accent); outline: none; }
+
+.lk-field .lk-value.readonly {
+  color: var(--text-secondary);
+  cursor: default;
+  background: transparent;
+  border-color: transparent;
+  padding: 0.15rem 0;
+  margin: -0.15rem 0;
+  display: inline-block;
+}
+
+.lk-field .lk-value.with-copy {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.lk-field .lk-value.with-copy input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+}
+
+/* Pola z dużą ilością treści — zwinięte do jednowierszowego podglądu. */
+.lk-field-collapse > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.lk-field-collapse > summary::-webkit-details-marker { display: none; }
+
+.lk-field-collapse > summary::before {
+  content: '▸';
+  display: inline-block;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+  flex: 0 0 auto;
+}
+
+.lk-field-collapse[open] > summary::before { transform: rotate(90deg); }
+
+.lk-field-collapse > summary .lk-label { margin-bottom: 0; flex: 0 0 auto; }
+
+.lk-field-collapse > summary .lk-preview {
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.lk-field-collapse[open] > summary .lk-preview { display: none; }
+
+.lk-field-collapse .lk-value { margin-top: 0.4rem; }
+
+.lk-copy-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.3rem;
+  height: 1.3rem;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.lk-copy-btn:hover { background: var(--accent-soft); color: var(--text-primary); }
+.lk-copy-btn.copied { color: var(--good); }
+
+.lk-empty-note { color: var(--text-muted); font-style: italic; font-size: 0.85rem; }
+
+/* Sekcja Wycena (meta + tabela pozycji). */
+.lk-wycena-meta { display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; margin-bottom: 0.6rem; font-size: 0.85rem; }
+.lk-wycena-meta div span.lk-label { color: var(--text-muted); margin-right: 0.3rem; }
+.lk-wycena-meta a { color: var(--accent); }
+.lk-field .lk-value a { color: var(--accent); word-break: break-all; text-decoration: none; }
+.lk-field .lk-value a:hover { text-decoration: underline; }
+
+table.lk-produkty { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+
+table.lk-produkty th,
+table.lk-produkty td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--border); }
+
+table.lk-produkty th { color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.72rem; }

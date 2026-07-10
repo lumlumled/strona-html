@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared/lead-card.css">
   <style>
     /* Paleta i typografia dopasowane do stylu lumlum.co: monochromatyczna
        czerń/biel, font Inter, mocno zaokrąglone rogi, pigułkowe znaczniki. */
@@ -711,6 +712,31 @@
 
     .lead summary .akcja-pill.is-overdue {
       color: var(--feedback-overdue);
+    }
+
+    /* Ptaszek "zrobione dziś" — widoczny dopiero po najechaniu na pigułkę,
+       po prawej stronie tekstu akcji. */
+    .lead summary .akcja-pill .akcja-done {
+      display: none;
+      flex: 0 0 auto;
+      align-items: center;
+      justify-content: center;
+      width: 1.1rem;
+      height: 1.1rem;
+      margin-right: -0.25rem;
+      border-radius: 50%;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      line-height: 1;
+    }
+
+    .lead summary .akcja-pill:hover .akcja-done {
+      display: inline-flex;
+    }
+
+    .lead summary .akcja-pill .akcja-done:hover {
+      background: var(--surface-1);
+      color: var(--good);
     }
 
     .lead summary .akcja-edit {
@@ -1790,6 +1816,7 @@
     </div>
   </div>
 
+  <script src="shared/lead-card.js"></script>
   <script>
     // Ten sam origin co strona (lokalnie: http://localhost:3001, na Vercelu:
     // https://twoja-domena.vercel.app) — inaczej fetch leciałby zawsze w
@@ -2365,59 +2392,6 @@
       } catch { /* pigułki zostają na migawce z dokumentu */ }
     }
 
-    // Dyktowanie notatki: ten sam przepływ co composer na dole (MediaRecorder
-    // → POST /api/transcribe) — nagranie nigdzie nie zostaje, leci do
-    // transkrypcji i przepada.
-    function attachDictation(btn, textarea, setMsg) {
-      let recorder = null;
-      let chunks = [];
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (recorder && recorder.state === 'recording') {
-          recorder.stop();
-          return;
-        }
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
-          recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-          chunks = [];
-          recorder.addEventListener('dataavailable', (ev) => {
-            if (ev.data.size) chunks.push(ev.data);
-          });
-          recorder.addEventListener('stop', async () => {
-            stream.getTracks().forEach((t) => t.stop());
-            btn.classList.remove('recording');
-            const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
-            if (!blob.size) return;
-            setMsg('Transkrybuję…');
-            try {
-              const res = await fetch(`${API_BASE}/api/transcribe`, {
-                method: 'POST',
-                headers: { 'Content-Type': blob.type || 'audio/webm' },
-                body: blob,
-              });
-              const body = await res.json().catch(() => ({}));
-              if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
-              if (body.text) {
-                const existing = textarea.value.replace(/\s+$/, '');
-                textarea.value = existing ? `${existing} ${body.text}` : body.text;
-                textarea.focus();
-              }
-              setMsg('');
-            } catch (err) {
-              setMsg(err.message, true);
-            }
-          });
-          recorder.start();
-          btn.classList.add('recording');
-          setMsg('Nagrywam — kliknij mikrofon ponownie, żeby zakończyć.');
-        } catch (err) {
-          setMsg(`Brak dostępu do mikrofonu: ${err.message}`, true);
-        }
-      });
-    }
-
     function toIsoDate(str) {
       const d = parsePlDate(str);
       if (!d) return '';
@@ -2643,50 +2617,6 @@
       return /^\S+,\s*\d+s\s*\(from\s+\S+\s+to\s+\S+\)$/i.test(String(opis || '').trim());
     }
 
-    function renderHistoriaRozmow(container, rows) {
-      container.innerHTML = '';
-      if (!rows.length) {
-        const empty = document.createElement('p');
-        empty.className = 'polaczenia-empty';
-        empty.textContent = 'Brak zarejestrowanych rozmów.';
-        container.appendChild(empty);
-        return;
-      }
-      rows.forEach((row) => {
-        const entry = document.createElement('div');
-        entry.className = 'historia-rozmow-entry';
-        const when = document.createElement('span');
-        when.className = 'historia-rozmow-data';
-        const d = new Date(row.data_zmiany);
-        const dataGodzina = Number.isNaN(d.getTime())
-          ? ''
-          : `${formatPlDate(d)} ${d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })}`;
-        // Notatki handlowca i ręczne zmiany akcji żyją w tej samej osi czasu
-        // co rozmowy (jedna "Historia") — bez czasu trwania, z własną etykietą.
-        if (row.zrodlo === 'notatka_handlowca' || row.zrodlo === 'manual_akcja') {
-          const etykieta = row.zrodlo === 'manual_akcja'
-            ? 'ręczna zmiana akcji'
-            : `notatka${row.handlowiec ? ` · ${row.handlowiec}` : ''}`;
-          when.textContent = `${dataGodzina} – ${etykieta}`;
-          const noteEl = document.createElement('span');
-          noteEl.className = 'historia-rozmow-notatka';
-          noteEl.textContent = row.opis || '';
-          entry.append(when, noteEl);
-          container.appendChild(entry);
-          return;
-        }
-        when.textContent = `${dataGodzina} – ${row.czas_trwania_s || 0}s`;
-        const note = document.createElement('span');
-        note.className = 'historia-rozmow-notatka';
-        const hasRealOpis = row.opis && !isSurowyOpisPoll(row.opis);
-        note.textContent = hasRealOpis
-          ? row.opis
-          : row.disposition === 'no_answer' ? 'Nieodebrane' : 'Odebrane — brak zapisanego podsumowania (starszy wpis)';
-        entry.append(when, note);
-        container.appendChild(entry);
-      });
-    }
-
     function leadItem(c, orderIndex, categoryKey) {
       const isWycenaHistoryczna = categoryKey === 'wyceny_historyczne';
       const statusColors = isWycenaHistoryczna ? WYCENA_STATUS_COLORS : STATUS_COLORS;
@@ -2766,7 +2696,33 @@
         akcjaArrow.textContent = '→';
         const akcjaText = document.createElement('span');
         akcjaText.className = 'akcja-tekst';
-        akcjaBtn.append(akcjaArrow, akcjaText);
+        // Ptaszek "zrobione dziś" — pojawia się po najechaniu na pigułkę,
+        // klik odhacza akcję bez otwierania edytora (serwer czyści pole,
+        // loguje wykonanie i dopisuje "[Akcja] Zrobione: ..." do Historii).
+        const akcjaDone = document.createElement('span');
+        akcjaDone.className = 'akcja-done';
+        akcjaDone.textContent = '✓';
+        akcjaDone.title = 'Zrobione dziś — odhacz akcję';
+        akcjaDone.addEventListener('click', async (ev) => {
+          ev.stopPropagation();
+          ev.preventDefault();
+          akcjaBtn.disabled = true;
+          try {
+            const res = await fetch(`${API_BASE}/api/leady/akcja`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ telefon: c.telefon, akcja: '', wykonane: true }),
+            });
+            const resBody = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(resBody.error || `Błąd ${res.status}`);
+            applyAkcjaToPhone(normalizePhone(c.telefon), null);
+          } catch (err) {
+            alert(`Nie odhaczono akcji: ${err.message}`);
+          } finally {
+            akcjaBtn.disabled = false;
+          }
+        });
+        akcjaBtn.append(akcjaArrow, akcjaText, akcjaDone);
         contactRow.appendChild(akcjaBtn);
 
         let biezacaAkcja = null;
@@ -3016,174 +2972,96 @@
 
       lead.appendChild(summary);
 
+      // Rozwinięty case = wspólna karta leada (apps/shared/lead-card.js) —
+      // dokładnie ten sam widok i dane co lead w CRM (notatka z plusikiem,
+      // Najbliższa akcja z ptaszkiem "zrobione dziś", Podsumowanie AI,
+      // Historia rozmów, siatki Kontakt/Transakcja, Wycena). Pełny wiersz
+      // Leady B2C dociągany leniwie przy pierwszym otwarciu — dokument Umowy
+      // to tylko migawka z rana. Case bez telefonu (nie da się dopasować
+      // leada) zostaje na starym prostym widoku z migawki.
       const body = document.createElement('div');
       body.className = 'lead-body';
 
-      // Własny komentarz handlowca — nad Opisem. Zapis: wiersz w "Historii"
-      // (Log zmian, zrodlo notatka_handlowca) + linia [Notatka] w kolumnie
-      // "Historia rozmów" w Leady B2C; GPT po drodze wyciąga z treści
-      // najbliższą akcję/termin/datę feedbacku (patrz POST /api/leady/notatka).
-      let odswiezHistorie = null;
       if (c.telefon) {
-        const sekcja = document.createElement('div');
-        sekcja.className = 'notatka-sekcja';
-        const addBtn = document.createElement('button');
-        addBtn.type = 'button';
-        addBtn.className = 'notatka-btn';
-        addBtn.textContent = '+ Dodaj własny komentarz';
-        const editor = document.createElement('div');
-        editor.className = 'notatka-editor';
-        const ta = document.createElement('textarea');
-        ta.placeholder = 'Napisz lub podyktuj notatkę — np. „zadzwonić za 3 dni po 15:00”';
-        const actions = document.createElement('div');
-        actions.className = 'notatka-actions';
-        const sendBtn = document.createElement('button');
-        sendBtn.type = 'button';
-        sendBtn.className = 'notatka-send';
-        sendBtn.textContent = 'Zapisz';
-        const micNota = document.createElement('button');
-        micNota.type = 'button';
-        micNota.className = 'notatka-mic';
-        micNota.title = 'Dyktuj (kliknij, mów, kliknij ponownie)';
-        micNota.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/><path d="M19 11a1 1 0 0 0-2 0 5 5 0 0 1-10 0 1 1 0 0 0-2 0 7 7 0 0 0 6 6.92V20H9a1 1 0 0 0 0 2h6a1 1 0 0 0 0-2h-2v-2.08A7 7 0 0 0 19 11z"/></svg>';
-        const cancelBtn = document.createElement('button');
-        cancelBtn.type = 'button';
-        cancelBtn.className = 'notatka-cancel';
-        cancelBtn.textContent = 'Anuluj';
-        const msg = document.createElement('span');
-        msg.className = 'notatka-msg';
-        const setMsg = (text, isErr) => {
-          msg.textContent = text || '';
-          msg.classList.toggle('err', Boolean(isErr));
-        };
-        attachDictation(micNota, ta, setMsg);
-        addBtn.addEventListener('click', () => {
-          addBtn.style.display = 'none';
-          editor.classList.add('open');
-          ta.focus();
-        });
-        cancelBtn.addEventListener('click', () => {
-          editor.classList.remove('open');
-          addBtn.style.display = '';
-          setMsg('');
-        });
-        sendBtn.addEventListener('click', async () => {
-          const tresc = ta.value.trim();
-          if (!tresc) {
-            setMsg('Pusta notatka', true);
-            return;
-          }
-          sendBtn.disabled = micNota.disabled = cancelBtn.disabled = true;
-          setMsg('Zapisuję…');
+        body.innerHTML = '<p class="lk-empty-note">Wczytywanie…</p>';
+        let kartaZaladowana = false;
+        const zaladujKarte = async () => {
           try {
-            const res = await fetch(`${API_BASE}/api/leady/notatka`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ telefon: c.telefon, tresc }),
+            const res = await fetch(`${API_BASE}/api/leady/pelny?telefon=${encodeURIComponent(c.telefon)}`);
+            const resBody = await res.json().catch(() => ({}));
+            if (!res.ok || !resBody.data) throw new Error(resBody.error || `Błąd ${res.status}`);
+            const karta = LeadKarta.buildBody(resBody.data, {
+              apiBase: API_BASE,
+              hostDetails: lead,
+              // Edycja/odhaczenie akcji w karcie → odśwież pigułki tego
+              // telefonu na wszystkich zwiniętych case'ach.
+              onAkcjaChange: (digits, a) => applyAkcjaToPhone(digits, a),
+              onFeedbackDate: (stored) => {
+                c.data_feedbacku = stored;
+                const input = lead.querySelector('summary .feedback-date-input');
+                if (input) input.value = toIsoDate(stored);
+              },
             });
-            const body2 = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(body2.error || `Błąd ${res.status}`);
-            ta.value = '';
-            editor.classList.remove('open');
-            addBtn.style.display = '';
-            setMsg('');
-            if (body2.akcja) applyAkcjaToPhone(normalizePhone(c.telefon), body2.akcja);
-            if (odswiezHistorie) odswiezHistorie();
+            // Karta ma własny border-top/padding (.lk-lead-body) — wrapper
+            // przestaje być .lead-body, żeby nie dublować ramki.
+            body.className = '';
+            body.innerHTML = '';
+            body.appendChild(karta.el);
+            // Odwrotny kierunek: edycja akcji z pigułki → odśwież kartę.
+            const phoneKey = normalizePhone(c.telefon);
+            if (phoneKey) {
+              if (!akcjaUpdatersByPhone.has(phoneKey)) akcjaUpdatersByPhone.set(phoneKey, []);
+              akcjaUpdatersByPhone.get(phoneKey).push(karta.setAkcja);
+            }
           } catch (err) {
-            setMsg(`Nie zapisano: ${err.message}`, true);
-          } finally {
-            sendBtn.disabled = micNota.disabled = cancelBtn.disabled = false;
-          }
-        });
-        actions.append(sendBtn, micNota, cancelBtn, msg);
-        editor.append(ta, actions);
-        sekcja.append(addBtn, editor);
-        body.appendChild(sekcja);
-      }
-
-      if (c.opis || c.komentarz) {
-        const opisWrap = document.createElement('div');
-        opisWrap.className = 'opis-wrap';
-        const opisLabel = document.createElement('div');
-        opisLabel.className = 'opis-label';
-        opisLabel.textContent = 'Opis';
-        opisWrap.appendChild(opisLabel);
-        const opis = document.createElement('div');
-        opis.className = 'opis-text';
-        opis.textContent = c.opis || c.komentarz;
-        opisWrap.appendChild(opis);
-        body.appendChild(opisWrap);
-      }
-
-      // Historia: rozmowy + notatki handlowca w jednej osi czasu (wszystko z
-      // Log zmian po telefonie), rozwijalna, wczytywana leniwie (dopiero po
-      // kliknięciu) — pod Opisem, żeby nie wydłużać case'a każdym kolejnym
-      // wpisem, ale nic z tych danych nie zostaje ucięte, tylko schowane.
-      if (c.telefon) {
-        const historiaDetails = document.createElement('details');
-        historiaDetails.className = 'historia-rozmow';
-        const historiaSummary = document.createElement('summary');
-        historiaSummary.textContent = 'Historia';
-        historiaDetails.appendChild(historiaSummary);
-        const historiaList = document.createElement('div');
-        historiaList.className = 'historia-rozmow-list';
-        historiaList.style.display = 'none';
-        historiaDetails.appendChild(historiaList);
-        const zaladujHistorie = async () => {
-          historiaList.style.display = '';
-          historiaList.textContent = 'Wczytywanie…';
-          try {
-            const res = await fetch(`${API_BASE}/api/log-polaczen/historia?telefon=${encodeURIComponent(c.telefon)}`);
-            if (!res.ok) throw new Error(`Błąd ${res.status}`);
-            const histBody = await res.json();
-            renderHistoriaRozmow(historiaList, histBody.data || []);
-          } catch (err) {
-            historiaList.textContent = `Nie udało się wczytać historii: ${err.message}`;
+            body.innerHTML = `<p class="lk-empty-note">Nie udało się wczytać leada: ${err.message}</p>`;
           }
         };
-        // Po zapisaniu notatki odświeżamy tylko już wczytaną historię —
-        // niewczytana i tak pobierze świeże dane przy pierwszym rozwinięciu.
-        odswiezHistorie = () => {
-          if (historiaDetails.dataset.loaded) zaladujHistorie();
-        };
-        historiaDetails.addEventListener('toggle', () => {
-          if (!historiaDetails.open || historiaDetails.dataset.loaded) return;
-          historiaDetails.dataset.loaded = '1';
-          zaladujHistorie();
-        });
-        body.appendChild(historiaDetails);
-
-        // Zwinięcie case'a resetuje jego Historię rozmów — inaczej po
-        // ponownym rozwinięciu case'a widok wraca "nie clean" (rozwinięta
-        // historia z poprzedniej sesji przeglądania).
         lead.addEventListener('toggle', () => {
-          if (!lead.open) historiaDetails.open = false;
+          if (lead.open && !kartaZaladowana) {
+            kartaZaladowana = true;
+            zaladujKarte();
+          }
         });
-      }
+      } else {
+        if (c.opis || c.komentarz) {
+          const opisWrap = document.createElement('div');
+          opisWrap.className = 'opis-wrap';
+          const opisLabel = document.createElement('div');
+          opisLabel.className = 'opis-label';
+          opisLabel.textContent = 'Opis';
+          opisWrap.appendChild(opisLabel);
+          const opis = document.createElement('div');
+          opis.className = 'opis-text';
+          opis.textContent = c.opis || c.komentarz;
+          opisWrap.appendChild(opis);
+          body.appendChild(opisWrap);
+        }
 
-      function fieldGrid(fields) {
-        const grid = document.createElement('div');
-        grid.className = 'field-grid';
-        fields.forEach((spec) => {
-          const raw = c[spec.key];
-          if (spec.hideWhenEmpty && fieldIsEmpty(spec, raw)) return;
-          const field = document.createElement('div');
-          field.className = 'field' + (spec.wide ? ' wide' : '');
-          const label = document.createElement('div');
-          label.className = 'label';
-          label.textContent = typeof spec.label === 'function' ? spec.label(c) : spec.label;
-          const value = document.createElement('div');
-          value.className = 'value' + (spec.nowrap ? ' nowrap' : '') + (spec.copy && raw ? ' with-copy' : '');
-          value.appendChild(spec.render ? spec.render(raw, c) : fieldValueNode(spec, raw));
-          field.appendChild(label);
-          field.appendChild(value);
-          grid.appendChild(field);
-        });
-        return grid;
-      }
+        function fieldGrid(fields) {
+          const grid = document.createElement('div');
+          grid.className = 'field-grid';
+          fields.forEach((spec) => {
+            const raw = c[spec.key];
+            if (spec.hideWhenEmpty && fieldIsEmpty(spec, raw)) return;
+            const field = document.createElement('div');
+            field.className = 'field' + (spec.wide ? ' wide' : '');
+            const label = document.createElement('div');
+            label.className = 'label';
+            label.textContent = typeof spec.label === 'function' ? spec.label(c) : spec.label;
+            const value = document.createElement('div');
+            value.className = 'value' + (spec.nowrap ? ' nowrap' : '') + (spec.copy && raw ? ' with-copy' : '');
+            value.appendChild(spec.render ? spec.render(raw, c) : fieldValueNode(spec, raw));
+            field.appendChild(label);
+            field.appendChild(value);
+            grid.appendChild(field);
+          });
+          return grid;
+        }
 
-      body.appendChild(fieldGrid(CONTACT_FIELDS));
-      body.appendChild(fieldGrid(DEAL_FIELDS));
+        body.appendChild(fieldGrid(CONTACT_FIELDS));
+        body.appendChild(fieldGrid(DEAL_FIELDS));
+      }
 
       lead.appendChild(body);
 
