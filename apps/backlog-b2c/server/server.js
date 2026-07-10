@@ -698,10 +698,18 @@ Brak → null.
 }
 
 ZASADY POLA produkty:
-- Zapisuj produkt TYLKO gdy w rozmowie padła KONKRETNA, znana ilość (liczba
-  metrów, liczba sztuk). Jeśli ilość jest niejasna, ogólnikowa albo w ogóle nie
-  padła — NIE dodawaj tego produktu do listy. Żadnych placeholderów typu
-  "? m"/"? szt" — niepewny produkt to nie jest produkt z wyceny, to szum.
+- To pole to TWARDY DOWÓD pod wycenę — na jego podstawie handlowiec ma móc
+  od razu zrobić klientowi wycenę. Wypełnij je TYLKO gdy handlowiec z
+  klientem faktycznie USTALILI w rozmowie konkretne produkty w konkretnych,
+  znanych ilościach (liczba metrów, liczba sztuk). Luźne dywagacje,
+  orientacyjne pytania o cenę, "około", "jeszcze zmierzy", "musi policzyć"
+  → to NIE jest ustalenie, pole zostaje puste.
+- Jeśli ilość jest niejasna, ogólnikowa albo w ogóle nie padła — NIE dodawaj
+  tego produktu do listy. Żadnych placeholderów typu "? m"/"? szt" —
+  niepewny produkt to nie jest produkt z wyceny, to szum. Lepiej nie zapisać
+  nic, niż zapisać coś niepewnego.
+- NIGDY nie wpisuj tu numeru telefonu ani ceny ("Cena za całość" itp.) —
+  telefon i cena mają własne kolumny (cena → pole cena_zaproponowana).
 - Format każdej linii: "[ilość][jednostka] [nazwa produktu]" — jednostka
   WYŁĄCZNIE dla taśm (zawsze "m", sklejone z liczbą, np. "10m"). Dla
   wszystkiego innego (sterowniki, zasilacze, piloty, czujniki) sama liczba
