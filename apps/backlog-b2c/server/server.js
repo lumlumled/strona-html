@@ -487,7 +487,7 @@ app.post('/api/transcribe', express.raw({ type: 'audio/*', limit: '8mb' }), asyn
 // zapowiedzi wysłania ("wysłał LUB obiecał wysłać") — w praktyce łapało to
 // też przypadki typu "wyślę ofertę na maila", gdzie nic jeszcze nie zostało
 // wysłane. Teraz wymaga potwierdzonego faktu wysłania.
-function buildCallAnalysisPrompt(dzisiaj, kierunek, poprzedniOpis) {
+function buildCallAnalysisPrompt(dzisiaj, kierunek, poprzedniOpis, poprzedniaAkcja) {
   const kierunekOpis = kierunek === 'wychodzące'
     ? 'To handlowiec dzwoni do klienta (połączenie wychodzące).'
     : kierunek === 'przychodzące'
@@ -566,6 +566,37 @@ BEZ chronologii poszczególnych rozmów i ich dat (od tego jest osobna historia 
 ===== ZASADY KOREKT =====
 Jeśli pada korekta (np. "3000K... nie, jednak 4000K") → bierz OSTATNIĄ wartość.
 Dotyczy: temperatury, ilości metrów, typu produktu, liczby sztuk.
+
+===== ZASADY najblizsza_akcja =====
+To krótka etykieta na zwiniętym case'ie w backlogu — handlowiec ma jednym
+rzutem oka widzieć, co KONKRETNIE ma z tym leadem zrobić jako następny krok.
+Maksymalnie 5-6 słów, tryb rozkazujący, po polsku, z terminem jeśli padł:
+"Zadzwonić jutro 15:00" → jeśli jutro = 12.07, napisz "Zadzwonić 12.07 15:00"
+"Zadzwonić w czwartek" → "Zadzwonić czw 16.07"
+"Wysłać wycenę SMS-em"
+"Doliczyć zasilacz i przesłać wycenę"
+Daty względne ("jutro", "za tydzień", "w piątek") ZAWSZE przelicz względem
+DZISIAJ na konkretną datę — etykieta będzie czytana także w kolejnych dniach,
+"jutro" straciłoby sens.
+
+DOTYCHCZASOWA NAJBLIŻSZA AKCJA (może być pusta):
+"""
+${poprzedniaAkcja || ''}
+"""
+Ta rozmowa ją REEWALUUJE:
+- w rozmowie umówiono/ustalono nowy następny krok → wpisz nowy
+- dotychczasowa akcja została w tej rozmowie WYKONANA lub zdezaktualizowana,
+  a nic nowego nie umówiono → null (akcja znika z case'a)
+- dotychczasowa akcja NIE dotyczyła tej rozmowy albo nadal jest do zrobienia
+  (np. "Wysłać wycenę SMS-em", a wycena wciąż nie wysłana) → przepisz ją dalej
+- status "Sprzedane" lub "Stracony" → zawsze null
+- brak dotychczasowej akcji i brak konkretnego następnego kroku → null;
+  NIE wymyślaj akcji z ogólników ("klient się zastanawia" to nie akcja)
+
+najblizsza_akcja_termin: konkretny moment wykonania akcji, jeśli padł.
+Format "DD.MM.YYYY HH:mm" (gdy padła godzina) albo "DD.MM.YYYY" (gdy sam
+dzień). Brak konkretnego terminu → null. Gdy akcja to kolejny telefon w
+umówionym terminie, termin = data_feedbacku (spójnie).
 
 ===== ZASADY zamkniete_dzis =====
 To NIE jest "zamknięty case" (sprzedany/stracony na zawsze) — to informacja czy
@@ -694,7 +725,9 @@ Brak → null.
   "cena_zaproponowana": "XXXX zł lub null",
   "jakosc_leada": "gorący lub średni lub zimny",
   "uzasadnienie_jakosci": "",
-  "zamkniete_dzis": true lub false
+  "zamkniete_dzis": true lub false,
+  "najblizsza_akcja": "max 5-6 słów lub null",
+  "najblizsza_akcja_termin": "DD.MM.YYYY HH:mm lub DD.MM.YYYY lub null"
 }
 
 ZASADY POLA produkty:
@@ -726,8 +759,8 @@ Pole typ_klienta: jeśli brak sygnałów B2B → zawsze "B2C".`;
 // Zastępuje dawne summarizeCall — zamiast samego streszczenia, pełna analiza
 // rozmowy (status/data_feedbacku/produkty/kwota/jakość leada/zamknięcie na
 // dziś), przeniesiona z promptu, który wcześniej żył w scenariuszu Make.
-async function analyzeCall(transcript, { kierunek, dzisiaj, poprzedniOpis }) {
-  const fallback = { status: null, data_feedbacku: null, opis: transcript ? transcript.slice(0, 200) : null, skrocony_opis: null, produkty: '', cena_zaproponowana: null, jakosc_leada: null, uzasadnienie_jakosci: '', zamkniete_dzis: false };
+async function analyzeCall(transcript, { kierunek, dzisiaj, poprzedniOpis, poprzedniaAkcja }) {
+  const fallback = { status: null, data_feedbacku: null, opis: transcript ? transcript.slice(0, 200) : null, skrocony_opis: null, produkty: '', cena_zaproponowana: null, jakosc_leada: null, uzasadnienie_jakosci: '', zamkniete_dzis: false, najblizsza_akcja: null, najblizsza_akcja_termin: null };
   if (!OPENAI_API_KEY || !transcript) return fallback;
   try {
     const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -738,7 +771,7 @@ async function analyzeCall(transcript, { kierunek, dzisiaj, poprzedniOpis }) {
         response_format: { type: 'json_object' },
         reasoning_effort: 'minimal',
         messages: [
-          { role: 'system', content: buildCallAnalysisPrompt(dzisiaj, kierunek, poprzedniOpis) },
+          { role: 'system', content: buildCallAnalysisPrompt(dzisiaj, kierunek, poprzedniOpis, poprzedniaAkcja) },
           { role: 'user', content: transcript },
         ],
       }),
@@ -941,7 +974,7 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     // kontaktu") — GPT regeneruje go po każdej rozmowie jako żywą pigułkę
     // całego kontaktu (pole skrocony_opis w odpowiedzi).
     const analysis = (answered && transcript)
-      ? await analyzeCall(transcript, { kierunek, dzisiaj: warsawDateStr(new Date()), poprzedniOpis: lead ? lead['Ocena AI kontaktu'] : null })
+      ? await analyzeCall(transcript, { kierunek, dzisiaj: warsawDateStr(new Date()), poprzedniOpis: lead ? lead['Ocena AI kontaktu'] : null, poprzedniaAkcja: lead ? lead['Najbliższa akcja'] : null })
       : null;
     const opis = analysis?.opis || (transcript ? transcript.slice(0, 200) : label);
 
@@ -967,6 +1000,17 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       }
     }
     const feedbackAfter = (lead && analysis?.data_feedbacku) ? analysis.data_feedbacku : feedbackBefore;
+
+    // Najbliższa akcja: odebrana rozmowa z analizą zawsze REEWALUUJE pole —
+    // w odróżnieniu od produktów/kwoty/oceny AI (tam pusty wynik analizy nie
+    // czyści pola) tu null od GPT znaczy "akcja wykonana / nic nowego nie
+    // umówiono" i świadomie nadpisujemy nim kolumnę. Nieodebrane
+    // (analysis=null → setAkcja=false) nie dotykają pola wcale. Status
+    // zamykający lejek czyści akcję niezależnie od odpowiedzi GPT.
+    const setAkcja = Boolean(analysis);
+    const akcjaPoRozmowie = (!['Sprzedane', 'Stracony'].includes(statusAfter) && analysis?.najblizsza_akcja) || null;
+    const akcjaTermin = akcjaPoRozmowie ? (analysis?.najblizsza_akcja_termin || null) : null;
+    const akcjaOwner = akcjaPoRozmowie ? (call.pracownik || process.env.DEFAULT_HANDLOWIEC || null) : null;
 
     // Telefon bez dopasowania w Leady B2C/Wyceny B2C — bez tego rozmowa
     // zostawałaby tylko w Log zmian, niewidoczna w panelu i "gubiona" przez
@@ -998,6 +1042,9 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
           // Historii rozmów.
           'Ocena AI kontaktu': analysis?.skrocony_opis || (answered ? opis : null),
           'Historia rozmów': historiaEntry,
+          'Najbliższa akcja': akcjaPoRozmowie,
+          'Najbliższa akcja termin': akcjaTermin,
+          'Najbliższa akcja owner': akcjaOwner,
           'Ostatni kontakt': call.callstart || null,
           Źródło: 'Zadarma — rozmowa bez dopasowania w bazie',
           'Treść rozmowy': transcript || null,
@@ -1086,6 +1133,10 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
         p_kwota: patch['Kwota wyceny'] ?? null,
         p_ocena_ai: patch['Ocena AI kontaktu'] ?? null,
         p_historia: patch['Historia rozmów'] ?? null,
+        p_set_akcja: setAkcja,
+        p_akcja: akcjaPoRozmowie,
+        p_akcja_termin: akcjaTermin,
+        p_akcja_owner: akcjaOwner,
       });
       if (updateErr) console.error('Błąd update Leady B2C:', updateErr.message);
 
@@ -1185,6 +1236,221 @@ app.get('/api/leady/nowe', async (req, res) => {
         kwota: row['Kwota wyceny'] || 0,
         zadzwonil_dzis: false,
         zamkniete: 0,
+        najblizsza_akcja: row['Najbliższa akcja'] || '',
+        najblizsza_akcja_termin: row['Najbliższa akcja termin'] || '',
+        najblizsza_akcja_owner: row['Najbliższa akcja owner'] || '',
+      }));
+    res.json(rows);
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// ── Najbliższa akcja + notatki handlowca ────────────────────────────────────
+// "Najbliższa akcja" = krótki (max 5-6 słów) następny krok z leadem, widoczny
+// na zwiniętym case'ie. Zasilana automatycznie: analizą GPT każdej odebranej
+// rozmowy (webhook Zadarmy wyżej) i ekstrakcją z ręcznej notatki (endpoint
+// niżej); edytowalna/kasowalna ręcznie przez POST /api/leady/akcja.
+
+// Ekstrakcja akcji z ręcznej notatki handlowca. W odróżnieniu od analizy
+// rozmowy null tu NIE czyści dotychczasowej akcji — notatka, z której nie
+// wynika żaden krok ("klient miły, ma duży dom"), zostawia akcję w spokoju.
+function buildNotatkaAnalysisPrompt(dzisiaj, poprzedniaAkcja) {
+  return `Jesteś asystentem CRM firmy LumLum (oświetlenie LED premium).
+Dostajesz RĘCZNĄ NOTATKĘ handlowca zapisaną przy leadzie (poza rozmową telefoniczną).
+Zwróć WYŁĄCZNIE jeden obiekt JSON. Bez komentarzy, bez markdownu, bez tekstu przed ani po.
+
+DZISIAJ: ${dzisiaj}
+
+===== ZASADY najblizsza_akcja =====
+To krótka etykieta na case'ie leada — następny KONKRETNY krok do zrobienia.
+Maksymalnie 5-6 słów, tryb rozkazujący, po polsku, z terminem jeśli padł:
+"zadzwoń za 3 dni" → "Zadzwonić DD.MM" (przelicz względem DZISIAJ)
+"wyślij mu wycenę smsem" → "Wysłać wycenę SMS-em"
+Daty względne ("jutro", "za tydzień", "w piątek") ZAWSZE przelicz na konkretną datę.
+
+DOTYCHCZASOWA NAJBLIŻSZA AKCJA (może być pusta):
+"""
+${poprzedniaAkcja || ''}
+"""
+- z notatki wynika nowy następny krok → wpisz go
+- z notatki NIE wynika żaden krok → null (null tu NIE czyści dotychczasowej
+  akcji — zostaje bez zmian); NIE wymyślaj akcji z ogólników
+- notatka mówi wprost, że coś zostało zrobione/nieaktualne i nic nowego nie
+  planuje → też null
+
+najblizsza_akcja_termin: konkretny moment wykonania akcji, jeśli padł.
+Format "DD.MM.YYYY HH:mm" (z godziną) albo "DD.MM.YYYY" (sam dzień). Brak → null.
+
+===== ZASADY data_feedbacku =====
+WYŁĄCZNIE termin kolejnego kontaktu telefonicznego z klientem, jeśli notatka
+go wskazuje ("zadzwonić za 3 dni", "kontakt w piątek"). Przelicz względem
+DZISIAJ, format DD.MM.YYYY. Inne daty (koniec budowy, odbiór mieszkania) → null.
+
+===== FORMAT WYJŚCIOWY =====
+{
+  "najblizsza_akcja": "max 5-6 słów lub null",
+  "najblizsza_akcja_termin": "DD.MM.YYYY HH:mm lub DD.MM.YYYY lub null",
+  "data_feedbacku": "DD.MM.YYYY lub null"
+}`;
+}
+
+async function analyzeNotatka(tresc, { dzisiaj, poprzedniaAkcja }) {
+  const fallback = { najblizsza_akcja: null, najblizsza_akcja_termin: null, data_feedbacku: null };
+  if (!OPENAI_API_KEY || !tresc) return fallback;
+  try {
+    const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_API_KEY}` },
+      body: JSON.stringify({
+        model: UMOWA_MODEL,
+        response_format: { type: 'json_object' },
+        reasoning_effort: 'minimal',
+        messages: [
+          { role: 'system', content: buildNotatkaAnalysisPrompt(dzisiaj, poprzedniaAkcja) },
+          { role: 'user', content: tresc },
+        ],
+      }),
+    });
+    if (!aiRes.ok) return fallback;
+    const body = await aiRes.json();
+    const parsed = JSON.parse(body.choices?.[0]?.message?.content || '');
+    return { ...fallback, ...parsed };
+  } catch (err) {
+    console.warn('Analiza notatki (GPT) nie powiodła się:', err.message);
+    return fallback;
+  }
+}
+
+// Ręczna notatka handlowca do leada. Trafia w DWA miejsca (ten sam wzorzec
+// dual-write co rozmowy z webhooka Zadarmy): wiersz w Log zmian (zrodlo:
+// notatka_handlowca — z niego renderuje się "Historia" w app.html) i linia
+// "[Notatka]" na górze kolumny "Historia rozmów" w Leady B2C (widoczna w CRM).
+// Po drodze GPT wyciąga z treści najbliższą akcję / termin / datę feedbacku.
+app.post('/api/leady/notatka', async (req, res) => {
+  try {
+    const digits = normalizePhoneDigits(req.body?.telefon);
+    const tresc = String(req.body?.tresc || '').trim();
+    if (!digits) return res.status(400).json({ error: 'Brak numeru telefonu' });
+    if (!tresc) return res.status(400).json({ error: 'Pusta notatka' });
+
+    const supabase = getClient();
+    const lead = await findLeadByPhone(supabase, digits);
+    if (!lead) return res.status(404).json({ error: 'Nie znaleziono leada o tym numerze' });
+
+    const handlowiec = req.body?.handlowiec || process.env.DEFAULT_HANDLOWIEC || null;
+    const extract = await analyzeNotatka(tresc, {
+      dzisiaj: warsawDateStr(new Date()),
+      poprzedniaAkcja: lead['Najbliższa akcja'] || null,
+    });
+    // Notatka bez wynikającej z niej akcji NIE dotyka dotychczasowej
+    // (p_set_akcja=false) — inaczej niż odebrana rozmowa, która reevaluuje.
+    const setAkcja = Boolean(extract?.najblizsza_akcja);
+
+    const historiaEntry = `${warsawDateTimeStr(new Date())} - [Notatka] ${tresc}`;
+
+    const { error: insertErr } = await supabase.from(LOG_ZMIAN_TABLE).insert({
+      zrodlo: 'notatka_handlowca',
+      telefon: digits,
+      opis: tresc,
+      handlowiec,
+      dopasowano_tabela: LEADY_B2C_TABLE,
+      dopasowano_id: String(lead['ID'] ?? ''),
+    });
+    if (insertErr) throw new Error(`Zapis notatki do Log zmian: ${insertErr.message}`);
+
+    const { error: updateErr } = await supabase.rpc('app_update_leady_notatka', {
+      p_phone: lead['Phone number'],
+      p_historia: lead['Historia rozmów'] ? `${historiaEntry}\n${lead['Historia rozmów']}` : historiaEntry,
+      p_set_akcja: setAkcja,
+      p_akcja: setAkcja ? extract.najblizsza_akcja : null,
+      p_akcja_termin: setAkcja ? (extract.najblizsza_akcja_termin || null) : null,
+      p_akcja_owner: setAkcja ? handlowiec : null,
+      p_data_feedbacku: extract?.data_feedbacku || null,
+    });
+    if (updateErr) throw new Error(`Zapis notatki do Leady B2C: ${updateErr.message}`);
+
+    res.json({
+      zapisano: true,
+      akcja: setAkcja
+        ? { akcja: extract.najblizsza_akcja, termin: extract.najblizsza_akcja_termin || '', owner: handlowiec || '' }
+        : null,
+      data_feedbacku: extract?.data_feedbacku || null,
+    });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// Ręczna edycja/skasowanie najbliższej akcji (pigułka na case'ie). Kluczem
+// jest telefon, nie LP — działa też dla żywych leadów spoza wygenerowanej
+// Umowy. Puste `akcja` = skasowanie (czyści też termin i ownera).
+app.post('/api/leady/akcja', async (req, res) => {
+  try {
+    const digits = normalizePhoneDigits(req.body?.telefon);
+    if (!digits) return res.status(400).json({ error: 'Brak numeru telefonu' });
+
+    const supabase = getClient();
+    const lead = await findLeadByPhone(supabase, digits);
+    if (!lead) return res.status(404).json({ error: 'Nie znaleziono leada o tym numerze' });
+
+    const akcja = String(req.body?.akcja || '').trim() || null;
+    const termin = akcja ? (String(req.body?.termin || '').trim() || null) : null;
+    const owner = akcja
+      ? (req.body?.owner || lead['Najbliższa akcja owner'] || process.env.DEFAULT_HANDLOWIEC || null)
+      : null;
+
+    const { error: updateErr } = await supabase.rpc('app_update_leady_notatka', {
+      p_phone: lead['Phone number'],
+      p_set_akcja: true,
+      p_akcja: akcja,
+      p_akcja_termin: termin,
+      p_akcja_owner: owner,
+    });
+    if (updateErr) throw new Error(updateErr.message);
+
+    // Ślad ręcznej zmiany w Log zmian — spójnie z zasadą "ręczne edycje są
+    // logowane" (triggery manual_crm nie widzą kolumn akcji, bo RPC i tak
+    // ma bypass, więc wpis robimy jawnie tu).
+    const { error: logErr } = await supabase.from(LOG_ZMIAN_TABLE).insert({
+      zrodlo: 'manual_akcja',
+      telefon: digits,
+      opis: akcja
+        ? `Najbliższa akcja (ręcznie): ${akcja}${termin ? ` [${termin}]` : ''}`
+        : 'Najbliższa akcja usunięta ręcznie',
+      handlowiec: owner,
+      dopasowano_tabela: LEADY_B2C_TABLE,
+      dopasowano_id: String(lead['ID'] ?? ''),
+    });
+    if (logErr) console.error('Błąd zapisu manual_akcja do Log zmian:', logErr.message);
+
+    res.json({ akcja: akcja || '', termin: termin || '', owner: owner || '' });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// Wszystkie leady z ustawioną najbliższą akcją — frontend nakłada to na
+// wyrenderowane case'y po telefonie (pigułka jest żywa w ciągu dnia, mimo że
+// dokument Umowy to migawka z rana). To samo zapytanie posłuży przyszłemu
+// panelowi głównemu ("aktywne akcje na dziś").
+app.get('/api/leady/akcje', async (req, res) => {
+  try {
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from(LEADY_B2C_TABLE)
+      .select('"Phone number", "Name", "Deal stage", "Najbliższa akcja", "Najbliższa akcja termin", "Najbliższa akcja owner"')
+      .not('Najbliższa akcja', 'is', null);
+    if (error) throw error;
+    const rows = (data || [])
+      .filter((row) => String(row['Najbliższa akcja'] || '').trim())
+      .map((row) => ({
+        telefon: formatPhonePlus(row['Phone number']),
+        imie: row['Name'] || '',
+        status: row['Deal stage'] || '',
+        akcja: row['Najbliższa akcja'],
+        termin: row['Najbliższa akcja termin'] || '',
+        owner: row['Najbliższa akcja owner'] || '',
       }));
     res.json(rows);
   } catch (err) {
@@ -1306,10 +1572,14 @@ async function fetchWycenaByPhone(supabase) {
 // (każdy telefon, niezależnie od tego, czy dopasował się do Leady B2C/Wyceny
 // B2C) — nie z legacy skażonej kolumny "Ilość telefonów" w Leady B2C.
 async function fetchCallCountByPhone(supabase) {
-  const { data, error } = await supabase.from(LOG_ZMIAN_TABLE).select('telefon');
+  // Notatki handlowca i ręczne zmiany akcji żyją w tej samej tabeli (zrodlo:
+  // notatka_handlowca / manual_akcja, patrz POST /api/leady/notatka i
+  // /api/leady/akcja) — to nie są telefony, nie liczymy ich.
+  const { data, error } = await supabase.from(LOG_ZMIAN_TABLE).select('telefon, zrodlo');
   if (error) throw error;
   const map = new Map();
   (data || []).forEach((row) => {
+    if (row['zrodlo'] === 'notatka_handlowca' || row['zrodlo'] === 'manual_akcja') return;
     const digits = normalizePhoneDigits(row['telefon']);
     if (!digits) return;
     map.set(digits, (map.get(digits) || 0) + 1);
@@ -1362,6 +1632,13 @@ function mapLeadRow(row, wycenaByPhone, callCountByPhone) {
     // (data/kwota z rozmowy, nie z wysłanego dokumentu).
     data_wyceny: row['Data wysłania wyceny'] || (wycena && wycena.dataStworzenia) || '',
     kwota: Number(row['Kwota wyceny']) || (wycena && wycena.kwota) || 0,
+    // Migawka z momentu generowania Umowy — front i tak nadpisuje ją na
+    // żywo z GET /api/leady/akcje (akcja zmienia się w ciągu dnia po każdej
+    // rozmowie/notatce), ale dzięki migawce pigułka jest widoczna od
+    // pierwszego renderu, bez mrugnięcia.
+    najblizsza_akcja: row['Najbliższa akcja'] || '',
+    najblizsza_akcja_termin: row['Najbliższa akcja termin'] || '',
+    najblizsza_akcja_owner: row['Najbliższa akcja owner'] || '',
   };
 }
 
@@ -1563,6 +1840,10 @@ async function fetchLogZmianDzisPelne(supabase, start, end) {
   if (error) throw error;
   return (data || []).map((row) => ({
     telefon: formatPhonePlus(row['telefon']),
+    // zrodlo odróżnia rozmowy od notatek handlowca — buildCalledTodaySet
+    // pomija notatki (dodanie notatki to nie "zadzwonił dziś"), a model w
+    // prompcie widzi, że wpis jest notatką, nie telefonem.
+    zrodlo: row['zrodlo'] || '',
     status_przed: row['status_przed'] || '',
     status_po: row['status_po'] || '',
     opis: row['opis'] || '',
@@ -1596,6 +1877,7 @@ async function fetchStandupLog3(supabase) {
 function buildCalledTodaySet(logZmianDzis) {
   const set = new Set();
   logZmianDzis.forEach((row) => {
+    if (row.zrodlo === 'notatka_handlowca' || row.zrodlo === 'manual_akcja') return;
     const digits = normalizePhoneDigits(row.telefon);
     if (digits) set.add(digits);
   });

@@ -1523,6 +1523,33 @@
       });
       opisWrap.append(opisLabel, opisValue);
 
+      // Najbliższa akcja — to samo pole co pigułka na case'ie w Backlogu
+      // (kolumna "Najbliższa akcja", zasilana analizą rozmów Zadarmy i
+      // notatkami handlowca; termin/owner w etykiecie, edycja = zapis wprost).
+      const akcjaWrap = document.createElement('div');
+      akcjaWrap.className = 'opis-wrap';
+      const akcjaLabel = document.createElement('span');
+      akcjaLabel.className = 'opis-label';
+      const akcjaMeta = [lead['Najbliższa akcja termin'], lead['Najbliższa akcja owner']].filter(Boolean).join(' · ');
+      akcjaLabel.textContent = 'Najbliższa akcja' + (akcjaMeta ? ` · ${akcjaMeta}` : '');
+      const akcjaValue = document.createElement('textarea');
+      akcjaValue.className = 'opis-value';
+      akcjaValue.placeholder = '—';
+      akcjaValue.value = lead['Najbliższa akcja'] || '';
+      akcjaValue.rows = 1;
+      akcjaValue.addEventListener('click', (e) => e.stopPropagation());
+      akcjaValue.addEventListener('blur', async () => {
+        const val = akcjaValue.value.trim();
+        if (val === String(lead['Najbliższa akcja'] || '').trim()) return;
+        try {
+          await saveField(lead, 'Najbliższa akcja', val || null);
+        } catch (err) {
+          akcjaValue.value = lead['Najbliższa akcja'] || '';
+          alert(`Błąd zapisu najbliższej akcji: ${err.message}`);
+        }
+      });
+      akcjaWrap.append(akcjaLabel, akcjaValue);
+
       // Licznik w nagłówku ("Historia rozmów · 3") + auto-rozwinięcie przy
       // otwarciu leada — analiza historii kontaktów to główny scenariusz
       // użycia, więc nie każemy klikać drugi raz; da się zwinąć ręcznie.
@@ -1551,7 +1578,7 @@
         if (el) transakcjaGrid.appendChild(el);
       });
 
-      body.append(opisWrap, historia, kontaktGrid, transakcjaGrid);
+      body.append(akcjaWrap, opisWrap, historia, kontaktGrid, transakcjaGrid);
 
       if (lead._ma_wycene) {
         const wycena = buildNestedDetails('historia-rozmow', 'Wycena', (container) => loadWycena(lead, container));

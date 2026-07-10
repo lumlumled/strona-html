@@ -675,6 +675,85 @@
       color: var(--good);
     }
 
+    /* Najbliższa akcja: krótka pigułka "co dalej z tym leadem" na zwiniętym
+       case'ie, tuż za telefonem. Zasilana automatycznie (analiza rozmów
+       Zadarmy / notatka handlowca), klik = ręczna edycja, × w edytorze =
+       skasowanie. Czerwona, gdy termin akcji już minął. */
+    .lead summary .akcja-pill {
+      flex: 0 1 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font: inherit;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      background: var(--accent-soft);
+      border: none;
+      border-radius: 999px;
+      padding: 0.12rem 0.6rem;
+      max-width: 17rem;
+      min-width: 0;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .lead summary .akcja-pill .akcja-tekst {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .lead summary .akcja-pill .akcja-strzalka {
+      flex: 0 0 auto;
+      opacity: 0.6;
+    }
+
+    .lead summary .akcja-pill.is-overdue {
+      color: var(--feedback-overdue);
+    }
+
+    .lead summary .akcja-edit {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .lead summary .akcja-edit input {
+      font: inherit;
+      font-size: 0.8rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface-1);
+      color: var(--text-primary);
+      padding: 0.15rem 0.45rem;
+      flex: 1 1 9rem;
+      min-width: 7rem;
+    }
+
+    .lead summary .akcja-edit .akcja-edit-btn {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.5rem;
+      height: 1.5rem;
+      padding: 0;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.95rem;
+    }
+
+    .lead summary .akcja-edit .akcja-edit-btn:hover {
+      background: var(--accent-soft);
+      color: var(--text-primary);
+    }
+
     .field .value.with-copy {
       display: flex;
       align-items: center;
@@ -840,6 +919,105 @@
       display: flex;
       flex-direction: column;
       gap: 1rem;
+    }
+
+    /* Własny komentarz handlowca — przycisk nad Opisem. Zapis idzie do
+       "Historii" (wiersz w Log zmian) + kolumny "Historia rozmów" w Leady
+       B2C; GPT po drodze wyciąga z treści najbliższą akcję. */
+    .notatka-sekcja {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+
+    .notatka-btn {
+      align-self: flex-start;
+      font: inherit;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      background: var(--accent-soft);
+      border: none;
+      border-radius: 999px;
+      padding: 0.25rem 0.7rem;
+      cursor: pointer;
+    }
+
+    .notatka-btn:hover {
+      color: var(--text-primary);
+    }
+
+    .notatka-editor {
+      display: none;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+
+    .notatka-editor.open {
+      display: flex;
+    }
+
+    .notatka-editor textarea {
+      font: inherit;
+      font-size: 0.88rem;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface-1);
+      color: var(--text-primary);
+      padding: 0.5rem 0.6rem;
+      min-height: 3.4rem;
+      resize: vertical;
+    }
+
+    .notatka-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+
+    .notatka-actions .notatka-send {
+      font: inherit;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--surface-1);
+      background: var(--accent);
+      border: none;
+      border-radius: 999px;
+      padding: 0.28rem 0.85rem;
+      cursor: pointer;
+    }
+
+    .notatka-actions .notatka-cancel,
+    .notatka-actions .notatka-mic {
+      font: inherit;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      background: transparent;
+      border: none;
+      border-radius: 999px;
+      padding: 0.28rem 0.5rem;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .notatka-actions .notatka-mic.recording {
+      color: var(--feedback-overdue);
+    }
+
+    .notatka-actions button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    .notatka-msg {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .notatka-msg.err {
+      color: var(--feedback-overdue);
     }
 
     .opis-wrap {
@@ -1114,6 +1292,11 @@
          zerujemy odpychające auto-margin z wersji desktopowej. */
       .lead summary .contact-row .feedback-date {
         margin-left: 0;
+      }
+
+      /* Pigułka akcji może zająć cały wiersz contact-row na mobile. */
+      .lead summary .akcja-pill {
+        max-width: 100%;
       }
 
       .lead summary .status-wrap {
@@ -1646,6 +1829,11 @@
     // w "Priorytet dziś" i w swojej kategorii. Rejestr pozwala zsynchronizować
     // zaznaczenie "zamknięte" (i przesunięcie na dół listy) w obu miejscach.
     let leadInstancesByLp = new Map();
+    // Najbliższa akcja: updatery pigułek per telefon (ten sam case potrafi
+    // wystąpić w kilku kategoriach naraz — wszystkie pigułki mają się zmieniać
+    // razem) + żywy cache z GET /api/leady/akcje (patrz refreshAkcje).
+    const akcjaUpdatersByPhone = new Map();
+    let akcjeByPhone = null; // null = jeszcze nie pobrane (pigułka bierze wtedy migawkę z dokumentu)
 
     // Dopasowanie telefon → {imię, lp} z aktualnie wczytanej Umowy, żeby przy
     // wierszu połączenia (sekcja "Połączenia") było widać, do którego case'a
@@ -2136,6 +2324,100 @@
       return d.getTime() < today.getTime();
     }
 
+    // Termin najbliższej akcji: "DD.MM.YYYY" lub "DD.MM.YYYY HH:mm". Sam
+    // dzień bez godziny liczy się jako przeterminowany dopiero po końcu dnia
+    // ("zadzwonić 12.07" nie jest zaległe o 12.07 rano).
+    function parseTerminAkcji(str) {
+      const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s+(\d{1,2}):(\d{2}))?$/.exec(String(str || '').trim());
+      if (!m) return null;
+      return new Date(
+        Number(m[3]), Number(m[2]) - 1, Number(m[1]),
+        m[4] !== undefined ? Number(m[4]) : 23,
+        m[5] !== undefined ? Number(m[5]) : 59
+      );
+    }
+
+    function isOverdueTermin(str) {
+      const d = parseTerminAkcji(str);
+      return d ? d.getTime() < Date.now() : false;
+    }
+
+    function applyAkcjaToPhone(phone, akcja) {
+      const val = akcja && akcja.akcja ? akcja : null;
+      if (!akcjeByPhone) akcjeByPhone = new Map();
+      if (val) akcjeByPhone.set(phone, val); else akcjeByPhone.delete(phone);
+      (akcjaUpdatersByPhone.get(phone) || []).forEach((fn) => fn(val));
+    }
+
+    // Pigułki akcji są żywe: dokument Umowy to migawka z rana, a akcja
+    // zmienia się w ciągu dnia po każdej rozmowie/notatce — nakładamy
+    // aktualny stan z Leady B2C na wyrenderowane case'y po telefonie.
+    async function refreshAkcje() {
+      try {
+        const res = await fetch(`${API_BASE}/api/leady/akcje`);
+        if (!res.ok) return;
+        const rows = await res.json();
+        akcjeByPhone = new Map(rows.map((r) => [normalizePhone(r.telefon), r]));
+        akcjaUpdatersByPhone.forEach((fns, phone) => {
+          const val = akcjeByPhone.get(phone) || null;
+          fns.forEach((fn) => fn(val));
+        });
+      } catch { /* pigułki zostają na migawce z dokumentu */ }
+    }
+
+    // Dyktowanie notatki: ten sam przepływ co composer na dole (MediaRecorder
+    // → POST /api/transcribe) — nagranie nigdzie nie zostaje, leci do
+    // transkrypcji i przepada.
+    function attachDictation(btn, textarea, setMsg) {
+      let recorder = null;
+      let chunks = [];
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (recorder && recorder.state === 'recording') {
+          recorder.stop();
+          return;
+        }
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
+          recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+          chunks = [];
+          recorder.addEventListener('dataavailable', (ev) => {
+            if (ev.data.size) chunks.push(ev.data);
+          });
+          recorder.addEventListener('stop', async () => {
+            stream.getTracks().forEach((t) => t.stop());
+            btn.classList.remove('recording');
+            const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+            if (!blob.size) return;
+            setMsg('Transkrybuję…');
+            try {
+              const res = await fetch(`${API_BASE}/api/transcribe`, {
+                method: 'POST',
+                headers: { 'Content-Type': blob.type || 'audio/webm' },
+                body: blob,
+              });
+              const body = await res.json().catch(() => ({}));
+              if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+              if (body.text) {
+                const existing = textarea.value.replace(/\s+$/, '');
+                textarea.value = existing ? `${existing} ${body.text}` : body.text;
+                textarea.focus();
+              }
+              setMsg('');
+            } catch (err) {
+              setMsg(err.message, true);
+            }
+          });
+          recorder.start();
+          btn.classList.add('recording');
+          setMsg('Nagrywam — kliknij mikrofon ponownie, żeby zakończyć.');
+        } catch (err) {
+          setMsg(`Brak dostępu do mikrofonu: ${err.message}`, true);
+        }
+      });
+    }
+
     function toIsoDate(str) {
       const d = parsePlDate(str);
       if (!d) return '';
@@ -2379,6 +2661,20 @@
         const dataGodzina = Number.isNaN(d.getTime())
           ? ''
           : `${formatPlDate(d)} ${d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })}`;
+        // Notatki handlowca i ręczne zmiany akcji żyją w tej samej osi czasu
+        // co rozmowy (jedna "Historia") — bez czasu trwania, z własną etykietą.
+        if (row.zrodlo === 'notatka_handlowca' || row.zrodlo === 'manual_akcja') {
+          const etykieta = row.zrodlo === 'manual_akcja'
+            ? 'ręczna zmiana akcji'
+            : `notatka${row.handlowiec ? ` · ${row.handlowiec}` : ''}`;
+          when.textContent = `${dataGodzina} – ${etykieta}`;
+          const noteEl = document.createElement('span');
+          noteEl.className = 'historia-rozmow-notatka';
+          noteEl.textContent = row.opis || '';
+          entry.append(when, noteEl);
+          container.appendChild(entry);
+          return;
+        }
         when.textContent = `${dataGodzina} – ${row.czas_trwania_s || 0}s`;
         const note = document.createElement('span');
         note.className = 'historia-rozmow-notatka';
@@ -2457,6 +2753,127 @@
         }
 
         contactRow.appendChild(makeCopyButton(c.telefon));
+
+        // Najbliższa akcja — pigułka "co dalej z tym leadem" widoczna na
+        // zwiniętym case'ie. Żywa w ciągu dnia (patrz refreshAkcje), klik =
+        // ręczna edycja, × w edytorze = skasowanie.
+        const akcjaBtn = document.createElement('button');
+        akcjaBtn.type = 'button';
+        akcjaBtn.className = 'akcja-pill';
+        akcjaBtn.style.display = 'none';
+        const akcjaArrow = document.createElement('span');
+        akcjaArrow.className = 'akcja-strzalka';
+        akcjaArrow.textContent = '→';
+        const akcjaText = document.createElement('span');
+        akcjaText.className = 'akcja-tekst';
+        akcjaBtn.append(akcjaArrow, akcjaText);
+        contactRow.appendChild(akcjaBtn);
+
+        let biezacaAkcja = null;
+        const applyAkcja = (a) => {
+          biezacaAkcja = a && a.akcja ? a : null;
+          if (!biezacaAkcja) {
+            akcjaBtn.style.display = 'none';
+            return;
+          }
+          akcjaBtn.style.display = '';
+          akcjaText.textContent = biezacaAkcja.akcja;
+          akcjaBtn.title = ['Najbliższa akcja', biezacaAkcja.termin, biezacaAkcja.owner].filter(Boolean).join(' · ') + ' — kliknij, żeby edytować';
+          akcjaBtn.classList.toggle('is-overdue', isOverdueTermin(biezacaAkcja.termin));
+        };
+
+        akcjaBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          if (contactRow.querySelector('.akcja-edit')) return;
+          const editWrap = document.createElement('span');
+          editWrap.className = 'akcja-edit';
+          editWrap.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            ev.preventDefault();
+          });
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.value = biezacaAkcja ? biezacaAkcja.akcja : '';
+          input.placeholder = 'Najbliższa akcja…';
+          const saveBtn = document.createElement('button');
+          saveBtn.type = 'button';
+          saveBtn.className = 'akcja-edit-btn';
+          saveBtn.textContent = '✓';
+          saveBtn.title = 'Zapisz';
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'akcja-edit-btn';
+          delBtn.textContent = '×';
+          delBtn.title = 'Usuń akcję';
+          const close = () => {
+            editWrap.remove();
+            akcjaBtn.style.display = biezacaAkcja ? '' : 'none';
+          };
+          const zapisz = async (text) => {
+            const trimmed = String(text || '').trim();
+            input.disabled = saveBtn.disabled = delBtn.disabled = true;
+            try {
+              const res = await fetch(`${API_BASE}/api/leady/akcja`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                // Termin zostaje z dotychczasowej akcji — ręczna edycja
+                // zmienia zwykle samą treść ("zadzwonić 15:00" → "wysłać
+                // wycenę"); kto chce podać termin, wpisuje go w treści.
+                body: JSON.stringify({
+                  telefon: c.telefon,
+                  akcja: trimmed,
+                  termin: trimmed && biezacaAkcja ? (biezacaAkcja.termin || '') : '',
+                }),
+              });
+              const body = await res.json().catch(() => ({}));
+              if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+              applyAkcjaToPhone(
+                normalizePhone(c.telefon),
+                trimmed ? { akcja: body.akcja, termin: body.termin || '', owner: body.owner || '' } : null
+              );
+              close();
+            } catch (err) {
+              alert(`Nie zapisano akcji: ${err.message}`);
+              input.disabled = saveBtn.disabled = delBtn.disabled = false;
+            }
+          };
+          saveBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            zapisz(input.value);
+          });
+          delBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            zapisz('');
+          });
+          input.addEventListener('click', (ev) => ev.stopPropagation());
+          input.addEventListener('keydown', (ev) => {
+            ev.stopPropagation();
+            if (ev.key === 'Enter') {
+              ev.preventDefault();
+              zapisz(input.value);
+            } else if (ev.key === 'Escape') {
+              ev.preventDefault();
+              close();
+            }
+          });
+          editWrap.append(input, saveBtn, delBtn);
+          akcjaBtn.style.display = 'none';
+          akcjaBtn.after(editWrap);
+          input.focus();
+          input.select();
+        });
+
+        const akcjaPhoneKey = normalizePhone(c.telefon);
+        if (akcjaPhoneKey) {
+          if (!akcjaUpdatersByPhone.has(akcjaPhoneKey)) akcjaUpdatersByPhone.set(akcjaPhoneKey, []);
+          akcjaUpdatersByPhone.get(akcjaPhoneKey).push(applyAkcja);
+        }
+        applyAkcja(akcjeByPhone
+          ? (akcjeByPhone.get(akcjaPhoneKey) || null)
+          : (c.najblizsza_akcja
+            ? { akcja: c.najblizsza_akcja, termin: c.najblizsza_akcja_termin || '', owner: c.najblizsza_akcja_owner || '' }
+            : null));
       }
 
       let feedbackDate = null;
@@ -2602,6 +3019,88 @@
       const body = document.createElement('div');
       body.className = 'lead-body';
 
+      // Własny komentarz handlowca — nad Opisem. Zapis: wiersz w "Historii"
+      // (Log zmian, zrodlo notatka_handlowca) + linia [Notatka] w kolumnie
+      // "Historia rozmów" w Leady B2C; GPT po drodze wyciąga z treści
+      // najbliższą akcję/termin/datę feedbacku (patrz POST /api/leady/notatka).
+      let odswiezHistorie = null;
+      if (c.telefon) {
+        const sekcja = document.createElement('div');
+        sekcja.className = 'notatka-sekcja';
+        const addBtn = document.createElement('button');
+        addBtn.type = 'button';
+        addBtn.className = 'notatka-btn';
+        addBtn.textContent = '+ Dodaj własny komentarz';
+        const editor = document.createElement('div');
+        editor.className = 'notatka-editor';
+        const ta = document.createElement('textarea');
+        ta.placeholder = 'Napisz lub podyktuj notatkę — np. „zadzwonić za 3 dni po 15:00”';
+        const actions = document.createElement('div');
+        actions.className = 'notatka-actions';
+        const sendBtn = document.createElement('button');
+        sendBtn.type = 'button';
+        sendBtn.className = 'notatka-send';
+        sendBtn.textContent = 'Zapisz';
+        const micNota = document.createElement('button');
+        micNota.type = 'button';
+        micNota.className = 'notatka-mic';
+        micNota.title = 'Dyktuj (kliknij, mów, kliknij ponownie)';
+        micNota.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/><path d="M19 11a1 1 0 0 0-2 0 5 5 0 0 1-10 0 1 1 0 0 0-2 0 7 7 0 0 0 6 6.92V20H9a1 1 0 0 0 0 2h6a1 1 0 0 0 0-2h-2v-2.08A7 7 0 0 0 19 11z"/></svg>';
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'notatka-cancel';
+        cancelBtn.textContent = 'Anuluj';
+        const msg = document.createElement('span');
+        msg.className = 'notatka-msg';
+        const setMsg = (text, isErr) => {
+          msg.textContent = text || '';
+          msg.classList.toggle('err', Boolean(isErr));
+        };
+        attachDictation(micNota, ta, setMsg);
+        addBtn.addEventListener('click', () => {
+          addBtn.style.display = 'none';
+          editor.classList.add('open');
+          ta.focus();
+        });
+        cancelBtn.addEventListener('click', () => {
+          editor.classList.remove('open');
+          addBtn.style.display = '';
+          setMsg('');
+        });
+        sendBtn.addEventListener('click', async () => {
+          const tresc = ta.value.trim();
+          if (!tresc) {
+            setMsg('Pusta notatka', true);
+            return;
+          }
+          sendBtn.disabled = micNota.disabled = cancelBtn.disabled = true;
+          setMsg('Zapisuję…');
+          try {
+            const res = await fetch(`${API_BASE}/api/leady/notatka`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ telefon: c.telefon, tresc }),
+            });
+            const body2 = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(body2.error || `Błąd ${res.status}`);
+            ta.value = '';
+            editor.classList.remove('open');
+            addBtn.style.display = '';
+            setMsg('');
+            if (body2.akcja) applyAkcjaToPhone(normalizePhone(c.telefon), body2.akcja);
+            if (odswiezHistorie) odswiezHistorie();
+          } catch (err) {
+            setMsg(`Nie zapisano: ${err.message}`, true);
+          } finally {
+            sendBtn.disabled = micNota.disabled = cancelBtn.disabled = false;
+          }
+        });
+        actions.append(sendBtn, micNota, cancelBtn, msg);
+        editor.append(ta, actions);
+        sekcja.append(addBtn, editor);
+        body.appendChild(sekcja);
+      }
+
       if (c.opis || c.komentarz) {
         const opisWrap = document.createElement('div');
         opisWrap.className = 'opis-wrap';
@@ -2616,22 +3115,21 @@
         body.appendChild(opisWrap);
       }
 
-      // Historia rozmów: rozwijalna, wczytywana leniwie (dopiero po kliknięciu)
-      // — pod Opisem, żeby nie wydłużać case'a każdym kolejnym telefonem,
-      // ale nic z tych danych nie zostaje ucięte, tylko schowane domyślnie.
+      // Historia: rozmowy + notatki handlowca w jednej osi czasu (wszystko z
+      // Log zmian po telefonie), rozwijalna, wczytywana leniwie (dopiero po
+      // kliknięciu) — pod Opisem, żeby nie wydłużać case'a każdym kolejnym
+      // wpisem, ale nic z tych danych nie zostaje ucięte, tylko schowane.
       if (c.telefon) {
         const historiaDetails = document.createElement('details');
         historiaDetails.className = 'historia-rozmow';
         const historiaSummary = document.createElement('summary');
-        historiaSummary.textContent = 'Historia rozmów';
+        historiaSummary.textContent = 'Historia';
         historiaDetails.appendChild(historiaSummary);
         const historiaList = document.createElement('div');
         historiaList.className = 'historia-rozmow-list';
         historiaList.style.display = 'none';
         historiaDetails.appendChild(historiaList);
-        historiaDetails.addEventListener('toggle', async () => {
-          if (!historiaDetails.open || historiaDetails.dataset.loaded) return;
-          historiaDetails.dataset.loaded = '1';
+        const zaladujHistorie = async () => {
           historiaList.style.display = '';
           historiaList.textContent = 'Wczytywanie…';
           try {
@@ -2642,6 +3140,16 @@
           } catch (err) {
             historiaList.textContent = `Nie udało się wczytać historii: ${err.message}`;
           }
+        };
+        // Po zapisaniu notatki odświeżamy tylko już wczytaną historię —
+        // niewczytana i tak pobierze świeże dane przy pierwszym rozwinięciu.
+        odswiezHistorie = () => {
+          if (historiaDetails.dataset.loaded) zaladujHistorie();
+        };
+        historiaDetails.addEventListener('toggle', () => {
+          if (!historiaDetails.open || historiaDetails.dataset.loaded) return;
+          historiaDetails.dataset.loaded = '1';
+          zaladujHistorie();
         });
         body.appendChild(historiaDetails);
 
@@ -2806,6 +3314,7 @@
 
     function resetSections() {
       leadInstancesByLp.clear();
+      akcjaUpdatersByPhone.clear();
       document.getElementById('meta').innerHTML = '';
       document.getElementById('zmiany-card').style.display = 'none';
       document.getElementById('zmiany-list').innerHTML = '';
@@ -2822,6 +3331,9 @@
 
     function loadDay(date) {
       resetSections();
+      // Fire-and-forget: świeży stan akcji nakłada się na pigułki po tym,
+      // jak poniższy synchroniczny render je zarejestruje.
+      refreshAkcje();
       loadRealizacjaDzis(daysOffsetFromToday(date));
       const formatted = formatPlDate(date);
       const row = allRows.find((r) => rowMatchesDate(r['Data'], date));
@@ -3162,6 +3674,8 @@
     }
 
     function polaczenieKierunekLabel(row) {
+      if (row.zrodlo === 'notatka_handlowca') return 'notatka';
+      if (row.zrodlo === 'manual_akcja') return 'akcja (ręcznie)';
       if (row.kierunek === 'przychodzące') return row.disposition === 'no_answer' ? 'nieodebrane' : 'przychodzące';
       if (row.kierunek === 'wychodzące') return 'wychodzące';
       return row.disposition === 'no_answer' ? 'nieodebrane' : '—';
@@ -3211,7 +3725,10 @@
         telefon.textContent = telefonParts.join(' – ');
         const czasTrwania = document.createElement('span');
         czasTrwania.className = 'czas-trwania';
-        czasTrwania.textContent = `${row.czas_trwania_s || 0}s`;
+        // Notatka/ręczna zmiana akcji nie ma czasu trwania — "0s" byłoby mylące.
+        czasTrwania.textContent = (row.zrodlo === 'notatka_handlowca' || row.zrodlo === 'manual_akcja')
+          ? ''
+          : `${row.czas_trwania_s || 0}s`;
         summary.append(czas, kierunek, telefon, czasTrwania);
         if (row.handlowiec) {
           const handlowiec = document.createElement('span');

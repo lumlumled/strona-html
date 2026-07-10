@@ -138,6 +138,11 @@ const EDITABLE_LEAD_FIELDS = [
   'Data wysłania wyceny',
   'Link do formularza',
   'Ocena AI kontaktu',
+  // Krótki następny krok z leadem — to samo pole co pigułka akcji w Backlogu
+  // (zasilane analizą rozmów Zadarmy / notatką handlowca). Kolumny-metadane
+  // ("... termin"/"... owner") celowo poza listą: edytuje je automat i
+  // edytor pigułki w Backlogu, w arkuszu byłyby szumem.
+  'Najbliższa akcja',
 ];
 
 // Wszystkie kolumny zwracane do frontu (edytowalne + identyfikacyjne
@@ -167,11 +172,15 @@ async function fetchWycenaByPhone(supabase) {
 // tam liczonego z dziennego JSON-a Umowy — tu liczymy live z tej samej
 // tabeli, bo CRM nie ma dziennego dokumentu).
 async function fetchCallStatsByPhone(supabase) {
-  const { data, error } = await supabase.from(LOG_ZMIAN_TABLE).select('telefon,data_zmiany');
+  // Notatki handlowca i ręczne zmiany akcji żyją w tej samej tabeli
+  // (zrodlo: notatka_handlowca / manual_akcja, patrz POST /api/leady/notatka
+  // i /api/leady/akcja w Backlogu) — to nie są telefony, nie liczymy ich.
+  const { data, error } = await supabase.from(LOG_ZMIAN_TABLE).select('telefon,data_zmiany,zrodlo');
   if (error) throw error;
   const todayKey = new Date().toISOString().slice(0, 10);
   const map = new Map();
   (data || []).forEach((row) => {
+    if (row['zrodlo'] === 'notatka_handlowca' || row['zrodlo'] === 'manual_akcja') return;
     const digits = normalizePhoneDigits(row['telefon']);
     if (!digits) return;
     const entry = map.get(digits) || { count: 0, dzisiaj: false };
