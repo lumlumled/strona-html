@@ -5,7 +5,8 @@ const express = require('express');
 const cors = require('cors');
 const { getClient } = require('./supabase');
 const { registerLeadyEndpoints, EDITABLE_LEAD_FIELDS, NIE_TELEFON_ZRODLA } = require('../../shared/server/leady-endpoints');
-const { createAuth, clientPayload, panelLinks } = require('../../shared/server/auth');
+const { registerWycenyEndpoints } = require('../../shared/server/wyceny-endpoints');
+const { createAuth, clientPayload, panelLinks, isAdmin } = require('../../shared/server/auth');
 const { servePushWorker, registerPushEndpoints } = require('../../shared/server/push');
 
 const app = express();
@@ -50,6 +51,16 @@ registerPushEndpoints(app, { getClient });
 const SHEET_LEADY = 'leady-b2c';
 const requireLeadyView = auth.requireSheet(SHEET_LEADY, 'view');
 const requireLeadyEdit = auth.requireSheet(SHEET_LEADY, 'edit');
+
+// Zakładka Wyceny — osobny arkusz z własnymi uprawnieniami (na start widzi
+// go tylko Antoni/admin; Lorenzo dostanie per owner w panelu Pozwolenia).
+// Endpointy wspólne z panelem Sprzedaże: apps/shared/server/wyceny-endpoints.js.
+registerWycenyEndpoints(app, {
+  getClient,
+  requireView: auth.requireSheet('wyceny', 'view'),
+  requireEdit: auth.requireSheet('wyceny', 'edit'),
+  isAdmin,
+});
 
 const APP_HTML_TEMPLATE = fs.readFileSync(path.join(__dirname, '..', 'app.html'), 'utf8');
 

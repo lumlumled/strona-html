@@ -1,0 +1,323 @@
+// ── Wspólne endpointy wycen (zakładka Wyceny w CRM + panel Sprzedaże) ────────
+// Jedna implementacja rejestrowana przez oba serwery — ta sama zasada co
+// leady-endpoints.js: karta wyceny nigdy się nie rozjeżdża między appkami.
+//
+// Własność (docs/plan-wlasnosc-zasobow.md): filtr server-side — nie-admin
+// widzi wyłącznie wyceny z owner = własne imię. Kolumny kosztów/marż z
+// sku_cennik (jsonb `koszty`) wychodzą TYLKO do admina (zasada jak w
+// kb-import-sku.js).
+//
+// Rabat NIE jest kolumną: discount = kwota_proponowana_brutto − Σ(price×qty),
+// identycznie jak w webhooku GET Make ("Zniżka kwota") — jedno źródło prawdy,
+// panel i formularz zawsze pokazują tę samą liczbę.
+
+const WYCENY_STATUSY = ['Open', 'Waiting for payment', 'Fulfilled', 'Closed', 'Stracone'];
+const WYCENY_TYPY = ['WYCENA', 'ZAMÓWIENIE', 'NOTATKA'];
+
+// Publiczny link formularza dla klienta (podmieniany na formularz-test w testach).
+function formularzLink(wycena) {
+  const base = process.env.FORMULARZ_URL || 'https://lumlum.co/pages/formularz';
+  const token = wycena.form_token ? `&t=${wycena.form_token}` : '';
+  return `${base}?id=${wycena.id}${token}`;
+}
+
+function num(v) {
+  const n = Number(String(v ?? '').replace(/\s/g, '').replace(',', '.'));
+  return Number.isFinite(n) ? n : 0;
+}
+
+// Suma pozycji liczona jak w Make (FunctionAggregator: price * quantity).
+function sumaPozycji(items) {
+  return (Array.isArray(items) ? items : [])
+    .reduce((acc, p) => acc + num(p.price) * num(p.quantity || 1), 0);
+}
+
+function computeDiscount(wycena) {
+  const suma = sumaPozycji(wycena.items);
+  const kwota = wycena.kwota_proponowana_brutto;
+  if (kwota === null || kwota === undefined || !suma) return 0;
+  return Math.round((num(kwota) - suma) * 100) / 100;
+}
+
+function decorate(wycena) {
+  const suma = Math.round(sumaPozycji(wycena.items) * 100) / 100;
+  return {
+    ...wycena,
+    _suma_pozycji: suma,
+    _discount: computeDiscount(wycena),
+    _link: formularzLink(wycena),
+    _rabat24h_aktywny: Boolean(
+      wycena.rabat24h_kwota && wycena.rabat24h_wazny_do
+      && new Date(wycena.rabat24h_wazny_do).getTime() > Date.now()
+    ),
+  };
+}
+
+async function logEvent(supabase, wycenaId, kind, payload) {
+  const { error } = await supabase
+    .from('wyceny_events')
+    .insert({ wycena_id: wycenaId, kind, payload: payload || null });
+  if (error) console.error(`Błąd zapisu zdarzenia ${kind} wyceny ${wycenaId}:`, error.message);
+}
+
+// Pola edytowalne z panelu ("żyjąca wycena" — decyzja Antoniego 2026-07-11).
+// Owner celowo POZA listą — zmienia go tylko admin (osobna ścieżka niżej).
+const EDITABLE_WYCENA_FIELDS = [
+  'typ', 'status', 'imie_nazwisko', 'telefon_e164', 'email', 'adres',
+  'opis_zamowienia', 'komentarz', 'dane_do_faktury', 'partner', 'prowizja_status',
+  'items', 'kwota_proponowana_brutto', 'kwota_sprzedazy_brutto',
+  'rabat24h_kwota', 'rabat24h_wazny_do', 'lead_id',
+  'payment_method', 'delivery_method', 'punkt_odbioru', 'punkt_odbioru_adres',
+  'first_name', 'last_name', 'ship_street', 'ship_house_no', 'ship_flat_no',
+  'ship_postcode', 'ship_city', 'ship_country',
+  'invoice_company_nip', 'invoice_company_name',
+];
+
+function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isAdmin }) {
+  function handleError(res, err, fallbackStatus = 400) {
+    console.error(err);
+    res.status(fallbackStatus).json({ error: err.message || 'Wewnętrzny błąd serwera' });
+  }
+
+  // Nie-admin widzi tylko swoje wyceny (filtr w zapytaniu, nie w JS —
+  // dane innych nie opuszczają bazy).
+  function scoped(query, req) {
+    if (isAdmin(req.user)) return query;
+    return query.ilike('owner', String(req.user.name || '').trim());
+  }
+
+  async function fetchList(req, { typ } = {}) {
+    const supabase = getClient();
+    let q = scoped(supabase.from('wyceny').select('*'), req).order('id', { ascending: false });
+    if (typ) q = q.eq('typ', typ);
+    const { data: wyceny, error } = await q;
+    if (error) throw error;
+
+    const ids = (wyceny || []).map((w) => w.id);
+    let shipments = [], invoices = [];
+    if (ids.length) {
+      const [s, i] = await Promise.all([
+        supabase.from('wyceny_shipments').select('*').in('wycena_id', ids).order('created_at', { ascending: true }),
+        supabase.from('wyceny_invoices').select('*').in('wycena_id', ids).order('created_at', { ascending: true }),
+      ]);
+      if (s.error) throw s.error;
+      if (i.error) throw i.error;
+      shipments = s.data || [];
+      invoices = i.data || [];
+    }
+    const shipByWycena = new Map();
+    shipments.forEach((s) => {
+      if (!shipByWycena.has(s.wycena_id)) shipByWycena.set(s.wycena_id, []);
+      shipByWycena.get(s.wycena_id).push(s);
+    });
+    const invByWycena = new Map();
+    invoices.forEach((i) => {
+      if (!invByWycena.has(i.wycena_id)) invByWycena.set(i.wycena_id, []);
+      invByWycena.get(i.wycena_id).push(i);
+    });
+    return (wyceny || []).map((w) => ({
+      ...decorate(w),
+      _shipments: shipByWycena.get(w.id) || [],
+      _invoices: invByWycena.get(w.id) || [],
+    }));
+  }
+
+  // GET /api/wyceny[?typ=ZAMÓWIENIE] — lista z przesyłkami/fakturami.
+  app.get('/api/wyceny', requireView, async (req, res) => {
+    try {
+      const typ = WYCENY_TYPY.includes(req.query.typ) ? req.query.typ : undefined;
+      const data = await fetchList(req, { typ });
+      res.json({ data, statusy: WYCENY_STATUSY, typy: WYCENY_TYPY, editableFields: EDITABLE_WYCENA_FIELDS });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
+  // GET /api/wyceny/cennik — SKU do edytora; koszty/marże tylko dla admina.
+  app.get('/api/wyceny/cennik', requireView, async (req, res) => {
+    try {
+      const { data, error } = await getClient()
+        .from('sku_cennik').select('*').eq('active', true).order('nazwa');
+      if (error) throw error;
+      const admin = isAdmin(req.user);
+      res.json({
+        data: (data || []).map((r) => (admin ? r : { ...r, koszty: undefined })),
+      });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
+  // GET /api/sprzedaze/stats — nagłówek panelu Sprzedaże. "Sprzedaż" =
+  // typ ZAMÓWIENIE; kwota = kwota_sprzedazy_brutto, fallback proponowana.
+  app.get('/api/sprzedaze/stats', requireView, async (req, res) => {
+    try {
+      const supabase = getClient();
+      const { data, error } = await scoped(
+        supabase.from('wyceny').select('id,typ,created_at,kwota_sprzedazy_brutto,kwota_proponowana_brutto,paid'),
+        req
+      ).eq('typ', 'ZAMÓWIENIE');
+      if (error) throw error;
+      const rows = data || [];
+      const warsaw = (d) => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Warsaw', year: 'numeric', month: '2-digit' }).format(new Date(d));
+      const thisMonth = warsaw(new Date()); // "YYYY-MM"
+      const [ty, tm] = thisMonth.split('-').map(Number);
+      const prevMonth = tm === 1 ? `${ty - 1}-12` : `${ty}-${String(tm - 1).padStart(2, '0')}`;
+      const kwota = (r) => num(r.kwota_sprzedazy_brutto ?? r.kwota_proponowana_brutto);
+      const sum = (arr) => Math.round(arr.reduce((a, r) => a + kwota(r), 0) * 100) / 100;
+      const inMonth = (m) => rows.filter((r) => r.created_at && warsaw(r.created_at) === m);
+      res.json({
+        total: { count: rows.length, suma: sum(rows) },
+        tenMiesiac: { count: inMonth(thisMonth).length, suma: sum(inMonth(thisMonth)) },
+        poprzedniMiesiac: { count: inMonth(prevMonth).length, suma: sum(inMonth(prevMonth)) },
+      });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
+  // GET /api/wyceny/:id — pełna karta + zdarzenia pipeline.
+  app.get('/api/wyceny/:id(\\d+)', requireView, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const supabase = getClient();
+      const { data, error } = await scoped(supabase.from('wyceny').select('*'), req).eq('id', id).limit(1);
+      if (error) throw error;
+      if (!data || !data.length) return res.status(404).json({ error: 'Nie znaleziono wyceny' });
+      const [s, i, e] = await Promise.all([
+        supabase.from('wyceny_shipments').select('*').eq('wycena_id', id).order('created_at', { ascending: true }),
+        supabase.from('wyceny_invoices').select('*').eq('wycena_id', id).order('created_at', { ascending: true }),
+        supabase.from('wyceny_events').select('*').eq('wycena_id', id).order('created_at', { ascending: false }).limit(200),
+      ]);
+      if (s.error) throw s.error;
+      if (i.error) throw i.error;
+      if (e.error) throw e.error;
+      res.json({
+        data: {
+          ...decorate(data[0]),
+          _shipments: s.data || [],
+          _invoices: i.data || [],
+          _events: e.data || [],
+        },
+      });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
+  // POST /api/wyceny — nowa wycena z panelu (edytor / szybkie dodanie /
+  // przycisk na karcie leada). ID z sekwencji arkusza, owner z sesji.
+  app.post('/api/wyceny', requireEdit, async (req, res) => {
+    try {
+      const supabase = getClient();
+      const body = req.body || {};
+      const patch = {};
+      EDITABLE_WYCENA_FIELDS.forEach((f) => { if (body[f] !== undefined) patch[f] = body[f]; });
+      if (!patch.items && !body.items) patch.items = [];
+      const maKontakt = String(patch.telefon_e164 || '').trim() || String(patch.email || '').trim();
+      if (!maKontakt && !patch.lead_id) {
+        return res.status(400).json({ error: 'Wycena wymaga telefonu lub e-maila (albo podpięcia pod leada)' });
+      }
+      if (patch.telefon_e164) patch.telefon_digits = String(patch.telefon_e164).replace(/\D/g, '').replace(/^48/, '');
+      const { data: idData, error: idErr } = await supabase.rpc('wyceny_next_id');
+      if (idErr) throw idErr;
+      const id = idData;
+      const crypto = require('crypto');
+      const row = {
+        id,
+        owner: String(req.user.name || 'Antoni'),
+        source: body.source === 'quick-add' ? 'quick-add' : 'panel',
+        form_token: crypto.randomBytes(12).toString('base64url'),
+        ...patch,
+      };
+      const { data, error } = await supabase.from('wyceny').insert(row).select('*');
+      if (error) throw error;
+      await logEvent(supabase, id, 'wycena.created', { source: row.source, user: req.user.name });
+      res.json({ data: decorate(data[0]) });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
+  // PUT /api/wyceny/:id — edycja "żyjącej" wyceny (whitelist pól).
+  // Formularz kliencki zawsze czyta świeży stan, więc edycja działa też po
+  // wysłaniu linku. Zmiana ownera: tylko admin.
+  app.put('/api/wyceny/:id(\\d+)', requireEdit, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const supabase = getClient();
+      const body = req.body || {};
+      const patch = {};
+      EDITABLE_WYCENA_FIELDS.forEach((f) => { if (body[f] !== undefined) patch[f] = body[f]; });
+      if (body.owner !== undefined && isAdmin(req.user)) patch.owner = String(body.owner).trim();
+      if (patch.telefon_e164 !== undefined) {
+        patch.telefon_digits = String(patch.telefon_e164 || '').replace(/\D/g, '').replace(/^48/, '') || null;
+      }
+      if (patch.typ && !WYCENY_TYPY.includes(patch.typ)) delete patch.typ;
+      if (!Object.keys(patch).length) return res.status(400).json({ error: 'Brak zmian do zapisania' });
+      patch.updated_at = new Date().toISOString();
+
+      const { data, error } = await scoped(supabase.from('wyceny').update(patch), req)
+        .eq('id', id).select('*');
+      if (error) throw error;
+      if (!data || !data.length) return res.status(404).json({ error: 'Nie znaleziono wyceny' });
+      await logEvent(supabase, id, 'wycena.edited', { fields: Object.keys(patch), user: req.user.name });
+      res.json({ data: decorate(data[0]) });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
+  // POST /api/wyceny/:id/wyslij-link — kopiowanie linku w panelu oznacza
+  // etap FORM_SENT (tylko z NEW — późniejsze kopiowania nie cofają stanu).
+  app.post('/api/wyceny/:id(\\d+)/wyslij-link', requireEdit, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const supabase = getClient();
+      const { data, error } = await scoped(supabase.from('wyceny').select('*'), req).eq('id', id).limit(1);
+      if (error) throw error;
+      if (!data || !data.length) return res.status(404).json({ error: 'Nie znaleziono wyceny' });
+      const wycena = data[0];
+      if (wycena.process_stage === 'NEW') {
+        const { error: upErr } = await supabase.from('wyceny')
+          .update({ process_stage: 'FORM_SENT', updated_at: new Date().toISOString() })
+          .eq('id', id);
+        if (upErr) throw upErr;
+        await logEvent(supabase, id, 'form.link_sent', { user: req.user.name });
+      }
+      res.json({ link: formularzLink(wycena) });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
+  // POST /api/wyceny/:id/otworz-formularz — odblokowanie jednorazowego
+  // formularza (np. klient pomylił adres). Historia submitu zostaje w events.
+  app.post('/api/wyceny/:id(\\d+)/otworz-formularz', requireEdit, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const supabase = getClient();
+      const { data, error } = await scoped(
+        supabase.from('wyceny').update({ form_status: 'NEW', updated_at: new Date().toISOString() }),
+        req
+      ).eq('id', id).select('id,form_token');
+      if (error) throw error;
+      if (!data || !data.length) return res.status(404).json({ error: 'Nie znaleziono wyceny' });
+      await logEvent(supabase, id, 'form.reopened', { user: req.user.name });
+      res.json({ ok: true });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+}
+
+module.exports = {
+  registerWycenyEndpoints,
+  formularzLink,
+  computeDiscount,
+  sumaPozycji,
+  logEvent,
+  WYCENY_STATUSY,
+  WYCENY_TYPY,
+  EDITABLE_WYCENA_FIELDS,
+};

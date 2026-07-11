@@ -77,11 +77,18 @@ app.get('/pozwolenia', auth.requireAdmin, (req, res) => {
   res.type('html').send(injectContext(POZWOLENIA_HTML, req));
 });
 
+// Wyceny żyją jako zakładka CRM (decyzja 2026-07-11) — kafelek/link huba
+// przekierowuje prosto do niej.
+app.get('/wyceny', (req, res) => {
+  if (!userHasPanel(req.user, 'wyceny')) return res.redirect(`${req.baseUrl}/`);
+  res.redirect(`${panelLinks().crm}?arkusz=wyceny`);
+});
+
 // Strony-atrapy przyszłych paneli: jeden szablon, treść z rejestru PANELS.
 // Dostęp wg uprawnień jak do prawdziwego panelu — kafelek i strona zachowują
 // się od dziś tak, jak będą się zachowywać po zbudowaniu funkcjonalności.
 // wiadomosci wypadło z atrap — to żywy panel apps/komunikator/ pod /wiadomosci/.
-const SOON_PAGES = { wyceny: 'wyceny', statystyki: 'statystyki' };
+const SOON_PAGES = { statystyki: 'statystyki' };
 
 Object.entries(SOON_PAGES).forEach(([route, panelKey]) => {
   app.get(`/${route}`, (req, res) => {

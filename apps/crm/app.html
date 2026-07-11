@@ -13,6 +13,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="shared/lead-card.css">
+  <link rel="stylesheet" href="shared/wycena-card.css">
   <link rel="stylesheet" href="shared/topbar.css">
   <style>
     :root {
@@ -72,6 +73,10 @@
     }
 
     .nav-sections { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+
+    /* Sekcje (arkusze) przełączane atrybutem hidden — musi wygrywać z
+       display:flex na .toolbar/.ai-bar/#list. */
+    [data-sec][hidden] { display: none !important; }
 
     .nav-section {
       font: inherit;
@@ -497,7 +502,7 @@
     <header class="content-header">
       <div class="nav-sections" id="nav-sections"></div>
       <h2 id="section-title">Leady B2C</h2>
-        <div class="toolbar">
+        <div class="toolbar" data-sec="leady-b2c">
           <input type="text" id="search" placeholder="Szukaj po imieniu lub telefonie…">
           <select id="status-filter">
             <option value="">Wszystkie statusy</option>
@@ -505,7 +510,7 @@
           <button id="refresh">Odśwież</button>
           <span class="count-badge" id="count"></span>
         </div>
-        <div class="ai-bar">
+        <div class="ai-bar" data-sec="leady-b2c">
           <div class="ai-input-wrap">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M12 2l1.8 5.6L19.5 9l-5.7 1.4L12 16l-1.8-5.6L4.5 9l5.7-1.4L12 2z"/><path d="M19 14l.9 2.6 2.6.9-2.6.9L19 21l-.9-2.6-2.6-.9 2.6-.9L19 14z"/></svg>
             <input type="text" id="ai-input" placeholder="Zapytaj AI o leady — np. „kto ma zaległy feedback?”, „do kogo najlepiej dziś zadzwonić?”">
@@ -517,8 +522,11 @@
           <button id="ai-clear" class="ai-chip" type="button" hidden></button>
           <span id="ai-status"></span>
         </div>
+        <!-- Zakładka Wyceny: własny toolbar (renderuje assets/wyceny-tab.js) -->
+        <div id="wyceny-toolbar" data-sec="wyceny" hidden></div>
     </header>
-    <div id="list"></div>
+    <div id="list" data-sec="leady-b2c"></div>
+    <div id="wyceny-list" data-sec="wyceny" hidden></div>
   </main>
 
   <div class="ai-card" id="ai-card" hidden>
@@ -533,31 +541,57 @@
 
   <script src="shared/topbar.js"></script>
   <script src="shared/lead-card.js"></script>
+  <script src="shared/wycena-card.js"></script>
+  <script src="assets/wyceny-tab.js"></script>
   <script>
     const API_BASE = window.API_BASE || '';
 
     LumTopbar.mount({ active: 'crm', into: document.getElementById('site-header') });
 
-    // Uprawnienie do arkusza "Leady B2C" przyznaje panel Pozwolenia: 'edit'
-    // = pełna edycja, 'view' = sam podgląd. Serwer i tak egzekwuje to na
-    // endpointach — tu tylko chowamy edycyjne UI, żeby nie kusiło.
-    const SHEET_LEVEL = (window.LUMLUM_USER && window.LUMLUM_USER.crmSheets
-      ? window.LUMLUM_USER.crmSheets['leady-b2c']
-      : 'edit') || null;
+    // Uprawnienia per arkusz przyznaje panel Pozwolenia: 'edit' = pełna
+    // edycja, 'view' = sam podgląd, brak wpisu = arkusz niewidoczny. Serwer
+    // i tak egzekwuje to na endpointach — tu tylko chowamy UI.
+    const CRM_SHEET_LEVELS = (window.LUMLUM_USER && window.LUMLUM_USER.crmSheets)
+      || { 'leady-b2c': 'edit', wyceny: 'edit' }; // fallback: lokalny dev bez wstrzykniętego usera
+    const SHEET_LEVEL = CRM_SHEET_LEVELS['leady-b2c'] || null;
     const READ_ONLY = SHEET_LEVEL !== 'edit';
     if (READ_ONLY) {
-      const badge = document.createElement('span');
-      badge.className = 'view-badge';
-      badge.textContent = 'tylko podgląd';
-      document.getElementById('section-title').appendChild(badge);
       document.body.classList.add('crm-readonly');
     }
 
     const NAV_SECTIONS = [
-      { key: 'leady-b2c', label: 'Leady B2C', enabled: true },
-      // Kolejne sekcje CRM (np. B2B, sprzedaż) dochodzą tu jako kolejne wpisy —
-      // struktura celowo gotowa na to już teraz.
-    ];
+      { key: 'leady-b2c', label: 'Leady B2C' },
+      { key: 'wyceny', label: 'Wyceny' },
+      // Kolejne sekcje CRM (np. B2B) dochodzą tu jako kolejne wpisy.
+    ].filter((s) => CRM_SHEET_LEVELS[s.key]);
+
+    // ── Przełączanie sekcji (arkuszy) ────────────────────────────────────────
+    let currentSection = NAV_SECTIONS.length ? NAV_SECTIONS[0].key : 'leady-b2c';
+
+    function applySectionVisibility() {
+      document.querySelectorAll('[data-sec]').forEach((elx) => {
+        elx.hidden = elx.dataset.sec !== currentSection;
+      });
+      const section = NAV_SECTIONS.find((s) => s.key === currentSection);
+      const title = document.getElementById('section-title');
+      title.textContent = section ? section.label : '';
+      if (CRM_SHEET_LEVELS[currentSection] !== 'edit') {
+        const badge = document.createElement('span');
+        badge.className = 'view-badge';
+        badge.textContent = 'tylko podgląd';
+        title.appendChild(badge);
+      }
+      document.querySelectorAll('.nav-section').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.navSec === currentSection);
+      });
+    }
+
+    function setSection(key) {
+      if (!NAV_SECTIONS.some((s) => s.key === key)) return;
+      currentSection = key;
+      applySectionVisibility();
+      if (key === 'wyceny' && window.WycenyTab) WycenyTab.ensureLoaded();
+    }
 
     const STATUS_OPTIONS = [
       'Błędne dane',
@@ -634,9 +668,11 @@
       wrap.innerHTML = '';
       NAV_SECTIONS.forEach((section) => {
         const btn = document.createElement('button');
-        btn.className = 'nav-section' + (section.enabled ? ' active' : ' disabled');
-        btn.textContent = section.label + (section.enabled ? '' : ' (wkrótce)');
-        btn.disabled = !section.enabled;
+        btn.className = 'nav-section' + (section.key === currentSection ? ' active' : '');
+        // celowo NIE data-sec — ten atrybut steruje chowaniem treści sekcji
+        btn.dataset.navSec = section.key;
+        btn.textContent = section.label;
+        btn.addEventListener('click', () => setSection(section.key));
         wrap.appendChild(btn);
       });
     }
@@ -1052,6 +1088,20 @@
     renderNav();
     renderStatusFilterOptions();
     loadLeady();
+
+    // Zakładka Wyceny (assets/wyceny-tab.js) + deep-link ?arkusz=wyceny
+    // (m.in. przekierowanie z kafelka Wyceny na ekranie głównym).
+    if (window.WycenyTab && NAV_SECTIONS.some((s) => s.key === 'wyceny')) {
+      WycenyTab.init({
+        apiBase: API_BASE,
+        toolbarEl: document.getElementById('wyceny-toolbar'),
+        listEl: document.getElementById('wyceny-list'),
+        readOnly: CRM_SHEET_LEVELS.wyceny !== 'edit',
+      });
+    }
+    const wantedSection = new URLSearchParams(window.location.search).get('arkusz');
+    if (wantedSection) setSection(wantedSection);
+    else applySectionVisibility();
   </script>
 </body>
 </html>

@@ -20,6 +20,10 @@
     "api/wiedza.js": {
       "includeFiles": "{apps/wiedza/app.html,apps/hub/assets/**,apps/shared/**}",
       "maxDuration": 60
+    },
+    "api/sprzedaze.js": {
+      "includeFiles": "{apps/sprzedaze/app.html,apps/sprzedaze/assets/**,apps/shared/**}",
+      "maxDuration": 180
     }
   },
   "crons": [
@@ -31,6 +35,7 @@
   "redirects": [
     { "source": "/backlog-b2c", "destination": "/backlog-b2c/", "permanent": false },
     { "source": "/crm", "destination": "/crm/", "permanent": false },
+    { "source": "/sprzedaze", "destination": "/sprzedaze/", "permanent": false },
     { "source": "/wiadomosci", "destination": "/wiadomosci/", "permanent": false },
     { "source": "/wiedza", "destination": "/wiedza/", "permanent": false }
   ],
@@ -39,6 +44,8 @@
     { "source": "/backlog-b2c/:path*", "destination": "/api/backlog-b2c" },
     { "source": "/crm/", "destination": "/api/crm" },
     { "source": "/crm/:path*", "destination": "/api/crm" },
+    { "source": "/sprzedaze/", "destination": "/api/sprzedaze" },
+    { "source": "/sprzedaze/:path*", "destination": "/api/sprzedaze" },
     { "source": "/wiadomosci/", "destination": "/api/komunikator" },
     { "source": "/wiadomosci/:path*", "destination": "/api/komunikator" },
     { "source": "/wiedza/", "destination": "/api/wiedza" },

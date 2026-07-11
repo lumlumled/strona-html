@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+  <title>Sprzedaże</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared/wycena-card.css">
+  <link rel="stylesheet" href="shared/topbar.css">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --surface-1: #ffffff;
+      --page: #f5f5f4;
+      --text-primary: #111111;
+      --text-secondary: #52514e;
+      --text-muted: #8a8984;
+      --border: rgba(17, 17, 17, 0.12);
+      --accent: #111111;
+      --accent-contrast: #ffffff;
+      --accent-soft: #ececea;
+      --good: #0ca30c;
+      --bad: #b5433f;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-1: #161616;
+        --page: #0a0a0a;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted: #8a8984;
+        --border: rgba(255, 255, 255, 0.14);
+        --accent: #ffffff;
+        --accent-contrast: #0a0a0a;
+        --accent-soft: #262626;
+        --good: #16c116;
+        --bad: #e08585;
+      }
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--page);
+      color: var(--text-primary);
+      min-height: 100vh;
+    }
+
+    .content {
+      width: 100%;
+      max-width: 1100px;
+      margin: 0 auto;
+      min-width: 0;
+      padding: 1.6rem 1.5rem 4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .content-header h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      margin-bottom: 0.9rem;
+    }
+
+    /* ── Statystyki (placeholder do rozbudowy) ── */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 0.7rem;
+      margin-bottom: 1rem;
+    }
+
+    .stat {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 0.9rem 1rem;
+    }
+
+    .stat-label {
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+    }
+
+    .stat-value {
+      font-size: 1.45rem;
+      font-weight: 700;
+      letter-spacing: -0.4px;
+      margin-top: 0.25rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stat-sub { font-size: 0.78rem; color: var(--text-secondary); margin-top: 0.15rem; }
+
+    .stat-delta { font-size: 0.75rem; font-weight: 600; margin-top: 0.3rem; display: inline-block; }
+    .stat-delta.up { color: var(--good); }
+    .stat-delta.down { color: var(--bad); }
+
+    .toolbar { display: flex; align-items: center; gap: 0.65rem; flex-wrap: wrap; }
+
+    .toolbar input[type="text"] {
+      font: inherit;
+      padding: 0.5rem 0.75rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface-1);
+      color: var(--text-primary);
+      min-width: 240px;
+    }
+
+    .toolbar button {
+      font: inherit;
+      font-weight: 600;
+      padding: 0.5rem 0.9rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface-1);
+      color: var(--text-primary);
+      cursor: pointer;
+    }
+
+    .toolbar button:hover { background: var(--accent-soft); }
+    .count-badge { font-size: 0.85rem; color: var(--text-secondary); margin-left: auto; }
+
+    #list { display: flex; flex-direction: column; gap: 0.4rem; }
+
+    .sale {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      transition: border-color 0.15s ease;
+    }
+
+    .sale[open] { border-color: var(--text-muted); }
+
+    .sale summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      padding: 0.55rem 0.9rem;
+      min-height: 2.5rem;
+    }
+
+    .sale summary::-webkit-details-marker { display: none; }
+    .sale summary:hover { background: var(--accent-soft); }
+
+    .chevron { flex: 0 0 auto; width: 1.1rem; display: flex; justify-content: center; }
+    .chevron::before {
+      content: '▸';
+      transition: transform 0.15s ease;
+      color: var(--text-secondary);
+    }
+    .sale[open] summary .chevron::before { transform: rotate(90deg); }
+
+    .lp {
+      flex: 0 0 auto;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .summary-name {
+      font-weight: 600;
+      font-size: 0.9rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 15rem;
+    }
+
+    .summary-place {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .right-anchor { margin-left: auto; display: flex; align-items: center; gap: 0.6rem; flex: 0 0 auto; }
+
+    .summary-date { font-size: 0.76rem; color: var(--text-muted); white-space: nowrap; }
+    .summary-kwota { font-weight: 700; font-size: 0.92rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+    .empty-note { color: var(--text-muted); font-style: italic; font-size: 0.85rem; }
+
+    @media (max-width: 720px) {
+      .content { padding: 1.25rem 1rem 3rem; }
+      .summary-place, .summary-date { display: none; }
+      .summary-name { max-width: 10rem; }
+    }
+  </style>
+</head>
+<body>
+  <header id="site-header"></header>
+  <main class="content">
+    <header class="content-header">
+      <h2>Sprzedaże</h2>
+      <div class="stats" id="stats"></div>
+      <div class="toolbar">
+        <input type="text" id="search" placeholder="Szukaj: imię, telefon, e-mail, numer, miasto…">
+        <button id="refresh">Odśwież</button>
+        <span class="count-badge" id="count"></span>
+      </div>
+    </header>
+    <div id="list"></div>
+  </main>
+
+  <script src="shared/topbar.js"></script>
+  <script src="shared/wycena-card.js"></script>
+  <script>
+    const API_BASE = window.API_BASE || '';
+    LumTopbar.mount({ active: 'sprzedaze', into: document.getElementById('site-header') });
+
+    const { moneyPLN, stageChip, formatDT } = WycenaKarta.utils;
+    let all = [];
+
+    function h(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    // ── Statystyki: liczba i suma sprzedaży, ten vs poprzedni miesiąc ────────
+    function renderStats(stats) {
+      const wrap = document.getElementById('stats');
+      wrap.innerHTML = '';
+
+      const mk = (label, count, suma, extra) => {
+        const card = h('div', 'stat');
+        card.appendChild(h('div', 'stat-label', label));
+        card.appendChild(h('div', 'stat-value', suma));
+        card.appendChild(h('div', 'stat-sub', count));
+        if (extra) card.appendChild(extra);
+        return card;
+      };
+
+      const fmt = (n) => `${Number(n || 0).toLocaleString('pl-PL', { maximumFractionDigits: 0 })} zł`;
+
+      let delta = null;
+      if (stats.poprzedniMiesiac.suma > 0) {
+        const pct = Math.round(((stats.tenMiesiac.suma - stats.poprzedniMiesiac.suma) / stats.poprzedniMiesiac.suma) * 100);
+        delta = h('span', `stat-delta ${pct >= 0 ? 'up' : 'down'}`, `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct)}% vs poprzedni`);
+      }
+
+      wrap.append(
+        mk('Ten miesiąc', `${stats.tenMiesiac.count} zamówień`, fmt(stats.tenMiesiac.suma), delta),
+        mk('Poprzedni miesiąc', `${stats.poprzedniMiesiac.count} zamówień`, fmt(stats.poprzedniMiesiac.suma)),
+        mk('Łącznie', `${stats.total.count} zamówień`, fmt(stats.total.suma)),
+      );
+    }
+
+    // ── Wiersz sprzedaży ─────────────────────────────────────────────────────
+    function placeOf(w) {
+      if (w.punkt_odbioru && String(w.punkt_odbioru).replace(/[,\s]/g, '')) {
+        return `Paczkomat ${String(w.punkt_odbioru).replace(/,\s*$/, '')}`;
+      }
+      const parts = [w.ship_city, w.ship_country && w.ship_country !== 'PL' ? w.ship_country : ''].filter(Boolean);
+      return parts.join(', ');
+    }
+
+    function saleRow(w) {
+      const details = h('details', 'sale');
+      details.dataset.wycenaId = String(w.id);
+
+      const summary = document.createElement('summary');
+      const name = w.imie_nazwisko || [w.first_name, w.last_name].filter(Boolean).join(' ') || w.email || '(bez danych)';
+
+      const rightAnchor = h('div', 'right-anchor');
+      rightAnchor.append(
+        h('span', 'summary-date', w.created_at ? formatDT(w.created_at).slice(0, 10) : ''),
+        h('span', 'summary-kwota', moneyPLN(w.kwota_sprzedazy_brutto ?? w.kwota_proponowana_brutto)),
+        stageChip(w.process_stage),
+      );
+
+      summary.append(
+        h('span', 'chevron'),
+        h('span', 'lp', `#${w.id}`),
+        h('span', 'summary-name', name),
+        h('span', 'summary-place', placeOf(w)),
+        rightAnchor,
+      );
+
+      let built = false;
+      details.addEventListener('toggle', () => {
+        if (!details.open || built) return;
+        built = true;
+        const { el } = WycenaKarta.buildBody(w, {
+          apiBase: API_BASE,
+          readOnly: false,
+          mode: 'sprzedaze',
+          onChanged: () => load(),
+        });
+        details.appendChild(el);
+      });
+
+      details.appendChild(summary);
+      return details;
+    }
+
+    function matches(w) {
+      const q = document.getElementById('search').value.trim().toLowerCase();
+      if (!q) return true;
+      const hay = `#${w.id} ${w.id} ${w.imie_nazwisko || ''} ${w.first_name || ''} ${w.last_name || ''} ${w.telefon_e164 || ''} ${w.email || ''} ${w.ship_city || ''} ${w.punkt_odbioru || ''}`.toLowerCase();
+      return hay.includes(q);
+    }
+
+    function renderList() {
+      const openIds = new Set([...document.querySelectorAll('#list details[open]')].map((d) => d.dataset.wycenaId));
+      const list = document.getElementById('list');
+      const filtered = all.filter(matches);
+      list.innerHTML = '';
+      filtered.forEach((w) => {
+        const row = saleRow(w);
+        if (openIds.has(String(w.id))) row.open = true;
+        list.appendChild(row);
+      });
+      document.getElementById('count').textContent = `${filtered.length} / ${all.length} sprzedaży`;
+      if (!filtered.length) list.innerHTML = '<p class="empty-note">Brak sprzedaży dla tego filtra.</p>';
+    }
+
+    async function load() {
+      try {
+        const [listRes, statsRes] = await Promise.all([
+          fetch(`${API_BASE}/api/wyceny?typ=${encodeURIComponent('ZAMÓWIENIE')}`),
+          fetch(`${API_BASE}/api/sprzedaze/stats`),
+        ]);
+        if (listRes.status === 401) { window.location.href = `${API_BASE}/login`; return; }
+        const listBody = await listRes.json();
+        if (!listRes.ok) throw new Error(listBody.error || 'Błąd wczytywania');
+        all = listBody.data || [];
+        renderList();
+        const statsBody = await statsRes.json().catch(() => null);
+        if (statsRes.ok && statsBody) renderStats(statsBody);
+      } catch (err) {
+        document.getElementById('list').innerHTML = `<p class="empty-note">Błąd wczytywania: ${err.message}</p>`;
+      }
+    }
+
+    document.getElementById('search').addEventListener('input', renderList);
+    document.getElementById('refresh').addEventListener('click', load);
+    document.getElementById('list').innerHTML = '<p class="empty-note">Wczytywanie…</p>';
+    load();
+  </script>
+</body>
+</html>

@@ -1,0 +1,251 @@
+/* ── Wspólna karta wyceny (zakładka Wyceny w CRM + panel Sprzedaże) ──────────
+   Prefiks "wk-". Zmienne kolorów (--surface-1, --accent-soft, --border,
+   --text-*, --good, --bad) dostarcza strona-host — identyczna paleta lumlum
+   we wszystkich appkach. Produkty renderowane ze zdjęciami, jak w formularzu
+   klienckim (nacisk Antoniego 2026-07-11). */
+
+.wk-body {
+  border-top: 1px solid var(--border);
+  padding: 1.1rem 1.15rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.05rem;
+}
+
+.wk-section-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+
+/* ── Produkty ── */
+.wk-products { display: flex; flex-direction: column; gap: 0.45rem; }
+
+.wk-product {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-1);
+}
+
+.wk-thumb {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  object-fit: cover;
+  background: var(--accent-soft);
+}
+
+.wk-thumb-placeholder {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--accent-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+}
+
+.wk-product-meta { min-width: 0; flex: 1; }
+
+.wk-product-name {
+  font-weight: 600;
+  font-size: 0.88rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wk-product-sub { font-size: 0.76rem; color: var(--text-muted); }
+
+.wk-product-line { flex: 0 0 auto; text-align: right; }
+.wk-product-qty { font-size: 0.78rem; color: var(--text-secondary); white-space: nowrap; }
+.wk-product-total { font-weight: 700; font-size: 0.9rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.wk-product--rabat { border-style: dashed; }
+.wk-product--rabat .wk-product-total { color: var(--bad, #b5433f); }
+
+/* ── Kwoty ── */
+.wk-totals {
+  margin-top: 0.55rem;
+  border-top: 1px dashed var(--border);
+  padding-top: 0.55rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.wk-totals-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.wk-totals-row.wk-rabat { color: var(--bad, #b5433f); }
+
+.wk-totals-row.wk-final {
+  font-size: 1.02rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-top: 0.2rem;
+}
+
+.wk-rabat24h {
+  margin-top: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.82rem;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.wk-rabat24h.aktywny { border-color: var(--good); color: var(--good); font-weight: 600; }
+.wk-rabat24h.wygasly { color: var(--text-muted); }
+
+/* ── Siatka informacji (Kontakt / Dostawa i płatność) ── */
+.wk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+}
+
+.wk-kv { display: flex; flex-direction: column; gap: 0.3rem; }
+
+.wk-kv-row { display: flex; gap: 0.45rem; font-size: 0.86rem; align-items: baseline; min-width: 0; }
+.wk-kv-label { flex: 0 0 7.2rem; color: var(--text-muted); font-size: 0.78rem; }
+.wk-kv-value { min-width: 0; overflow-wrap: anywhere; }
+.wk-kv-value a { color: inherit; }
+.wk-kv-value.wk-muted { color: var(--text-muted); }
+
+/* ── Chipy statusów ── */
+.wk-chip {
+  display: inline-block;
+  padding: 0.16rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: var(--accent-soft);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.wk-chip.good { background: rgba(22, 160, 22, 0.14); color: var(--good); }
+.wk-chip.bad { background: rgba(181, 67, 63, 0.12); color: var(--bad, #b5433f); }
+.wk-chip.info { background: rgba(26, 86, 219, 0.12); color: #1a56db; }
+@media (prefers-color-scheme: dark) {
+  .wk-chip.info { color: #8ab0f5; }
+}
+
+/* ── Formularz (link) ── */
+.wk-linkbar {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.wk-linkbar input {
+  flex: 1;
+  min-width: 220px;
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--accent-soft);
+  color: var(--text-secondary);
+}
+
+.wk-btn {
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.45rem 0.85rem;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.wk-btn:hover:not(:disabled) { background: var(--accent-soft); }
+.wk-btn:disabled { opacity: 0.5; cursor: default; }
+.wk-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
+.wk-btn.primary:hover:not(:disabled) { opacity: 0.85; background: var(--accent); }
+.wk-btn.danger { color: var(--bad, #b5433f); }
+
+/* ── Realizacja (pipeline) ── */
+.wk-pipeline { display: flex; flex-direction: column; gap: 0.5rem; }
+
+.wk-pipe-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.wk-pipe-ico { flex: 0 0 auto; color: var(--text-muted); display: flex; }
+.wk-pipe-main { flex: 1; min-width: 140px; }
+.wk-pipe-sub { font-size: 0.76rem; color: var(--text-muted); }
+.wk-pipe-links { display: flex; gap: 0.55rem; flex-wrap: wrap; font-size: 0.8rem; }
+.wk-pipe-links a { color: inherit; font-weight: 600; }
+
+/* ── Historia ── */
+.wk-history summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.wk-history-list { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.3rem; }
+
+.wk-event {
+  font-size: 0.78rem;
+  display: flex;
+  gap: 0.55rem;
+  align-items: baseline;
+}
+
+.wk-event-time { color: var(--text-muted); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+.wk-event-kind { font-weight: 600; flex: 0 0 auto; }
+.wk-event-payload { color: var(--text-muted); overflow-wrap: anywhere; }
+
+.wk-history-raw {
+  margin-top: 0.55rem;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-top: 1px dashed var(--border);
+  padding-top: 0.5rem;
+}
+
+/* ── Pasek akcji karty ── */
+.wk-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+.wk-actions .wk-note { font-size: 0.78rem; color: var(--text-muted); }
+
+@media (max-width: 720px) {
+  .wk-kv-label { flex-basis: 6rem; }
+}

@@ -79,6 +79,10 @@ create unique index if not exists wyceny_shopify_order_idx on wyceny (shopify_or
 -- Kontynuacja numeracji arkusza: setval po imporcie (skrypt importu).
 create sequence if not exists wyceny_id_seq;
 
+-- Nowe ID z panelu (supabase-js nie umie nextval bezpośrednio -> rpc).
+create or replace function wyceny_next_id() returns integer
+language sql as $$ select nextval('wyceny_id_seq')::integer $$;
+
 create table if not exists wyceny_shipments (
   id bigserial primary key,
   wycena_id integer not null references wyceny(id) on delete cascade,

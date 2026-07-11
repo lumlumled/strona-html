@@ -266,7 +266,9 @@ async function main() {
          values ($1,'shipx','order',$2,$3,$4,$5,$6,$7)`,
         [
           id, r.shipment_id || null,
-          r.punkt_odbioru || r['ID Paczkomatu'] ? 'inpost_locker_standard' : 'inpost_courier_standard',
+          // arkusz miewa "puste" punkty odbioru w postaci ", " — to kurier
+          String(r.punkt_odbioru || r['ID Paczkomatu'] || '').replace(/[,\s]/g, '')
+            ? 'inpost_locker_standard' : 'inpost_courier_standard',
           stage === 'DELIVERED' ? 'delivered' : 'sent',
           r.tracking_number || null, r.label_url || null,
           stage === 'DELIVERED' ? toIso(r.Data_update) : null,
