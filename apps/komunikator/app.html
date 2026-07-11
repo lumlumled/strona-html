@@ -184,6 +184,7 @@
       <div class="messages" id="messages"></div>
       <div class="window-note" id="window-note" hidden></div>
       <div class="composer">
+        <div class="window-note" id="suggestion-note" hidden></div>
         <textarea id="reply-text" placeholder="Napisz odpowiedź…"></textarea>
         <div class="composer-row">
           <button class="btn" id="btn-manual" hidden>Wysłane ręcznie (Business Suite)</button>
@@ -222,7 +223,10 @@
       phone: 'Telefon', email: 'E-mail', note: 'Notatki',
     };
 
-    const state = { statusFilter: 'open', threads: [], selectedId: null, detail: null };
+    const state = {
+      statusFilter: 'open', threads: [], selectedId: null, detail: null,
+      suggestion: null, // { id, forThread } — sugestia AI załadowana do composera
+    };
 
     const $ = (id) => document.getElementById(id);
 
@@ -302,13 +306,45 @@
 
     // ── Rozmowa ──
     async function openThread(id) {
+      const switched = state.selectedId !== id;
       state.selectedId = id;
       renderThreads();
+      if (switched) {
+        state.suggestion = null;
+        $('reply-text').value = '';
+        $('suggestion-note').hidden = true;
+      }
       try {
         state.detail = await api(`/threads/${id}`);
         renderDetail();
+        if (switched) maybeLoadSuggestion();
       } catch (err) {
         toast(err.message);
+      }
+    }
+
+    // Sugestia AI ładuje się lazy: tylko gdy ostatnia wiadomość jest OD
+    // klienta, kanał pozwala wysyłać i okno 24 h jeszcze otwarte.
+    async function maybeLoadSuggestion() {
+      const d = state.detail;
+      if (!d) return;
+      const windowed = ['messenger', 'instagram', 'whatsapp'].includes(d.thread.channel);
+      const windowOpen = !d.window_expires_at || new Date(d.window_expires_at) > new Date();
+      const last = d.messages[d.messages.length - 1];
+      if (!windowed || !windowOpen || !last || last.direction !== 'in') return;
+
+      const note = $('suggestion-note');
+      note.hidden = false;
+      note.textContent = '✨ AI pisze propozycję odpowiedzi…';
+      const threadId = d.thread.id;
+      try {
+        const s = await api(`/threads/${threadId}/suggestion`, { method: 'POST' });
+        if (state.selectedId !== threadId) return; // użytkownik zdążył zmienić wątek
+        state.suggestion = { id: s.id, forThread: threadId };
+        if (!$('reply-text').value.trim()) $('reply-text').value = s.text;
+        note.textContent = '✨ Propozycja AI — popraw śmiało przed wysłaniem (każda poprawka uczy system).';
+      } catch (err) {
+        if (state.selectedId === threadId) note.textContent = `Sugestia AI niedostępna: ${err.message}`;
       }
     }
 
@@ -400,7 +436,13 @@
       if (!text || !state.detail) return;
       $('btn-send').disabled = true;
       try {
-        await api(`/threads/${state.detail.thread.id}/messages`, { method: 'POST', body: JSON.stringify({ body: text }) });
+        const suggestionId = state.suggestion?.forThread === state.detail.thread.id ? state.suggestion.id : null;
+        await api(`/threads/${state.detail.thread.id}/messages`, {
+          method: 'POST',
+          body: JSON.stringify({ body: text, suggestion_id: suggestionId }),
+        });
+        state.suggestion = null;
+        $('suggestion-note').hidden = true;
         $('reply-text').value = '';
         toast('Wysłano');
         openThread(state.detail.thread.id);

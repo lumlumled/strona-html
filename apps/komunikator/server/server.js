@@ -12,6 +12,7 @@ const { getClient } = require('./supabase');
 const { createAuth, clientPayload, panelLinks, PANELS, CRM_SHEETS } = require('../../shared/server/auth');
 const identity = require('./identity');
 const manychat = require('./ingest/manychat');
+const suggest = require('./suggest');
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -226,9 +227,38 @@ app.post('/api/threads/:id/status', async (req, res) => {
     if (!['attention', 'waiting', 'closed'].includes(status)) {
       return res.status(400).json({ error: 'Nieprawidłowy status' });
     }
-    const { error } = await getClient().from('kom_threads').update({ status }).eq('id', req.params.id);
+    const db = getClient();
+    const { error } = await db.from('kom_threads').update({ status }).eq('id', req.params.id);
     if (error) throw error;
+    // Odłożony/zamknięty wątek = wisząca sugestia była zignorowana.
+    if (status !== 'attention') await suggest.ignorePendingSuggestions(db, req.params.id);
     res.json({ ok: true });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// ── Sugestia AI (lazy — generowana na otwarcie wątku w panelu) ──────────────
+
+app.post('/api/threads/:id/suggestion', async (req, res) => {
+  try {
+    const db = getClient();
+    const { data: threads, error } = await db.from('kom_threads').select('*').eq('id', req.params.id).limit(1);
+    if (error) throw error;
+    const thread = threads && threads[0];
+    if (!thread) return res.status(404).json({ error: 'Nie znaleziono wątku' });
+
+    const customer = await identity.loadCustomer(db, thread.customer_id);
+    const [messagesRes, identitiesRes] = await Promise.all([
+      db.from('kom_messages').select('*').eq('thread_id', thread.id).order('created_at', { ascending: true }).limit(100),
+      db.from('kom_customer_identities').select('type').eq('customer_id', customer.id),
+    ]);
+    if (messagesRes.error) throw messagesRes.error;
+    if (identitiesRes.error) throw identitiesRes.error;
+    customer.identities = identitiesRes.data || [];
+
+    const result = await suggest.generateSuggestion(db, thread, customer, messagesRes.data || []);
+    res.json(result);
   } catch (err) {
     handleError(res, err, 502);
   }
@@ -291,6 +321,19 @@ app.post('/api/threads/:id/messages', async (req, res) => {
     });
     if (msgErr) throw msgErr;
     await db.from('kom_threads').update({ status: 'waiting', last_message_at: new Date().toISOString() }).eq('id', thread.id);
+
+    // Rozlicz sugestię: bez zmian → sent_as_is, poprawiona → edited + wpis
+    // do korpusu uczącego (kom_examples). Błąd tutaj nie może cofnąć wysyłki.
+    if (req.body?.suggestion_id) {
+      try {
+        const { data: history } = await db
+          .from('kom_messages').select('direction,body').eq('thread_id', thread.id)
+          .order('created_at', { ascending: true }).limit(100);
+        await suggest.resolveSuggestionAfterSend(db, req.body.suggestion_id, text, history || []);
+      } catch (suggErr) {
+        console.error('Rozliczenie sugestii:', suggErr.message);
+      }
+    }
     res.json({ ok: true });
   } catch (err) {
     handleError(res, err, 502);
