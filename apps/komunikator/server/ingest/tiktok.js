@@ -86,20 +86,48 @@ async function ingestedCount(db, videoId) {
   return count || 0;
 }
 
+// Licznik komentarzy z ostatniego scrapu per filmik (payload.videos w rekordach
+// runów). Filmik wraca do scrapowania TYLKO gdy licznik TikToka urośnie ponad
+// stan z ostatniego runa — licznik bywa trwale wyższy niż realnie dostępne
+// komentarze (skasowane/filtrowane), bez tego scrapowalibyśmy go co cykl.
+async function lastScrapedCounts(db) {
+  const { data, error } = await db
+    .from('kom_inbox_raw').select('payload').eq('source', 'tiktok_apify')
+    .order('created_at', { ascending: false }).limit(20);
+  if (error) throw error;
+  const map = new Map();
+  for (const row of data || []) {
+    for (const v of row.payload?.videos || []) {
+      const key = String(v.videoId);
+      if (!map.has(key)) map.set(key, v.reported || 0);
+    }
+  }
+  return map;
+}
+
+// Liczniki komentarzy daje endpoint analytics (GET /v1/posts?source=external
+// zwraca posty BEZ analytics — sprawdzone na żywo 2026-07-11, wbrew ich
+// dokumentacji ExternalPostSummary).
 async function candidateVideos(db, accountId) {
-  const { posts = [] } = await zernioGet(`/v1/posts?source=external&accountId=${encodeURIComponent(accountId)}&limit=30`);
+  const { posts = [] } = await zernioGet(`/v1/analytics?source=external&accountId=${encodeURIComponent(accountId)}&limit=30`);
   const cutoff = Date.now() - VIDEO_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
-  const fresh = posts.filter((p) =>
-    p.platform === 'tiktok'
-    && p.platformPostUrl
-    && (p.analytics?.comments || 0) > 0
-    && (!p.publishedAt || new Date(p.publishedAt).getTime() >= cutoff));
+  const scraped = await lastScrapedCounts(db);
 
   const candidates = [];
-  for (const post of fresh) {
-    const have = await ingestedCount(db, post.platformPostId);
-    if (have < (post.analytics?.comments || 0)) {
-      candidates.push({ videoId: post.platformPostId, url: post.platformPostUrl, reported: post.analytics.comments, have });
+  for (const post of posts) {
+    if (post.platform && post.platform !== 'tiktok') continue;
+    const comments = post.analytics?.comments || 0;
+    if (!comments) continue;
+    if (post.publishedAt && new Date(post.publishedAt).getTime() < cutoff) continue;
+    const plat = (post.platforms || []).find((p) => p.platform === 'tiktok') || {};
+    const url = post.platformPostUrl || plat.platformPostUrl;
+    const videoId = plat.platformPostId || (String(url || '').match(/video\/(\d+)/) || [])[1];
+    if (!url || !videoId) continue;
+    if (scraped.has(String(videoId)) && comments <= scraped.get(String(videoId))) continue;
+
+    const have = await ingestedCount(db, videoId);
+    if (have < comments) {
+      candidates.push({ videoId, url, reported: comments, have });
       if (candidates.length >= MAX_VIDEOS_PER_RUN) break;
     }
   }
