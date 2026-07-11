@@ -241,12 +241,27 @@ ale link ma być jednorazowy:
   3. Ręczny przycisk "Potwierdź wpłatę" na karcie wyceny (fallback zawsze
      dostępny, zapisuje kto i kiedy).
 
-## Etapy wdrożenia
+## Harmonogram (decyzja Antoniego 2026-07-11: dwa nocne sprinty)
 
-Zasada nadrzędna: Make działa równolegle aż do cutoveru; do tego czasu
-panel dopisuje NOWE wyceny także do Sheetsa (jeden addRow przez API),
-żeby istniejący pipeline Make widział wszystko. Wyłączamy Make dopiero,
-gdy nasz pipeline przejdzie testy end-to-end.
+ZMIANA WZGLĘDEM PIERWOTNEGO PLANU: bez dual-write do Sheets, bez okresu
+równoległego, bez zapisu na Google Drive przez API. WSZYSTKO przechodzi
+na Supabase - linki do faktur/etykiet czyta panel i formularz z naszej
+bazy. Google Sheets po cutoverze = archiwum read-only.
+
+- **NOC 1 (2026-07-11/12)**: buduję i testuję CAŁOŚĆ etapów 0-4 poniżej,
+  ale NIC nie idzie do klientów - produkcyjny formularz na lumlum.co
+  dalej wskazuje huki Make, scenariusze Make działają. Testy formularza
+  na kopii strony (formularz-test) i wycenach testowych.
+- **Rano/dzień**: wspólne testy z Antonim (wizualne + funkcjonalne),
+  poprawki, nowe funkcje.
+- **NOC 2 (2026-07-12/13, po mocnym przetestowaniu)**: cutover na
+  produkcję - świeży import z Sheets, podmiana URL-i w liquid, przepięcie
+  webhooka inFakt, dezaktywacja scenariuszy Make (dokładna checklista
+  "co wyklikać w Make/inFakt/Shopify" - niżej). W poniedziałek klienci
+  działają już na nowym systemie.
+
+Etapy poniżej to kolejność budowy i punkty testowe w ramach nocy 1
+(po każdym etapie test, zanim ruszy następny), nie osobne tygodnie.
 
 ### Etap 0 - Fundament danych
 
@@ -290,33 +305,39 @@ natomiast to OSOBNY panel (nowa apka, np. lumlum.dev/sprzedaze):
   Edycja istniejącej wyceny = quote_mode REPLACE_EXISTING z merge'em
   jak w promptcie MERGE (FULL_REPLACE / KEEP_OLD) przy dodaniu tekstem,
   albo zwykły zapis przy edycji w formularzu strukturalnym.
-- **Dual-write**: zapis do Supabase + addRow/updateRow w CRM_CASES,
-  żeby scenariusze Make (#2 link, formularz GET/POST, pipeline) działały
-  dla wycen dodanych w panelu. Od tego momentu można przestać używać
-  Telegrama do NOWYCH wycen.
+- Zapis WYŁĄCZNIE do Supabase (bez dual-write - decyzja 2026-07-11).
+  Do cutoveru nowe wyceny dodane w panelu nie przejdą przez Make -
+  testujemy je naszym pipeline'em na formularz-test; realne wyceny do
+  niedzieli wieczora dodajemy jeszcze Telegramem (albo już panelem,
+  jeśli realizacja i tak czeka do poniedziałku).
 - Przycisk "Wyślij link" (kopiuj link + oznacz FORM_SENT) na karcie.
 
-### Etap 3 - Formularz czyta z nas (cutover GET, nocą)
+### Etap 3 - Formularz na naszych endpointach
 
-- `GET /formularz/api/dane` na lumlum.dev, kontrakt 1:1 z webhookiem Make.
+- `GET /formularz/api/dane` na lumlum.dev, kontrakt 1:1 z webhookiem Make
+  + prawdziwy form_status (formularz jednorazowy) + token w linku.
+- `POST /formularz/api/zapis` - pełne przejęcie: zapis submitu i start
+  własnego pipeline'u (bez proxy do Make - decyzja 2026-07-11).
 - Kopia strony na Shopify: `lumlum.co/pages/formularz-test` z liquidem
   wskazującym nowe endpointy; testy: wycena z rabatem/bez, rabat24h
-  aktywny/wygasły, prefill, form już SUBMITTED.
-- POST na razie **proxy**: nasz endpoint zapisuje submit do Supabase
-  (form_status, adresy) I przekazuje payload do dzisiejszego huka POST
-  Make - sprawdzony pipeline realizacji nadal robi swoje.
-- Cutover w nocy: podmiana dwóch URL-i w produkcyjnym liquid. Rollback =
-  przywrócenie starych URL-i (jedna edycja w Shopify).
+  aktywny/wygasły, prefill, ponowne wejście po SUBMITTED (ekran
+  "zamówienie już złożone"), kraj != PL (flat fee widoczny).
+  Produkcyjny /pages/formularz NIETKNIĘTY do nocy 2.
 
 ### Etap 4 - Własny pipeline realizacji
 
 - Implementacja kroków: ShipX paczkomat (locker_standard, jak dziś) +
   ShipX kurier (courier_standard - przejęcie z Baselinkera, COD/insurance
   w polach shipmentu), etykiety; **Furgonetka dla kraju != PL** (+ flat
-  fee 50 zł w formularzu i na fakturze); inFakt faktura/proforma + szybka
-  płatność + KSeF + delete proformy; mail do klienta przez Gmail API
-  (kontakt@lumlum.co, szablony przeniesione z Make); maszyna stanów +
-  worker pg_cron (tracking, retry); webhook inFakt na nasz endpoint.
+  fee 50 zł w formularzu i na fakturze) - jeśli dostęp API Furgonetki
+  nie będzie gotowy na noc 1, ścieżka zagraniczna działa jak dziś w Make
+  (faktura bez auto-przesyłki, wysyłka ręczna), a Furgonetka dochodzi
+  po cutoverze; inFakt faktura/proforma + szybka płatność + KSeF +
+  delete proformy; mail do klienta przez Gmail API (kontakt@lumlum.co,
+  szablony przeniesione z Make); maszyna stanów + worker pg_cron
+  (tracking, retry); endpoint pod webhook inFakt "opłacona".
+  PDF-y faktur: bez uploadu na Drive przez API (decyzja 2026-07-11 -
+  wszystko na Supabase; linki inFakt/ShipX w bazie i panelu).
 - Rabat NA PEWNO jako ujemna pozycja kwotowa na fakturze (decyzja
   Antoniego 2026-07-11: procenty odpadają - rozjazdy o grosze, "14,23%"
   bez sensu; zawsze kwota).
@@ -330,14 +351,27 @@ natomiast to OSOBNY panel (nowa apka, np. lumlum.dev/sprzedaze):
 - Nowe env vars: INFAKT_API_KEY (zrotowany), INPOST_SHIPX_TOKEN
   (zrotowany), INPOST_ORG_ID, FURGONETKA_CLIENT_ID/SECRET.
 
-### Etap 5 - Cutover POST i wygaszenie Make
+### Etap 5 - NOC 2: cutover produkcyjny (checklista)
 
-- Nocą: POST przestaje proxować do Make - realizuje własnym pipeline.
-- Obserwacja 1-2 tygodnie (panel pokazuje błędy pipeline z wyceny_events;
-  Make scenariusze wyłączone, ale nie skasowane - łatwy rollback).
-- Po stabilizacji: wyłączenie dual-write do Sheets, arkusze read-only
-  (archiwum), skasowanie scenariuszy Make, rotacja sekretów (stare były
-  w blueprintach na dysku), usunięcie Baselinkera.
+Kolejność na noc 2 (po testach dziennych; Antoni klika w Make/inFakt/
+Shopify według instrukcji, które przygotuję razem ze zbudowanym systemem):
+
+1. Świeży eksport CRM_CASES + Wyceny B2C -> ponowny import (upsert).
+2. Shopify: w produkcyjnym `/pages/formularz` podmiana ORDER_GET
+   i ORDER_POST na endpointy lumlum.dev (jedna edycja; rollback =
+   przywrócenie starych URL-i).
+3. inFakt: przepięcie webhooka "faktura opłacona" z huka Make na
+   `POST lumlum.dev/formularz/api/infakt-webhook`.
+4. Make: dezaktywacja scenariuszy (NIE kasować - rollback): #1 i #1 B2B
+   (Telegram), #2 Wysłanie linku, Formularz GET, Formularz POST,
+   #2 Shopify draft order, #3 PAID, #4 Sprawdzenie dostawy,
+   #5 Fulfillment, Przesyłka nadana.
+5. Test kontrolny na żywym systemie: testowa wycena -> formularz ->
+   zamówienie testowe.
+- Obserwacja 1-2 tygodnie (błędy pipeline widoczne z wyceny_events).
+- Po stabilizacji: arkusze read-only (archiwum), skasowanie scenariuszy
+  Make, rotacja sekretów (inFakt, InPost - stare były w blueprintach
+  na dysku i w Make), wypowiedzenie Baselinkera.
 
 ### Etap 6 - Panel Fulfillment (osobny tool)
 
@@ -369,7 +403,10 @@ scenariusze "#5 Fulfillment" i "Przesyłka nadana" oraz arkusz wysyłek:
    flat fee 50 zł (Europa) doliczane i widoczne w formularzu. Wysyłki
    krajowe w całości ShipX (wszystko w Menedżerze Paczek).
 2. **Notion** - wygaszamy (służył optymalizacji leadów, niepotrzebny).
-3. **Google Drive** - zostaje, PDF-y faktur nadal lądują na Drive.
+3. **Google Drive** - ZMIANA (2026-07-11 wieczorem): bez uploadu przez
+   API - żadnych połączeń z Google, wszystko na Supabase; linki do PDF
+   (inFakt/ShipX) w bazie i panelu. Jeśli kopia na Drive okaże się
+   potrzebna księgowo, Antoni pobiera z panelu ręcznie.
 4. **Arkusz wysyłek / fulfillment** - zastępuje go osobny panel
    Fulfillment (etap 6).
 5. **Kopia wycen dla Lorenzo** - niepotrzebna, Lorenzo widzi wyceny
