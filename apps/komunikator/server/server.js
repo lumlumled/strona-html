@@ -560,8 +560,8 @@ app.post('/api/threads/:id/messages', async (req, res) => {
   }
 });
 
-// Odpowiedź wysłana ręcznie (inbox Zernio / Business Suite po zamknięciu
-// okna) — panel tylko dopisuje ją do historii wątku, kontekst zostaje pełny.
+// Odpowiedź wysłana ręcznie (Gmail, TikTok, inbox Zernio po zamknięciu
+// okna) — panel dopisuje ją do historii wątku, kontekst zostaje pełny.
 app.post('/api/threads/:id/manual-sent', async (req, res) => {
   try {
     const text = String(req.body?.body || '').trim();
@@ -572,10 +572,25 @@ app.post('/api/threads/:id/manual-sent', async (req, res) => {
       direction: 'out',
       body: text,
       sent_by: 'antoni',
+      suggestion_id: req.body?.suggestion_id || null,
       meta: { manual_business_suite: true },
     });
     if (msgErr) throw msgErr;
     await db.from('kom_threads').update({ status: 'waiting', last_message_at: new Date().toISOString() }).eq('id', req.params.id);
+
+    // Ręczna wysyłka też uczy: jeśli treść różni się od sugestii AI, para
+    // (sugestia → wersja Antoniego) trafia do kom_examples jak przy wysyłce
+    // z panelu. Błąd rozliczenia nie może cofnąć dopisania do historii.
+    if (req.body?.suggestion_id) {
+      try {
+        const { data: history } = await db
+          .from('kom_messages').select('direction,body').eq('thread_id', req.params.id)
+          .order('created_at', { ascending: true }).limit(100);
+        await suggest.resolveSuggestionAfterSend(db, req.body.suggestion_id, text, history || []);
+      } catch (suggErr) {
+        console.error('Rozliczenie sugestii (manual-sent):', suggErr.message);
+      }
+    }
     res.json({ ok: true });
   } catch (err) {
     handleError(res, err, 502);

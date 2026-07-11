@@ -520,7 +520,15 @@
       const text = $('reply-text').value.trim();
       if (!text || !state.detail) return toast('Wpisz treść, którą wysłałeś ręcznie');
       try {
-        await api(`/threads/${state.detail.thread.id}/manual-sent`, { method: 'POST', body: JSON.stringify({ body: text }) });
+        // suggestion_id jak przy wysyłce z panelu — ręczna wysyłka (mail,
+        // TikTok) też rozlicza sugestię i uczy korpus, gdy treść się różni.
+        const suggestionId = state.suggestion?.forThread === state.detail.thread.id ? state.suggestion.id : null;
+        await api(`/threads/${state.detail.thread.id}/manual-sent`, {
+          method: 'POST',
+          body: JSON.stringify({ body: text, suggestion_id: suggestionId }),
+        });
+        state.suggestion = null;
+        $('suggestion-note').hidden = true;
         $('reply-text').value = '';
         toast('Dopisano do historii');
         openThread(state.detail.thread.id);
