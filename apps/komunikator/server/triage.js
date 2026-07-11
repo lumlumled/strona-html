@@ -16,16 +16,19 @@ const llm = require('./llm');
 const KIND_POLICY = {
   comment: 'comment: BARDZO selektywnie. Domyślnie "archive". "inbox" TYLKO przy jasnych przesłankach, że autor chce kupić albo pyta o produkt pod zakup (cena, dostępność, zamówienie, wysyłka, dobór pod swoją sytuację).',
   dm: 'dm: domyślnie "inbox" — wiadomość prywatna od człowieka zostaje, nawet niejednoznaczna. "archive" tylko przy JASNYCH przesłankach spamu/scamu/masowej oferty współpracy. "notification" dla wiadomości automatycznych.',
-  email: 'email: jak dm. Automaty (powiadomienia narzędzi, systemów, faktury, alerty) → "notification", jeśli mogą wymagać uwagi właściciela; czysty szum marketingowy/newslettery → "archive".',
+  email: 'email: jak dm dla ludzi. Automaty rozdzielaj surowo: "notification" TYLKO gdy wymaga działania właściciela (błąd krytyczny do naprawienia, faktura do zaksięgowania, alert billingowy, odpowiedź supportu na nasze zgłoszenie); cykliczne raporty, newslettery, onboarding narzędzi, marketing, powiadomienia informacyjne bez potrzeby działania → "archive". Adres typu no-reply sam w sobie NIE przesądza — automat może przekazywać wiadomość OD KLIENTA (np. "Przychodząca wiadomość SMS od ..."), a taka jest "inbox".',
 };
 
 async function mutedSender(db, senderType, senderValue) {
   if (!senderType || !senderValue) return null;
+  const value = String(senderValue).toLowerCase();
   const { data, error } = await db
-    .from('kom_triage_rules').select('id,action')
-    .eq('sender_type', senderType).eq('sender_value', String(senderValue)).limit(1);
+    .from('kom_triage_rules').select('id,action,sender_value,match_type')
+    .eq('sender_type', senderType).not('sender_value', 'is', null);
   if (error) throw error;
-  return (data && data[0]) || null;
+  return (data || []).find((r) => (r.match_type === 'contains'
+    ? value.includes(String(r.sender_value).toLowerCase())
+    : String(r.sender_value).toLowerCase() === value)) || null;
 }
 
 async function ruleExamples(db, limit = 10) {

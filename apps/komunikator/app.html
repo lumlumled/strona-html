@@ -388,7 +388,9 @@
         .join('');
 
       // Wyciszanie / przywracanie: mute na widocznych, restore na odfiltrowanych.
-      $('btn-mute').hidden = d.thread.triage !== 'inbox';
+      // "Nie chcę widzieć podobnych" dostępne wszędzie (także w Powiadomieniach
+      // i Wszystkich — tam najczęściej wycisza się automaty typu Make/InPost).
+      $('btn-mute').hidden = false;
       $('btn-restore').hidden = d.thread.triage === 'inbox';
 
       // Propozycje scaleń

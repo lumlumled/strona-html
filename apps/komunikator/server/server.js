@@ -715,6 +715,15 @@ app.post('/api/threads/:id/mute', async (req, res) => {
       .from('kom_messages').select('body').eq('thread_id', thread.id).eq('direction', 'in')
       .order('created_at', { ascending: false }).limit(1);
     const result = await triage.muteFromThread(db, thread, lastIn?.[0]?.body || null);
+
+    // Wyciszony wątek e-mail znika też ze skrzynki: istniejące wiadomości
+    // dostają "przeczytane" w Gmailu (przyszłe załatwia reguła przy ingeście).
+    if (thread.channel === 'email') {
+      const { data: gmailMsgs } = await db
+        .from('kom_messages').select('meta').eq('thread_id', thread.id).eq('direction', 'in');
+      const ids = (gmailMsgs || []).map((m) => m.meta?.gmail?.id).filter(Boolean);
+      if (ids.length) result.markedRead = await gmail.markMessagesRead(db, ids);
+    }
     res.json({ ok: true, ...result });
   } catch (err) {
     handleError(res, err, 502);

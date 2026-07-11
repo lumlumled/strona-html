@@ -255,6 +255,27 @@ async function status(db) {
   return { configured: Boolean(clientConfig()), connected: Boolean(tokens?.refresh_token), email: tokens?.email || null };
 }
 
+// Oznacz istniejące wiadomości jako przeczytane w Gmailu — używane przy
+// wyciszaniu wątku e-mail ("nie chcę widzieć podobnych" = zniknij też z oczu
+// w skrzynce). Best-effort: błąd jednej wiadomości nie blokuje reszty.
+async function markMessagesRead(db, gmailIds) {
+  const auth = await ensureAccessToken(db);
+  if (!auth) return 0;
+  let marked = 0;
+  for (const id of gmailIds) {
+    try {
+      await gmailFetch(auth.token, `/messages/${id}/modify`, {
+        method: 'POST',
+        body: JSON.stringify({ removeLabelIds: ['UNREAD'] }),
+      });
+      marked += 1;
+    } catch (err) {
+      console.error('Gmail markMessagesRead:', err.message);
+    }
+  }
+  return marked;
+}
+
 // ── Wysyłka odpowiedzi z panelu ──────────────────────────────────────────────
 // Scope gmail.modify obejmuje też messages.send, więc to samo połączenie
 // OAuth wystarcza. Odpowiedź wpina się w istniejący wątek Gmaila: temat
@@ -340,4 +361,4 @@ async function ensureWatch(db) {
   return { renewed: true, expiresAt: new Date(Number(watch.expiration)).toISOString() };
 }
 
-module.exports = { authUrl, exchangeCode, syncGmail, ensureWatch, status, sendReply };
+module.exports = { authUrl, exchangeCode, syncGmail, ensureWatch, status, sendReply, markMessagesRead };
