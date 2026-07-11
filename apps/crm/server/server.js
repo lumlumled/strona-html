@@ -6,6 +6,7 @@ const cors = require('cors');
 const { getClient } = require('./supabase');
 const { registerLeadyEndpoints, EDITABLE_LEAD_FIELDS, NIE_TELEFON_ZRODLA } = require('../../shared/server/leady-endpoints');
 const { createAuth, clientPayload, panelLinks } = require('../../shared/server/auth');
+const { servePushWorker, registerPushEndpoints } = require('../../shared/server/push');
 
 const app = express();
 app.use(cors());
@@ -40,7 +41,11 @@ app.get('/shared/:file', (req, res) => {
 });
 
 const auth = createAuth({ getClient, panelKey: 'crm', loginTitle: 'CRM' });
+// /sw.js przed bramką auth (publiczny statyk — patrz apps/shared/server/push.js),
+// endpointy /api/push/* za bramką (user z sesji).
+servePushWorker(app);
 auth.register(app);
+registerPushEndpoints(app, { getClient });
 
 const SHEET_LEADY = 'leady-b2c';
 const requireLeadyView = auth.requireSheet(SHEET_LEADY, 'view');

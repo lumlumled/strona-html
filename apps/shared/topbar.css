@@ -157,3 +157,26 @@
   .lumlum-topbar { gap: 0.6rem; padding: 0.55rem 0.8rem; }
   .lumlum-topbar .tb-username { display: none; }
 }
+
+/* Dzwoneczek powiadomień push — wyszarzony gdy wyłączone, pełna biel gdy
+   urządzenie jest zapisane. margin-left:auto dosuwa go (i usera za nim) w
+   prawo — tb-user traci wtedy własne auto (dwa auto dzielą przestrzeń). */
+.lumlum-topbar .tb-bell {
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: 1.9rem;
+  height: 1.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+}
+
+.lumlum-topbar .tb-bell:hover { background: rgba(255, 255, 255, 0.12); }
+.lumlum-topbar .tb-bell.on { color: #ffffff; }
+.lumlum-topbar .tb-bell:disabled { opacity: 0.5; cursor: default; }
+.lumlum-topbar .tb-bell ~ .tb-user { margin-left: 0.3rem; }

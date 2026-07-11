@@ -6,6 +6,7 @@ const cors = require('cors');
 const { getClient } = require('./supabase');
 const { registerLeadyEndpoints, NIE_TELEFON_ZRODLA } = require('../../shared/server/leady-endpoints');
 const { createAuth, clientPayload, panelLinks } = require('../../shared/server/auth');
+const { servePushWorker, registerPushEndpoints } = require('../../shared/server/push');
 
 const app = express();
 app.use(cors());
@@ -58,7 +59,11 @@ const auth = createAuth({
   publicPrefixes: ['/api/webhooks/', '/api/cron/'],
   loginTitle: 'Backlog B2C',
 });
+// /sw.js przed bramką auth (publiczny statyk — patrz apps/shared/server/push.js),
+// endpointy /api/push/* za bramką (user z sesji).
+servePushWorker(app);
 auth.register(app);
+registerPushEndpoints(app, { getClient });
 
 // Wczytany raz przy starcie (plik się nie zmienia w runtime) — app.html
 // czyta `window.API_BASE || ''` dla każdego swojego fetch()a (już tak było

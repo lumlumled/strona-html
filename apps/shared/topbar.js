@@ -10,6 +10,85 @@
 window.LumTopbar = (() => {
   'use strict';
 
+  // ── Powiadomienia push (dzwoneczek) ────────────────────────────────────────
+  // Web Push wg docs/plan-powiadomienia-push.md: /sw.js + /api/push/* serwuje
+  // KAŻDY panel (apps/shared/server/push.js), więc fetch idzie zawsze na
+  // własny origin (window.API_BASE) — zero CORS lokalnie i na Vercelu.
+
+  function urlBase64ToUint8Array(base64) {
+    const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+    const raw = atob((base64 + padding).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from([...raw].map((ch) => ch.charCodeAt(0)));
+  }
+
+  function buildPushBell() {
+    const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tb-bell';
+    btn.title = 'Powiadomienia push na tym urządzeniu';
+    btn.innerHTML = '<svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true"><path d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22zm8-5v-1l-1.7-1.7a2 2 0 0 1-.59-1.41V10a5.71 5.71 0 0 0-4.21-5.5V4a1.5 1.5 0 0 0-3 0v.5A5.71 5.71 0 0 0 6.29 10v2.89a2 2 0 0 1-.59 1.41L4 16v1z"/></svg>';
+    const base = window.API_BASE || '';
+
+    if (supported) {
+      navigator.serviceWorker.getRegistration('/')
+        .then((reg) => reg && reg.pushManager.getSubscription())
+        .then((sub) => btn.classList.toggle('on', Boolean(sub)))
+        .catch(() => {});
+    }
+
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!supported) {
+        alert('Ta przeglądarka nie obsługuje powiadomień push.\nNa iPhonie: Udostępnij → „Do ekranu początkowego", potem otwórz LumLum z ikony i włącz dzwoneczek tam.');
+        return;
+      }
+      btn.disabled = true;
+      try {
+        const reg = await navigator.serviceWorker.register('/sw.js');
+        const existing = await reg.pushManager.getSubscription();
+        if (existing) {
+          // Wyłączenie na tym urządzeniu.
+          await existing.unsubscribe();
+          await fetch(`${base}/api/push/unsubscribe`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ endpoint: existing.endpoint }),
+          });
+          btn.classList.remove('on');
+          return;
+        }
+        const perm = await Notification.requestPermission();
+        if (perm !== 'granted') {
+          alert('Powiadomienia są zablokowane — włącz je w ustawieniach przeglądarki dla tej strony.');
+          return;
+        }
+        const keyBody = await fetch(`${base}/api/push/vapid-key`).then((r) => r.json());
+        if (!keyBody.key) throw new Error(keyBody.error || 'Brak klucza VAPID');
+        const sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(keyBody.key),
+        });
+        const res = await fetch(`${base}/api/push/subscribe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subscription: sub.toJSON() }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+        // Serwer po zapisie od razu wysyła testowy push "Nowa wiadomość
+        // (test)" — użytkownik natychmiast widzi, że działa.
+        btn.classList.add('on');
+      } catch (err) {
+        alert(`Nie udało się przełączyć powiadomień: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    return btn;
+  }
+
   // Pozycje nawigacji w pasku: ekran główny + działające panele. Atrapy
   // (Wyceny/Wiadomości/Statystyki) celowo tylko na kafelkach ekranu głównego,
   // żeby pasek nie zamulał się linkami "wkrótce".
@@ -106,7 +185,10 @@ window.LumTopbar = (() => {
     document.addEventListener('click', () => menu.classList.remove('open'));
 
     userWrap.append(userBtn, menu);
-    bar.append(home, nav, userWrap);
+    bar.append(home, nav, buildPushBell(), userWrap);
+
+    // Otwarcie appki czyści plakietkę na ikonie (nadaną przez push-sw.js).
+    if (navigator.clearAppBadge) navigator.clearAppBadge().catch(() => {});
 
     if (!opts.into) document.body.prepend(bar);
     return bar;

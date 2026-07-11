@@ -16,6 +16,7 @@ const {
   createAuth, hashPassword, clientPayload, panelLinks, isAdmin, userHasPanel,
   PANELS, CRM_SHEETS, USERS_TABLE,
 } = require('../../shared/server/auth');
+const { servePushWorker, registerPushEndpoints } = require('../../shared/server/push');
 
 const app = express();
 app.use(express.json());
@@ -42,7 +43,11 @@ app.get('/shared/:file', (req, res) => {
 });
 
 const auth = createAuth({ getClient, panelKey: null, loginTitle: 'Panel główny' });
+// /sw.js przed bramką auth (publiczny statyk — patrz apps/shared/server/push.js),
+// endpointy /api/push/* za bramką (user z sesji).
+servePushWorker(app);
 auth.register(app);
+registerPushEndpoints(app, { getClient });
 
 // Wstrzyknięcie kontekstu do każdej strony huba: kto jest zalogowany, jakie
 // ma panele i dokąd prowadzą linki (ścieżki na Vercelu, porty lokalnie).

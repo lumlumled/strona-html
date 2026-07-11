@@ -13,6 +13,7 @@ const fs = require('fs');
 const express = require('express');
 const { getClient } = require('./supabase');
 const { createAuth, clientPayload, panelLinks, isAdmin, PANELS, CRM_SHEETS } = require('../../shared/server/auth');
+const { servePushWorker, registerPushEndpoints } = require('../../shared/server/push');
 const knowledge = require('../../shared/server/knowledge');
 
 const app = express();
@@ -36,7 +37,11 @@ app.get('/shared/:file', (req, res) => {
 });
 
 const auth = createAuth({ getClient, panelKey: 'wiedza', loginTitle: 'Baza Wiedzy' });
+// /sw.js przed bramką auth (publiczny statyk — patrz apps/shared/server/push.js),
+// endpointy /api/push/* za bramką (user z sesji).
+servePushWorker(app);
 auth.register(app);
+registerPushEndpoints(app, { getClient });
 
 const APP_HTML = fs.readFileSync(path.join(__dirname, '..', 'app.html'), 'utf8');
 

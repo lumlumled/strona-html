@@ -44,6 +44,7 @@
     { "source": "/wiedza/", "destination": "/api/wiedza" },
     { "source": "/wiedza/:path*", "destination": "/api/wiedza" },
     { "source": "/", "destination": "/api/index" },
+    { "source": "/sw.js", "destination": "/api/index" },
     { "source": "/login", "destination": "/api/index" },
     { "source": "/logout", "destination": "/api/index" },
     { "source": "/pozwolenia", "destination": "/api/index" },

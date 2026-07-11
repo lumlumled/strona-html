@@ -9,6 +9,7 @@ const fs = require('fs');
 const express = require('express');
 const { getClient } = require('./supabase');
 const { createAuth, clientPayload, panelLinks, PANELS, CRM_SHEETS } = require('../../shared/server/auth');
+const { servePushWorker, registerPushEndpoints } = require('../../shared/server/push');
 const identity = require('./identity');
 const zernio = require('./ingest/zernio');
 const tiktok = require('./ingest/tiktok');
@@ -147,7 +148,11 @@ const auth = createAuth({
   publicPrefixes: ['/api/webhooks/', '/api/cron/'],
   loginTitle: 'Wiadomości',
 });
+// /sw.js przed bramką auth (publiczny statyk — patrz apps/shared/server/push.js),
+// endpointy /api/push/* za bramką (user z sesji).
+servePushWorker(app);
 auth.register(app);
+registerPushEndpoints(app, { getClient });
 
 const APP_HTML = fs.readFileSync(path.join(__dirname, '..', 'app.html'), 'utf8');
 
