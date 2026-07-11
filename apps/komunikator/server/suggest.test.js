@@ -119,3 +119,31 @@ test('sugestia zapisuje się z nową wersją promptu', async () => {
   assert.equal(db.suggestions[0].prompt_version, suggest.PROMPT_VERSION);
   assert.equal(suggest.PROMPT_VERSION, 'suggest-v2-kb');
 });
+
+test('korekta Antoniego zapisuje się do kom_examples Z EMBEDDINGIEM (pętla uczenia stylu)', async () => {
+  const examples = [];
+  const db = {
+    from(table) {
+      if (table === 'kom_suggestions') {
+        return {
+          select: () => ({ eq: () => ({ limit: async () => ({ data: [{ id: 's1', status: 'pending', suggested_text: 'Sugestia AI' }], error: null }) }) }),
+          update: () => ({ eq: async () => ({ error: null }) }),
+        };
+      }
+      if (table === 'kom_examples') {
+        return { insert: async (row) => { examples.push(row); return { error: null }; } };
+      }
+      throw new Error(`nieznana tabela ${table}`);
+    },
+  };
+  await suggest.resolveSuggestionAfterSend(db, 's1', 'Wersja Antoniego (inna)', messages);
+  assert.equal(examples.length, 1);
+  assert.equal(examples[0].source, 'correction');
+  assert.equal(examples[0].final, 'Wersja Antoniego (inna)');
+  assert.ok(Array.isArray(examples[0].embedding), 'korekta powinna mieć embedding do selekcji wektorowej');
+});
+
+test('prompt sugestii zawiera twardą zasadę zakazu długiego myślnika', () => {
+  const src = require('fs').readFileSync(require.resolve('./suggest.js'), 'utf8');
+  assert.ok(src.includes('nigdy nie używaj długiego myślnika'), 'brak zasady o em dash w prompcie');
+});

@@ -26,6 +26,8 @@ Zasady:
   ustalić szczegóły telefonicznie i poproś o numer telefonu ALBO podaj numer LumLum: ${CONTACT_PHONE}.
 - Wyceny w czacie: lista pozycji z "-" (ilość + nazwa, np. "- 10 m cyfrowej taśmy COB 3000K"),
   bez cen jednostkowych, na końcu jedna kwota za całość. Metraż taśmy zaokrąglaj w górę.
+- TWARDA ZASADA: nigdy nie używaj długiego myślnika "—" (em dash). Zawsze zwykły dywiz "-"
+  albo przecinek/dwukropek. Antoni tak nie pisze i to zdradza tekst pisany przez AI.
 - Jeśli w rozmowie nie znamy jeszcze numeru telefonu klienta, przy naturalnej okazji poproś o niego
   (telefon = najszybsza droga do wyceny). Nie wymuszaj tego w każdej wiadomości.
 - Jeśli klient zadał proste pytanie (np. jak się skontaktować) — odpowiedz wprost, jednym-dwoma zdaniami.
@@ -174,12 +176,24 @@ async function resolveSuggestionAfterSend(db, suggestionId, finalText, messages)
   if (updErr) throw updErr;
 
   if (edited) {
+    const context = correctionContext(messages);
+    // Embedding kontekstu od razu przy zapisie — dzięki temu korekta wchodzi
+    // do wektorowej selekcji przykładów (kom_match_examples) i system uczy
+    // się stylu z każdej poprawki Antoniego. Brak embeddingu nie blokuje
+    // zapisu korekty (wtedy przykład łapie tylko fallback "najnowsze").
+    let embedding = null;
+    try {
+      embedding = await knowledge.embed(context);
+    } catch (err) {
+      console.error('Embedding korekty:', err.message);
+    }
     const { error: exErr } = await db.from('kom_examples').insert({
       source: 'correction',
-      context: correctionContext(messages),
+      context,
       suggested: suggestion.suggested_text,
       final: finalText,
       suggestion_id: suggestionId,
+      embedding,
     });
     if (exErr) throw exErr;
   }
