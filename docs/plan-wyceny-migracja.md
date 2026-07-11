@@ -101,10 +101,11 @@ Furgonetki nie ma w blueprintach, bo służy do wysyłek zagranicznych
 (obsługiwane dotąd poza tym mechanizmem). Wchodzi do pipeline jako drugi
 provider:
 
-- **Routing**: kraj dostawy z formularza (`ship_country`) jest źródłem
-  prawdy - PL -> InPost ShipX; kraj != PL (Europa) -> **API Furgonetki**.
-  Brak polskiego numeru telefonu przy wycenie to tylko sygnał, że pewnie
-  będzie zagranica - decyduje formularz.
+- **Routing**: InPost wymaga polskiego numeru telefonu odbiorcy
+  (powiadomienia SMS), więc reguła jest podwójna: kraj dostawy != PL
+  **LUB brak polskiego numeru** -> **API Furgonetki**; w pozostałych
+  przypadkach (PL + polski numer) -> InPost ShipX. Formularz przy braku
+  polskiego numeru nie pokazuje opcji paczkomatu.
 - **Flat fee za wysyłkę zagraniczną**: kwota konfigurowalna, na start
   50 zł, doliczana do sumy. Musi być WIDOCZNA w podsumowaniu formularza
   od razu po zmianie kraju na != PL (mała zmiana w liquid - wiersz
