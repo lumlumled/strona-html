@@ -178,6 +178,7 @@
         <div class="conv-actions">
           <button class="btn" id="btn-waiting">Ignoruj (czeka)</button>
           <button class="btn" id="btn-close">Zamknij wątek</button>
+          <a class="btn" id="btn-livechat" target="_blank" rel="noopener" hidden>Otwórz w ManyChat ↗</a>
         </div>
       </div>
       <div id="merge-banners"></div>
@@ -358,6 +359,14 @@
       $('conv-llid').textContent = d.customer.public_id;
       $('conv-channel').textContent = CHANNEL_LABELS[d.thread.channel] || d.thread.channel;
 
+      const liveChat = $('btn-livechat');
+      if (d.thread.meta?.live_chat_url) {
+        liveChat.hidden = false;
+        liveChat.href = d.thread.meta.live_chat_url;
+      } else {
+        liveChat.hidden = true;
+      }
+
       const idLabels = { fb: 'FB', ig: 'IG', wa: 'WA', phone: 'tel', email: 'email' };
       $('conv-identities').innerHTML = d.customer.identities
         .map((i) => `<span class="chip">${idLabels[i.type] || i.type}: ${escapeHtml(i.type === 'fb' || i.type === 'ig' ? '✓ połączono' : i.value)}${i.confirmed ? '' : ' (?)'}</span>`)
@@ -415,7 +424,7 @@
       } else if (d.window_expires_at && new Date(d.window_expires_at) < new Date()) {
         note.hidden = false;
         note.className = 'window-note closed';
-        note.textContent = 'Okno 24 h Meta zamknięte — wyślij ręcznie w Business Suite (skopiuj treść) albo zadzwoń, potem kliknij „Wysłane ręcznie”.';
+        note.textContent = 'Okno 24 h Meta zamknięte — kliknij „Otwórz w ManyChat”, wyślij tam ręcznie, wróć i kliknij „Wysłane ręcznie” (dopisze się do historii).';
         sendBtn.disabled = true;
         manualBtn.hidden = false;
       } else {

@@ -278,7 +278,16 @@ async function sendViaManyChat(subscriberId, text) {
     }),
   });
   const body = await response.text();
-  if (!response.ok) throw new Error(`ManyChat ${response.status}: ${body.slice(0, 300)}`);
+  if (!response.ok) {
+    // Kod 3011/3031 = ostatnia interakcja klienta ponad 24 h temu (polityka
+    // Meta) — mapujemy na czytelny błąd zamiast surowego JSON-a ManyChata.
+    if (/3011|3031|message tag/i.test(body)) {
+      const err = new Error('Okno 24 h Meta zamknięte — wyślij ręcznie (link ManyChat przy wątku) albo zadzwoń');
+      err.windowClosed = true;
+      throw err;
+    }
+    throw new Error(`ManyChat ${response.status}: ${body.slice(0, 300)}`);
+  }
   return JSON.parse(body);
 }
 
@@ -305,12 +314,17 @@ app.post('/api/threads/:id/messages', async (req, res) => {
     const expires = windowExpiresAt(thread, lastIn?.[0]?.created_at);
     if (expires && new Date(expires) < new Date()) {
       return res.status(409).json({
-        error: 'Okno 24 h Meta zamknięte — wyślij ręcznie przez Business Suite albo zadzwoń',
+        error: 'Okno 24 h Meta zamknięte — wyślij ręcznie przez ManyChat/Business Suite albo zadzwoń',
         window_closed: true,
       });
     }
 
-    await sendViaManyChat(thread.external_thread_id, text);
+    try {
+      await sendViaManyChat(thread.external_thread_id, text);
+    } catch (sendErr) {
+      if (sendErr.windowClosed) return res.status(409).json({ error: sendErr.message, window_closed: true });
+      throw sendErr;
+    }
 
     const { error: msgErr } = await db.from('kom_messages').insert({
       thread_id: thread.id,

@@ -39,6 +39,27 @@ function externalMessageId(payload, subscriberId, text) {
   return `h-${crypto.createHash('sha1').update(`${subscriberId}|${text}|${bucket}`).digest('hex').slice(0, 20)}`;
 }
 
+// Dociąganie pełnego profilu z ManyChat API — dzięki temu External Request
+// w ManyChat może wysyłać samo subscriber_id+text, a imię/telefon/email
+// i live_chat_url (link do rozmowy w ManyChat) bierzemy sami z getInfo.
+// Swagger: GET /fb/subscriber/getInfo?subscriber_id=<int>.
+async function fetchSubscriberInfo(subscriberId) {
+  const token = process.env.MANYCHAT_API_TOKEN;
+  if (!token) return null;
+  try {
+    const res = await fetch(
+      `https://api.manychat.com/fb/subscriber/getInfo?subscriber_id=${encodeURIComponent(subscriberId)}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!res.ok) return null;
+    const body = await res.json();
+    return body?.status === 'success' ? body.data : null;
+  } catch (err) {
+    console.error('ManyChat getInfo:', err.message);
+    return null;
+  }
+}
+
 async function storeRaw(db, payload) {
   const { data, error } = await db
     .from('kom_inbox_raw')
@@ -65,9 +86,15 @@ async function handleWebhook(db, payload, channelHint) {
     const text = pick(payload, 'text', 'last_input_text', 'message');
     if (!text) throw new Error('Brak treści wiadomości (text)');
 
-    const firstName = pick(payload, 'first_name', 'firstName');
-    const lastName = pick(payload, 'last_name', 'lastName');
-    const displayName = [firstName, lastName].filter(Boolean).join(' ') || pick(payload, 'name') || null;
+    // Profil: co przyszło w payloadzie + dociągnięte z ManyChat API (getInfo
+    // uzupełnia braki — dzięki temu minimalne body w ManyChat wystarcza).
+    const info = await fetchSubscriberInfo(subscriberId);
+    const firstName = pick(payload, 'first_name', 'firstName') || String(info?.first_name || '').trim();
+    const lastName = pick(payload, 'last_name', 'lastName') || String(info?.last_name || '').trim();
+    const displayName = [firstName, lastName].filter(Boolean).join(' ')
+      || pick(payload, 'name') || String(info?.name || '').trim() || null;
+    const phone = pick(payload, 'phone') || String(info?.phone || info?.optin_phone || '').trim();
+    const email = pick(payload, 'email') || String(info?.email || info?.optin_email || '').trim();
 
     const { customer, created } = await identity.resolveCustomer(db, {
       type: mapped.identityType,
@@ -84,10 +111,18 @@ async function handleWebhook(db, payload, channelHint) {
 
     const { thread } = await identity.attachThread(db, customer, mapped.channel, subscriberId);
 
+    // live_chat_url = link "otwórz tę rozmowę w ManyChat" — fallback ręczny
+    // po zamknięciu okna 24 h (jeden klik zamiast szukania w Business Suite).
+    if (info?.live_chat_url && thread.meta?.live_chat_url !== info.live_chat_url) {
+      await db.from('kom_threads')
+        .update({ meta: { ...(thread.meta || {}), live_chat_url: info.live_chat_url } })
+        .eq('id', thread.id);
+    }
+
     // Telefon/email z profilu ManyChat wzbogaca klienta; konflikt z innym
     // klientem = propozycja scalenia do potwierdzenia, nigdy auto-merge.
     const conflicts = [];
-    for (const [type, value] of [['phone', pick(payload, 'phone')], ['email', pick(payload, 'email')]]) {
+    for (const [type, value] of [['phone', phone], ['email', email]]) {
       if (!value) continue;
       const result = await identity.enrichCustomer(db, customer.id, { type, value, source: 'webhook' });
       if (result.status === 'conflict' && result.otherCustomer) {
