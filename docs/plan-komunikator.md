@@ -58,9 +58,11 @@ klienta po parentCommentId), kanał `tiktok` + tożsamość `tt` (migracja 003),
 `manual_only` (sugestia AI + Kopiuj + link do filmu + „Wysłane ręcznie").
 ⚠️ Vercel = plan HOBBY → crony tylko dzienne; harmonogram co 30 min robi **pg_cron
 w Supabase** (job `tiktok_comments_sync`, 5–21 UTC, przez pg_net → endpoint
-z CRON_SECRET); wpis w vercel.json (07:15) to tylko fallback. CZEKA NA: APIFY_TOKEN
-od Antoniego (darmowe konto apify.com, $5 kredytu/mies wystarczy) → env lokalnie
-+ Vercel. DM-y TikTok: kierować ruch do bio-linku/WhatsApp; ewentualny eksperyment
+z CRON_SECRET); wpis w vercel.json (07:15) to tylko fallback. APIFY_TOKEN dodany
+(konto beneficial_pompom, plan FREE) — LIVE E2E: 5 realnych komentarzy z lumlum.led
+w wątkach panelu (commit de7dcc2; liczniki z /v1/analytics + bezpiecznik anty-pętli,
+bo licznik TikToka bywa wyższy niż dostępne komentarze).
+DM-y TikTok: kierować ruch do bio-linku/WhatsApp; ewentualny eksperyment
 TikAPI (nieoficjalne, $29/mies, ryzyko konta) świadomie odłożony.
 
 **Plan dla nowego czatu (migracja na Zernio) — wykonany, zostawiony dla kontekstu:**
