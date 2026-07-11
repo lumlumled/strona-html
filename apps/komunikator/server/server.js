@@ -207,12 +207,28 @@ function isCommentsThread(thread) {
 function computeSendState(thread, messagesAsc) {
   const now = new Date();
 
-  // TikTok = tylko odczyt (scraper): sugestia się generuje, wysyłka ręcznie
-  // w aplikacji TikToka + "Wysłane ręcznie". Link do filmu dla UI.
+  // Tryb manual_only: sugestia AI się generuje, ale wysyłka jest ręczna
+  // (Kopiuj treść → odpowiedz u źródła → "Wysłane ręcznie"). reply_url/label
+  // prowadzą prosto do miejsca odpowiedzi.
   if (thread.channel === 'tiktok') {
     const lastComment = [...messagesAsc].reverse()
       .find((m) => m.direction === 'in' && m.meta?.kind === 'comment');
-    return { mode: 'manual_only', video_url: lastComment?.meta?.tiktok?.videoUrl || null };
+    return {
+      mode: 'manual_only',
+      reply_url: lastComment?.meta?.tiktok?.videoUrl || null,
+      reply_label: 'Otwórz film w TikTok ↗',
+      note: 'Komentarz na TikToku (tylko odczyt — brak API). Skopiuj treść, odpowiedz pod filmem i kliknij „Wysłane ręcznie”.',
+    };
+  }
+  if (thread.channel === 'email') {
+    const gmailThreadId = thread.meta?.gmail?.threadId
+      || [...messagesAsc].reverse().find((m) => m.meta?.gmail?.threadId)?.meta?.gmail?.threadId;
+    return {
+      mode: 'manual_only',
+      reply_url: gmailThreadId ? `https://mail.google.com/mail/u/0/#all/${gmailThreadId}` : 'https://mail.google.com/',
+      reply_label: 'Otwórz w Gmailu ↗',
+      note: 'E-mail — wysyłka z panelu jeszcze niepodłączona. Skopiuj odpowiedź, wyślij z Gmaila i kliknij „Wysłane ręcznie”.',
+    };
   }
 
   if (isCommentsThread(thread)) {

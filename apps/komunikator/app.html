@@ -364,13 +364,13 @@
       $('conv-llid').textContent = d.customer.public_id;
       $('conv-channel').textContent = CHANNEL_LABELS[d.thread.channel] || d.thread.channel;
 
-      // Fallback ręczny: TikTok → prosto do filmu z komentarzem; rozmowy
-      // z Zernio → ich inbox (konkretny wątek po nazwie rozmówcy).
+      // Fallback ręczny: manual_only → prosto do miejsca odpowiedzi (film
+      // TikTok / wątek w Gmailu); rozmowy z Zernio → ich inbox.
       const liveChat = $('btn-livechat');
-      if (d.send?.mode === 'manual_only' && d.send.video_url) {
+      if (d.send?.mode === 'manual_only' && d.send.reply_url) {
         liveChat.hidden = false;
-        liveChat.href = d.send.video_url;
-        liveChat.textContent = 'Otwórz film w TikTok ↗';
+        liveChat.href = d.send.reply_url;
+        liveChat.textContent = d.send.reply_label || 'Otwórz źródło ↗';
       } else if (d.thread.meta?.zernio) {
         liveChat.hidden = false;
         liveChat.href = 'https://zernio.com/dashboard/inbox';
@@ -455,7 +455,7 @@
         note.textContent = 'Kanał bez wysyłania z panelu — odpowiedz telefonicznie albo zapisz notatkę.';
         sendBtn.disabled = true;
       } else if (send.mode === 'manual_only') {
-        note.textContent = 'Komentarz na TikToku (tylko odczyt — brak API). Skopiuj treść, odpowiedz pod filmem i kliknij „Wysłane ręcznie”.';
+        note.textContent = send.note || 'Skopiuj treść, odpowiedz u źródła i kliknij „Wysłane ręcznie”.';
         sendBtn.disabled = true;
         manualBtn.hidden = false;
         copyBtn.hidden = false;
