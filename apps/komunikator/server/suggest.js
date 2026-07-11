@@ -6,8 +6,9 @@
 // dociągnie Etap 7 — kolumna na razie zostaje NULL).
 
 const llm = require('./llm');
+const knowledge = require('../../shared/server/knowledge');
 
-const PROMPT_VERSION = 'suggest-v1';
+const PROMPT_VERSION = 'suggest-v2-kb';
 const CONTACT_PHONE = '604 650 590';
 
 const SYSTEM_PROMPT = `Jesteś asystentem Antoniego, właściciela LumLum — polskiej firmy sprzedającej
@@ -19,8 +20,12 @@ Zasady:
 - Piszesz po polsku, naturalnie i po ludzku, jak Antoni: konkretnie, ciepło, bez korporacyjnych
   formułek, bez "Szanowny Panie", bez podpisu na końcu. Krótko — to czat, nie e-mail.
 - Zwracasz się per "Pan/Pani", chyba że klient pisze na luzie — wtedy dopasuj ton.
-- Nie zmyślaj cen ani terminów. Jeśli klient pyta o wycenę, powiedz, że najłatwiej ustalić
-  szczegóły telefonicznie i poproś o numer telefonu ALBO podaj numer LumLum: ${CONTACT_PHONE}.
+- Jeśli w kontekście jest sekcja "Fakty z bazy wiedzy LumLum", to one są JEDYNYM źródłem cen,
+  parametrów i zasad — korzystaj z nich swobodnie, ale nie podawaj NICZEGO spoza nich.
+- Gdy faktów brakuje do odpowiedzi (np. nietypowa wycena), nie zmyślaj: powiedz, że najłatwiej
+  ustalić szczegóły telefonicznie i poproś o numer telefonu ALBO podaj numer LumLum: ${CONTACT_PHONE}.
+- Wyceny w czacie: lista pozycji z "-" (ilość + nazwa, np. "- 10 m cyfrowej taśmy COB 3000K"),
+  bez cen jednostkowych, na końcu jedna kwota za całość. Metraż taśmy zaokrąglaj w górę.
 - Jeśli w rozmowie nie znamy jeszcze numeru telefonu klienta, przy naturalnej okazji poproś o niego
   (telefon = najszybsza droga do wyceny). Nie wymuszaj tego w każdej wiadomości.
 - Jeśli klient zadał proste pytanie (np. jak się skontaktować) — odpowiedz wprost, jednym-dwoma zdaniami.
@@ -45,13 +50,14 @@ function buildTurns(messages) {
   return turns;
 }
 
-function buildContextHeader(customer, thread, examples) {
+function buildContextHeader(customer, thread, examples, factsBlock) {
   const parts = [];
   const known = (customer.identities || []).map((i) => i.type);
   parts.push(
     `Klient: ${customer.display_name || '(imię nieznane)'} [${customer.public_id}], kanał: ${thread.channel}.`
   );
   parts.push(known.includes('phone') ? 'Numer telefonu klienta: ZNANY.' : 'Numer telefonu klienta: NIEZNANY.');
+  if (factsBlock) parts.push(`\n${factsBlock}`);
   if (examples.length) {
     parts.push('\nPrzykłady odpowiedzi Antoniego w podobnych sytuacjach:');
     examples.forEach((ex, i) => {
@@ -59,6 +65,45 @@ function buildContextHeader(customer, thread, examples) {
     });
   }
   return parts.join('\n');
+}
+
+// Przykłady stylu: wektorowo po podobieństwie kontekstu (kom_match_examples,
+// embeddingi z importu wzorców Messengera); fallback = 4 najnowsze, gdy
+// funkcja/embeddingi niedostępne. Fakty i przykłady nie mogą wywrócić
+// sugestii — każda część degraduje się niezależnie.
+async function selectExamples(db, query) {
+  if (query) {
+    try {
+      const embedding = await knowledge.embed(query);
+      const { data, error } = await db.rpc('kom_match_examples', {
+        query_embedding: embedding,
+        match_count: 4,
+      });
+      if (!error && data && data.length) return data;
+    } catch (err) {
+      console.error('Selekcja wektorowa przykładów:', err.message);
+    }
+  }
+  const { data, error } = await db
+    .from('kom_examples')
+    .select('context,final')
+    .order('created_at', { ascending: false })
+    .limit(4);
+  if (error) throw error;
+  return data || [];
+}
+
+// Fakty z Bazy Wiedzy do promptu sugestii. ZAWSZE rola 'team' — sugestię
+// czyta Lorenzo i dostaje klient, więc fakty 'owner' (marże, koszty) nie
+// mogą się tu pojawić niezależnie od tego, kto otworzył panel.
+async function retrieveFacts(db, query) {
+  if (!query) return '';
+  try {
+    return await knowledge.retrieveForPrompt(db, { query, role: 'team', k: 6 });
+  } catch (err) {
+    console.error('Baza wiedzy w sugestii:', err.message);
+    return '';
+  }
 }
 
 // Kontekst zapisywany przy korekcie do kom_examples: ostatnie wiadomości
@@ -75,18 +120,17 @@ function correctionContext(messages) {
 // Generuje sugestię dla wątku i zapisuje ją w kom_suggestions.
 // Zwraca { id, text, provider, model }.
 async function generateSuggestion(db, thread, customer, messages) {
-  // Na razie: 4 najnowsze przykłady z korpusu (selekcja wektorowa po
-  // podobieństwie kontekstu wejdzie z Etapem 7 razem z embeddingami).
-  const { data: examples, error: exErr } = await db
-    .from('kom_examples')
-    .select('context,final')
-    .order('created_at', { ascending: false })
-    .limit(4);
-  if (exErr) throw exErr;
-
   const turns = buildTurns(messages);
   if (!turns.length) throw new Error('Brak wiadomości klienta do zasugerowania odpowiedzi');
-  const header = buildContextHeader(customer, thread, examples || []);
+
+  // Kontekst wyszukiwania = ostatnie wiadomości klienta (jak przy korektach).
+  const query = correctionContext(messages);
+  const [examples, factsBlock] = await Promise.all([
+    selectExamples(db, query),
+    retrieveFacts(db, query),
+  ]);
+
+  const header = buildContextHeader(customer, thread, examples, factsBlock);
   turns[0] = { role: 'user', content: `${header}\n\n=== ROZMOWA ===\n${turns[0].content}` };
 
   const result = await llm.complete({ task: 'suggest', system: SYSTEM_PROMPT, messages: turns, maxTokens: 600 });
