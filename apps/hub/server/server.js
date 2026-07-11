@@ -129,21 +129,32 @@ function formatPhonePlus(raw) {
 }
 
 // GET /api/dzisiaj — akcje do zrobienia (zaległe / na dziś / bez terminu),
-// zaległe feedbacki i liczniki na ekran startowy.
+// zaległe feedbacki i liczniki na ekran startowy. Pozycje z leadów są
+// filtrowane po kolumnie "Owner" (docs/plan-wlasnosc-zasobow.md): każdy widzi
+// tylko leady przypisane do siebie (lead bez ownera przypada adminowi).
+// Użytkownik z panelem Wiadomości dostaje dodatkowo wątki do odpisania z
+// Komunikatora — dziś wszystkie (wiadomości są przypisane do Antoniego),
+// per-user przyjdzie razem z przypisaniem wątków.
 app.get('/api/dzisiaj', async (req, res) => {
   try {
     const supabase = getClient();
     const today = warsawToday();
     const [leadyResult, logResult] = await Promise.all([
       supabase.from(LEADY_B2C_TABLE).select(
-        '"ID Leada",Name,"Phone number","Deal stage","Najbliższa akcja","Najbliższa akcja termin","Najbliższa akcja owner","Data Feedbacku"'
+        '"ID Leada",Name,"Phone number","Deal stage","Najbliższa akcja","Najbliższa akcja termin","Najbliższa akcja owner","Data Feedbacku",Owner'
       ),
       supabase.from(LOG_ZMIAN_TABLE).select('telefon,zrodlo,data_zmiany').gte('data_zmiany', today),
     ]);
     if (leadyResult.error) throw leadyResult.error;
     if (logResult.error) throw logResult.error;
 
-    const leady = leadyResult.data || [];
+    const myName = String(req.user?.name || '').trim().toLowerCase();
+    const admin = isAdmin(req.user);
+    const isMine = (row) => {
+      const owner = String(row['Owner'] || '').trim().toLowerCase();
+      return owner ? owner === myName : admin;
+    };
+    const leady = (leadyResult.data || []).filter(isMine);
 
     const akcje = [];
     leady.forEach((row) => {
@@ -193,16 +204,43 @@ app.get('/api/dzisiaj', async (req, res) => {
     ).length;
     const nowe = leady.filter((r) => String(r['Deal stage'] || '').trim().toLowerCase() === 'nowy').length;
 
+    // Wiadomości do odpisania (Komunikator): wątki attention+inbox — tylko
+    // dla kont z dostępem do panelu Wiadomości. Miękka degradacja: błąd tabel
+    // kom_* nie może położyć całego ekranu startowego.
+    let wiadomosci = null;
+    if (userHasPanel(req.user, 'wiadomosci')) {
+      try {
+        const { data, error } = await supabase
+          .from('kom_threads')
+          .select('id,channel,last_message_at,kom_customers(display_name,public_id)')
+          .eq('status', 'attention')
+          .eq('triage', 'inbox')
+          .order('last_message_at', { ascending: false })
+          .limit(40);
+        if (error) throw error;
+        wiadomosci = (data || []).map((t) => ({
+          id: t.id,
+          channel: t.channel,
+          name: t.kom_customers?.display_name || t.kom_customers?.public_id || '(bez nazwy)',
+          ostatnia: t.last_message_at,
+        }));
+      } catch (err) {
+        console.error('Błąd odczytu wątków Komunikatora do "dzisiaj":', err.message);
+      }
+    }
+
     res.json({
       dzis: today,
       akcje: akcje.slice(0, 40),
       feedbacki: feedbacki.slice(0, 40),
+      ...(wiadomosci ? { wiadomosci } : {}),
       stats: {
         akcje: akcje.length,
         zalegleAkcje: akcje.filter((a) => a.zalegle).length,
         feedbacki: feedbacki.length,
         nowe,
         kontaktyDzis,
+        ...(wiadomosci ? { wiadomosci: wiadomosci.length } : {}),
       },
     });
   } catch (err) {

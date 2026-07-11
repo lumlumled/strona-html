@@ -40,6 +40,11 @@ const EDITABLE_LEAD_FIELDS = [
   // Kolumny-metadane akcji ("... termin"/"... owner") celowo poza listą:
   // edytuje je automat i POST /api/leady/akcja.
   'Najbliższa akcja',
+  // Właściciel leada (docs/plan-wlasnosc-zasobow.md) — wartość to
+  // app_users.name; zmienia się kółeczkiem w prawym górnym rogu karty.
+  // Domyślną wartość nowym leadom nadaje DEFAULT kolumny w Postgresie
+  // (jedno miejsce konfiguracji — patrz scripts/add-owner-leady.js).
+  'Owner',
 ];
 
 // Źródła w "Log zmian", które NIE są telefonami — nie liczą się do
@@ -204,6 +209,28 @@ function registerLeadyEndpoints(app, { getClient, requireView, requireEdit }) {
       }
 
       res.json({ ok: true });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
+  // GET /api/leady/owners — lista możliwych właścicieli leada do kółeczka na
+  // karcie: aktywne konta app_users + wartości już użyte w kolumnie "Owner"
+  // (unia, bo Lorenzo może być ownerem zanim dostanie konto w Pozwoleniach).
+  app.get('/api/leady/owners', view, async (req, res) => {
+    try {
+      const supabase = getClient();
+      const [usersRes, ownersRes] = await Promise.all([
+        supabase.from('app_users').select('name').eq('active', true),
+        supabase.from(LEADY_B2C_TABLE).select('Owner'),
+      ]);
+      if (usersRes.error) throw usersRes.error;
+      if (ownersRes.error) throw ownersRes.error;
+      const names = new Set();
+      (usersRes.data || []).forEach((u) => u.name && names.add(String(u.name).trim()));
+      (ownersRes.data || []).forEach((r) => r.Owner && names.add(String(r.Owner).trim()));
+      names.delete('');
+      res.json({ data: [...names].sort((a, b) => a.localeCompare(b, 'pl')) });
     } catch (err) {
       handleError(res, err, 502);
     }

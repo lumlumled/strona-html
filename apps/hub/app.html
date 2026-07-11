@@ -459,6 +459,8 @@
         chips.className = 'stat-chips';
         const stats = body.stats || {};
         [
+          // stats.wiadomosci przychodzi tylko dla kont z panelem Wiadomości
+          ...(stats.wiadomosci !== undefined ? [['Wiadomości do odpisania', stats.wiadomosci, stats.wiadomosci > 0]] : []),
           ['Akcje do zrobienia', stats.akcje, stats.zalegleAkcje > 0],
           ['Zaległy feedback', stats.feedbacki, stats.feedbacki > 0],
           ['Nowe leady', stats.nowe, false],
@@ -475,16 +477,66 @@
 
         const akcje = body.akcje || [];
         const feedbacki = body.feedbacki || [];
+        const wiadomosci = body.wiadomosci || [];
 
-        if (!akcje.length && !feedbacki.length) {
+        if (!akcje.length && !feedbacki.length && !wiadomosci.length) {
           const empty = document.createElement('p');
           empty.className = 'today-empty';
-          empty.textContent = 'Nic pilnego — wszystkie akcje i feedbacki są ogarnięte. 🎉';
+          empty.textContent = 'Nic pilnego — wszystkie akcje, feedbacki i wiadomości są ogarnięte. 🎉';
           card.appendChild(empty);
           return;
         }
 
         const LIMIT = 8;
+
+        // ── Wiadomości do odpisania (Komunikator) — pierwsza sekcja, bo to
+        // główna praca "z panelu" (przypisana dziś do Antoniego). ──
+        if (wiadomosci.length) {
+          const CHANNEL_LABELS = {
+            messenger: 'Messenger', instagram: 'Instagram', whatsapp: 'WhatsApp',
+            email: 'E-mail', phone: 'Telefon', tiktok: 'TikTok', note: 'Notatka',
+          };
+          const group = document.createElement('div');
+          group.className = 'today-group';
+          const h = document.createElement('h3');
+          h.textContent = 'Wiadomości do odpisania';
+          const list = document.createElement('div');
+          list.className = 'today-list';
+          const href = USER.panels.includes('wiadomosci') && LINKS.wiadomosci ? LINKS.wiadomosci : null;
+          wiadomosci.slice(0, LIMIT).forEach((w) => {
+            const item = document.createElement(href ? 'a' : 'div');
+            item.className = 'today-item';
+            if (href) item.href = href;
+            const who = document.createElement('span');
+            who.className = 'who';
+            who.textContent = w.name;
+            const what = document.createElement('span');
+            what.className = 'what';
+            what.textContent = CHANNEL_LABELS[w.channel] || w.channel || '';
+            const when = document.createElement('span');
+            when.className = 'when';
+            if (w.ostatnia) {
+              const d = new Date(w.ostatnia);
+              when.textContent = `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+            }
+            item.append(who, what, when);
+            if (href) {
+              const go = document.createElement('span');
+              go.className = 'go';
+              go.textContent = '→';
+              item.appendChild(go);
+            }
+            list.appendChild(item);
+          });
+          group.append(h, list);
+          if (wiadomosci.length > LIMIT) {
+            const more = document.createElement('div');
+            more.className = 'today-more';
+            more.textContent = `…i ${wiadomosci.length - LIMIT} kolejnych — całość w panelu Wiadomości.`;
+            group.appendChild(more);
+          }
+          card.appendChild(group);
+        }
 
         if (akcje.length) {
           const group = document.createElement('div');

@@ -263,6 +263,23 @@ window.LeadKarta = (() => {
     { col: 'Facebook Leads ID', label: 'Facebook Leads ID', readonly: true },
   ];
 
+  // ── Lista możliwych ownerów leada ─────────────────────────────────────────
+  // Jedno pobranie na stronę (lista zmienia się rzadko — nowy user w
+  // Pozwoleniach); błąd pobrania nie blokuje karty, tylko menu zmiany.
+  let ownersPromise = null;
+  function fetchOwners(apiBase) {
+    if (!ownersPromise) {
+      ownersPromise = fetch(`${apiBase}/api/leady/owners`)
+        .then((res) => res.json())
+        .then((body) => body.data || [])
+        .catch(() => {
+          ownersPromise = null;
+          return [];
+        });
+    }
+    return ownersPromise;
+  }
+
   // ── Zapis pojedynczego pola ───────────────────────────────────────────────
 
   async function saveField(apiBase, lead, field, value) {
@@ -695,6 +712,83 @@ window.LeadKarta = (() => {
 
     const body = document.createElement('div');
     body.className = 'lk-lead-body';
+
+    // ── Owner leada — kółeczko z inicjałem, zawsze prawy górny róg karty ──
+    // (docs/plan-wlasnosc-zasobow.md): "L" = Lorenzo, "A" = Antoni; klik
+    // otwiera wybór ownera z listy /api/leady/owners.
+    const ownerWrap = document.createElement('div');
+    ownerWrap.className = 'lk-owner';
+    const ownerBtn = document.createElement('button');
+    ownerBtn.type = 'button';
+    ownerBtn.className = 'lk-owner-circle';
+    const ownerMenu = document.createElement('div');
+    ownerMenu.className = 'lk-owner-menu';
+
+    const renderOwner = () => {
+      const name = String(lead['Owner'] || '').trim();
+      ownerBtn.textContent = (name[0] || '?').toUpperCase();
+      ownerBtn.title = name
+        ? `Owner: ${name}${readOnly ? '' : ' — kliknij, aby zmienić'}`
+        : 'Lead bez ownera' + (readOnly ? '' : ' — kliknij, aby przypisać');
+    };
+    renderOwner();
+
+    const closeOwnerMenu = () => {
+      ownerMenu.classList.remove('open');
+      document.removeEventListener('click', closeOwnerMenu);
+    };
+
+    if (!readOnly) {
+      ownerBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (ownerMenu.classList.contains('open')) {
+          closeOwnerMenu();
+          return;
+        }
+        const owners = await fetchOwners(apiBase);
+        const current = String(lead['Owner'] || '').trim();
+        ownerMenu.innerHTML = '';
+        // Owner spoza listy (np. usunięte konto) dalej jest widoczny i
+        // wybieralny — lista nigdy nie "gubi" aktualnej wartości.
+        const options = owners.includes(current) || !current ? owners : [current, ...owners];
+        options.forEach((name) => {
+          const opt = document.createElement('button');
+          opt.type = 'button';
+          opt.className = 'lk-owner-option' + (name === current ? ' current' : '');
+          const dot = document.createElement('span');
+          dot.className = 'lk-owner-dot';
+          dot.textContent = (name[0] || '?').toUpperCase();
+          const label = document.createElement('span');
+          label.textContent = name;
+          opt.append(dot, label);
+          opt.addEventListener('click', async (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            closeOwnerMenu();
+            if (name === current) return;
+            try {
+              await saveField(apiBase, lead, 'Owner', name);
+              renderOwner();
+            } catch (err) {
+              alert(`Nie zmieniono ownera: ${err.message}`);
+            }
+          });
+          ownerMenu.appendChild(opt);
+        });
+        if (!options.length) {
+          const empty = document.createElement('span');
+          empty.className = 'lk-owner-empty';
+          empty.textContent = 'Brak użytkowników';
+          ownerMenu.appendChild(empty);
+        }
+        ownerMenu.classList.add('open');
+        document.addEventListener('click', closeOwnerMenu);
+      });
+    }
+
+    ownerWrap.append(ownerBtn, ownerMenu);
+    body.appendChild(ownerWrap);
 
     // ── Najbliższa akcja (z ptaszkiem "zrobione dziś") ──
     let currentAkcja = {
