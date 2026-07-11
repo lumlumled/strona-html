@@ -3153,6 +3153,11 @@
         const list = document.createElement('div');
         list.className = 'cases';
         details.appendChild(list);
+        // Jak w kategoriach z Umowy: zwinięcie kategorii zwija wszystkie
+        // case'y (i ich podsekcje) w środku.
+        details.addEventListener('toggle', () => {
+          if (!details.open) list.querySelectorAll('details[open]').forEach((d) => { d.open = false; });
+        });
         wrap.insertBefore(details, wrap.firstChild);
       }
       return details;

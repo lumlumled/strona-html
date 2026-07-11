@@ -226,6 +226,15 @@
 .lk-historia-rozmow-entry.nieodebrane .lk-historia-rozmow-notatka,
 .lk-historia-rozmow-notatka.brak-tresci { color: var(--text-muted); }
 
+/* Pełne rozmowy — transkrypcja słowo w słowo, bez skracania. */
+.lk-pelna-rozmowa-tresc {
+  color: var(--text-primary);
+  margin-top: 0.3rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Siatki pól Kontakt/Transakcja. */
 .lk-field-grid {
   display: grid;
@@ -355,24 +364,6 @@
 .lk-copy-btn.copied { color: var(--good); }
 
 .lk-empty-note { color: var(--text-muted); font-style: italic; font-size: 0.85rem; }
-
-/* Puste pola: domyślnie schowane, wracają przełącznikiem na końcu siatki. */
-.lk-field-grid .lk-empty-hidden { display: none; }
-.lk-field-grid.lk-show-empty .lk-empty-hidden { display: block; }
-
-.lk-empty-toggle {
-  font: inherit;
-  font-size: 0.74rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  background: transparent;
-  border: none;
-  border-radius: 999px;
-  padding: 0.1rem 0;
-  cursor: pointer;
-}
-
-.lk-empty-toggle:hover { color: var(--text-primary); }
 
 /* Tryb podglądu (bez prawa edycji arkusza): edytory bez ramek/hoverów. */
 .lk-opis-value:disabled {

@@ -1,7 +1,8 @@
 // ── Wspólna karta leada (Backlog B2C + CRM) ─────────────────────────────────
 // Jedno źródło prawdy dla rozwiniętego widoku leada: Najbliższa akcja (z
 // ptaszkiem "zrobione dziś"), plusik "+ Dodaj własny komentarz", Podsumowanie
-// AI, Historia rozmów, siatki Kontakt/Transakcja i sekcja Wycena. Kod
+// AI, Historia rozmów, siatki Kontakt/Transakcja, sekcja Wycena i Pełne
+// rozmowy (transkrypcje słowo w słowo z "Log zmian") na samym dole. Kod
 // przeniesiony z apps/crm/app.html (wygląd/edycja pól) + apps/backlog-b2c
 // (notatka z dyktowaniem). Obie appki ładują ten plik przez <script src=
 // "shared/lead-card.js"> i wołają LeadKarta.buildBody(lead, opts).
@@ -219,9 +220,9 @@ window.LeadKarta = (() => {
 
   // "Kontakt" — Ilość telefonów/Skontaktowane dziś READ-ONLY: liczone live
   // z "Log zmian" po stronie serwera, nie z legacy skażonej kolumny "Ilość
-  // telefonów". Pola bez keepWhenEmpty chowają się, gdy są puste — wracają
-  // przełącznikiem "+ puste pola" na końcu siatki (decyzja Antoniego:
-  // nie wyświetlamy pustych danych na siłę, ale da się je uzupełnić).
+  // telefonów". Pola bez keepWhenEmpty w ogóle nie renderują się, gdy są
+  // puste (patrz buildGrid) — keepWhenEmpty tylko dla pól, które handlowiec
+  // uzupełnia ręcznie.
   const KONTAKT_FIELDS = [
     { col: 'Ostatni kontakt', label: 'Ostatni kontakt', formatDisplay: (v) => formatDateOnly(v, true) },
     { col: '_ilosc_polaczen', label: 'Ilość telefonów', readonly: true },
@@ -243,7 +244,7 @@ window.LeadKarta = (() => {
     { col: 'Date', label: 'Data dodania', formatDisplay: (v) => formatDateOnly(v), keepWhenEmpty: true },
     { col: 'Name', label: 'Imię', keepWhenEmpty: true },
     { col: 'ID Leada', label: 'ID Leada', readonly: true },
-    { col: 'ID', label: 'ID wyceny', readonly: true, hideWhenEmpty: true },
+    { col: 'ID', label: 'ID wyceny', readonly: true },
     { col: 'Data wysłania wyceny', label: (l) => (l._ma_wycene ? 'Data wyceny' : 'Data przedstawienia oferty'), formatDisplay: (v) => formatDateOnly(v) },
     {
       col: 'Kwota wyceny',
@@ -256,10 +257,10 @@ window.LeadKarta = (() => {
     // Produkty/link chowane, gdy lead ma realną Wycenę — kompletna wersja
     // jest wtedy w sekcji "Wycena" na dole karty.
     { col: 'Produkty z wyceny', label: 'Produkty złapane z rozmowy', textarea: true, wide: true, collapsible: true, hide: (l) => l._ma_wycene },
-    { col: 'Link do formularza', label: 'Link do formularza', wide: true, link: true, hideWhenEmpty: true, hide: (l) => l._ma_wycene },
-    { col: 'Źródło', label: 'Źródło', readonly: true, hideWhenEmpty: true },
-    { col: 'ad_name', label: 'Reklama', readonly: true, hideWhenEmpty: true },
-    { col: 'Facebook Leads ID', label: 'Facebook Leads ID', readonly: true, hideWhenEmpty: true },
+    { col: 'Link do formularza', label: 'Link do formularza', wide: true, link: true, hide: (l) => l._ma_wycene },
+    { col: 'Źródło', label: 'Źródło', readonly: true },
+    { col: 'ad_name', label: 'Reklama', readonly: true },
+    { col: 'Facebook Leads ID', label: 'Facebook Leads ID', readonly: true },
   ];
 
   // ── Zapis pojedynczego pola ───────────────────────────────────────────────
@@ -315,7 +316,6 @@ window.LeadKarta = (() => {
     if (spec.bool || spec.readonly) {
       const wrap = document.createElement('div');
       wrap.className = 'lk-field' + (spec.wide ? ' wide' : '');
-      if (spec.hideWhenEmpty && !lead[spec.col]) wrap.style.display = 'none';
       const label = document.createElement('span');
       label.className = 'lk-label';
       label.textContent = labelText;
@@ -539,6 +539,58 @@ window.LeadKarta = (() => {
     }
   }
 
+  // ── Pełne rozmowy (transkrypcje słowo w słowo) ────────────────────────────
+
+  // Pełny zapis każdej odebranej rozmowy telefonicznej — kolumna
+  // `transkrypcja` w "Log zmian" (pisze ją webhook Zadarmy przy każdym
+  // połączeniu). W odróżnieniu od "Historii rozmów" (podsumowania) handlowiec
+  // widzi tu całą rozmowę dokładnie tak, jak przebiegła.
+  async function loadPelneRozmowy(apiBase, lead, container) {
+    container.innerHTML = '<p class="lk-empty-note">Wczytywanie…</p>';
+    try {
+      const res = await fetch(`${apiBase}/api/leady/${lead._telefon_digits}/historia`);
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+      const rows = (body.data || []).filter((r) => String(r.transkrypcja || '').trim());
+      if (!rows.length) {
+        container.innerHTML = '<p class="lk-empty-note">Brak zapisanych transkrypcji rozmów dla tego leada.</p>';
+        return;
+      }
+      const list = document.createElement('div');
+      list.className = 'lk-historia-rozmow-list';
+      // Najnowsze na górze (endpoint sortuje rosnąco dla innych konsumentów).
+      [...rows].reverse().forEach((row) => {
+        const entry = document.createElement('div');
+        entry.className = 'lk-historia-rozmow-entry';
+        const head = document.createElement('div');
+        head.className = 'lk-historia-rozmow-head';
+        const when = document.createElement('span');
+        when.className = 'lk-historia-rozmow-data';
+        when.textContent = formatRelativeDateTime(row.data_zmiany);
+        head.appendChild(when);
+        [
+          row.kierunek,
+          row.czas_trwania_s ? formatDurationS(row.czas_trwania_s) : null,
+          row.handlowiec,
+        ].filter(Boolean).forEach((text) => {
+          const tag = document.createElement('span');
+          tag.className = 'lk-historia-rozmow-czas';
+          tag.textContent = text;
+          head.appendChild(tag);
+        });
+        const tresc = document.createElement('div');
+        tresc.className = 'lk-pelna-rozmowa-tresc';
+        tresc.textContent = String(row.transkrypcja).trim();
+        entry.append(head, tresc);
+        list.appendChild(entry);
+      });
+      container.innerHTML = '';
+      container.appendChild(list);
+    } catch (err) {
+      container.innerHTML = `<p class="lk-empty-note">Błąd wczytywania: ${err.message}</p>`;
+    }
+  }
+
   // ── Wycena ────────────────────────────────────────────────────────────────
 
   async function loadWycena(apiBase, lead, container) {
@@ -624,7 +676,8 @@ window.LeadKarta = (() => {
 
   // opts:
   //   apiBase        — prefiks appki ('' lokalnie, '/crm' / '/backlog-b2c' na Vercelu)
-  //   hostDetails    — zewnętrzny <details> leada; przy otwarciu auto-rozwija Historię
+  //   hostDetails    — zewnętrzny <details> leada; przy zwinięciu zwija
+  //                    wszystkie podsekcje karty (czysty widok po ponownym otwarciu)
   //   onAkcjaChange  — (telefonDigits, {akcja,termin,owner}|null) po każdej zmianie
   //                    akcji z karty (edycja, ptaszek, notatka) — Backlog
   //                    aktualizuje tym pigułki na zwiniętych case'ach
@@ -756,19 +809,23 @@ window.LeadKarta = (() => {
     });
     opisWrap.append(opisLabel, opisValue);
 
-    // ── Historia rozmów (licznik + auto-rozwinięcie przy otwarciu leada) ──
+    // ── Historia rozmów (z licznikiem) ──
     const historiaEntries = parseHistoriaRozmow(lead['Historia rozmów']);
     const historiaCount = historiaEntries.length || lead._ilosc_polaczen;
     const historiaLabel = 'Historia rozmów' + (historiaCount ? ` · ${historiaCount}` : '');
     const historia = buildNestedDetails(historiaLabel, (container) => loadHistoria(apiBase, lead, container));
-    const autoOpenHistoria = () => {
-      if (historiaCount) historia.open = true;
-    };
+
+    // Zwinięcie leada resetuje WSZYSTKIE podsekcje karty (Historia rozmów,
+    // Pełne rozmowy, Wycena, zwijane pola) — ponowne otwarcie zawsze zaczyna
+    // od czystego, zwiniętego widoku bez ręcznego przeklikiwania (decyzja
+    // Antoniego 2026-07-11; wypadło przy tym dawne auto-rozwijanie Historii,
+    // bo otwierałoby ją z powrotem przy każdym otwarciu leada).
     if (opts.hostDetails) {
       opts.hostDetails.addEventListener('toggle', () => {
-        if (opts.hostDetails.open) autoOpenHistoria();
+        if (!opts.hostDetails.open) {
+          body.querySelectorAll('details[open]').forEach((d) => { d.open = false; });
+        }
       });
-      if (opts.hostDetails.open) autoOpenHistoria();
     }
 
     // Lokalny, natychmiastowy dopis do historii (np. świeżo zapisana notatka)
@@ -872,10 +929,10 @@ window.LeadKarta = (() => {
     }
 
     // ── Siatki Kontakt / Transakcja ──
-    // Puste pola nie zaśmiecają karty: chowamy je i doklejamy na końcu siatki
-    // dyskretny przełącznik "+ N pustych pól" (bez niego nie dałoby się
-    // uzupełnić brakujących danych). Pola hideWhenEmpty (identyfikatory
-    // systemowe) pozostają schowane na stałe — nie wliczają się do licznika.
+    // Puste pola NIE renderują się wcale — bez żadnego przełącznika (decyzja
+    // Antoniego 2026-07-11: skoro danych nie ma, kategoria znika z karty).
+    // Wyjątek: pola keepWhenEmpty (email, notatka, data feedbacku…), które
+    // handlowiec uzupełnia ręcznie — bez nich nie dałoby się ich wpisać.
     function isEmptyValue(v) {
       return v === null || v === undefined || String(v).trim() === '';
     }
@@ -883,37 +940,11 @@ window.LeadKarta = (() => {
     function buildGrid(fields) {
       const grid = document.createElement('div');
       grid.className = 'lk-field-grid';
-      let hiddenCount = 0;
       fields.forEach((spec) => {
+        if (!spec.keepWhenEmpty && !spec.bool && isEmptyValue(lead[spec.col])) return;
         const el = buildField(lead, spec, ctx);
-        if (!el) return;
-        if (!spec.keepWhenEmpty && !spec.hideWhenEmpty && !spec.bool && isEmptyValue(lead[spec.col])) {
-          el.classList.add('lk-empty-hidden');
-          hiddenCount += 1;
-        }
-        grid.appendChild(el);
+        if (el) grid.appendChild(el);
       });
-      if (hiddenCount) {
-        const toggleWrap = document.createElement('div');
-        toggleWrap.className = 'lk-field wide lk-empty-toggle-wrap';
-        const toggle = document.createElement('button');
-        toggle.type = 'button';
-        toggle.className = 'lk-empty-toggle';
-        const setLabel = () => {
-          toggle.textContent = grid.classList.contains('lk-show-empty')
-            ? '− Schowaj puste pola'
-            : `+ Puste pola (${hiddenCount})`;
-        };
-        setLabel();
-        toggle.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          grid.classList.toggle('lk-show-empty');
-          setLabel();
-        });
-        toggleWrap.appendChild(toggle);
-        grid.appendChild(toggleWrap);
-      }
       return grid;
     }
 
@@ -926,6 +957,12 @@ window.LeadKarta = (() => {
     if (lead._ma_wycene) {
       const wycena = buildNestedDetails('Wycena', (container) => loadWycena(apiBase, lead, container));
       body.appendChild(wycena);
+    }
+
+    // ── Pełne rozmowy — zawsze na samym dole karty ──
+    if (digits) {
+      const pelneRozmowy = buildNestedDetails('Pełne rozmowy', (container) => loadPelneRozmowy(apiBase, lead, container));
+      body.appendChild(pelneRozmowy);
     }
 
     return {
