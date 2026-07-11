@@ -15,7 +15,7 @@ system reguł:
 |---|---|
 | Nowy lead | Owner leada (dziś domyślnie Lorenzo) |
 | Nowa sprzedaż | Owner sprzedaży + Antoni (admin dostaje WSZYSTKIE sprzedaże; gdy sprzedał sam — jedno powiadomienie, bez dubla) |
-| Feedback | Owner: „dziś masz feedback do wykonania" (rano) + przypomnienie gdy akcja ma konkretną godzinę |
+| Feedback | Owner: „dziś masz feedback do wykonania" (rano) + przypomnienie DOKŁADNIE w momencie feedbacku, gdy lead ma „Godzinę Feedbacku" |
 | Nowa wiadomość (Komunikator) | Antoni (docelowo: user przypisany do skrzynki `kom_mailboxes`; FB/IG/TikTok → Antoni), żeby nic nie umknęło |
 
 ## 2. Technologia: Web Push (VAPID) + PWA na ROOT scope
@@ -61,8 +61,15 @@ miejscu i nie spowalnia requestów.
    cron/dzień, więc jak zwykle pg_cron → endpoint z `CRON_SECRET`):
    - rano w dni robocze (np. 8:00): digest per user — leady z „Data
      Feedbacku" = dziś oraz akcje z terminem dziś;
-   - co 5 min w godzinach pracy: akcje z konkretną godziną → push ~10 min
-     przed terminem (znacznik „wysłano" żeby nie dublować).
+   - co 5 min w godzinach pracy: leady, których „Data Feedbacku" = dziś i
+     „Godzina Feedbacku" <= teraz → push **dokładnie w momencie feedbacku**
+     (decyzja Antoniego 2026-07-11: przypomnienie w momencie, nie przed;
+     znacznik „wysłano" per lead+termin, żeby nie dublować). Lead bez
+     godziny = tylko poranny digest (dzień wystarczy). Kolumna „Godzina
+     Feedbacku" ("HH:mm") jest już WDROŻONA — łapie ją analiza rozmów
+     Zadarmy i notatki, plus ręczne pole na karcie leada
+     (scripts/add-godzina-feedbacku.js, 2026-07-11). Analogicznie akcje
+     z „Najbliższa akcja termin" z godziną.
 4. **Nowa wiadomość:** hook w kodzie (nie trigger — werdykt triage'u
    zapada w JS): po `classifyInWebhook` w `ingest/zernio.js`, `gmail.js`,
    `tiktok.js` — TYLKO gdy werdykt = inbox (mute/pominięte nie pushują).

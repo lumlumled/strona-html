@@ -141,7 +141,7 @@ app.get('/api/dzisiaj', async (req, res) => {
     const today = warsawToday();
     const [leadyResult, logResult] = await Promise.all([
       supabase.from(LEADY_B2C_TABLE).select(
-        '"ID Leada",Name,"Phone number","Deal stage","Najbliższa akcja","Najbliższa akcja termin","Najbliższa akcja owner","Data Feedbacku",Owner'
+        '"ID Leada",Name,"Phone number","Deal stage","Najbliższa akcja","Najbliższa akcja termin","Najbliższa akcja owner","Data Feedbacku","Godzina Feedbacku",Owner'
       ),
       supabase.from(LOG_ZMIAN_TABLE).select('telefon,zrodlo,data_zmiany').gte('data_zmiany', today),
     ]);
@@ -194,6 +194,7 @@ app.get('/api/dzisiaj', async (req, res) => {
         telefon: formatPhonePlus(row['Phone number']),
         status: row['Deal stage'] || '',
         feedback: row['Data Feedbacku'],
+        godzina: row['Godzina Feedbacku'] || '',
         zalegle: fbDay < today,
       });
     });

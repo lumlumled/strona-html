@@ -29,6 +29,10 @@ const EDITABLE_LEAD_FIELDS = [
   'Deal stage',
   'Notes',
   'Data Feedbacku',
+  // Opcjonalna godzina umówionego feedbacku "HH:mm" (osobna kolumna — "Data
+  // Feedbacku" jest parsowana sztywnym DD.MM.YYYY, patrz
+  // scripts/add-godzina-feedbacku.js); zasila przypomnienia push.
+  'Godzina Feedbacku',
   'Temperatura',
   'Ostatni kontakt',
   'Ilość telefonów',
@@ -141,16 +145,23 @@ WYŁĄCZNIE termin kolejnego kontaktu telefonicznego z klientem, jeśli notatka
 go wskazuje ("zadzwonić za 3 dni", "kontakt w piątek"). Przelicz względem
 DZISIAJ, format DD.MM.YYYY. Inne daty (koniec budowy, odbiór mieszkania) → null.
 
+===== ZASADY godzina_feedbacku =====
+Wypełnij TYLKO gdy przy terminie kolejnego kontaktu padła KONKRETNA godzina
+("zadzwonić jutro o 15" → "15:00", "kontakt pon 14:30" → "14:30"). Format
+HH:MM (24h). Sam dzień bez godziny → null (NIE wymyślaj godziny). Pory dnia
+("rano", "po południu") → null. Gdy data_feedbacku = null → też ZAWSZE null.
+
 ===== FORMAT WYJŚCIOWY =====
 {
   "najblizsza_akcja": "max 5-6 słów lub null",
   "najblizsza_akcja_termin": "DD.MM.YYYY HH:mm lub DD.MM.YYYY lub null",
-  "data_feedbacku": "DD.MM.YYYY lub null"
+  "data_feedbacku": "DD.MM.YYYY lub null",
+  "godzina_feedbacku": "HH:MM lub null"
 }`;
 }
 
 async function analyzeNotatka(tresc, { dzisiaj, poprzedniaAkcja }) {
-  const fallback = { najblizsza_akcja: null, najblizsza_akcja_termin: null, data_feedbacku: null };
+  const fallback = { najblizsza_akcja: null, najblizsza_akcja_termin: null, data_feedbacku: null, godzina_feedbacku: null };
   if (!OPENAI_API_KEY || !tresc) return fallback;
   try {
     const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -356,6 +367,9 @@ function registerLeadyEndpoints(app, { getClient, requireView, requireEdit }) {
         p_akcja_termin: setAkcja ? (extract.najblizsza_akcja_termin || null) : null,
         p_akcja_owner: setAkcja ? handlowiec : null,
         p_data_feedbacku: extract?.data_feedbacku || null,
+        // Godzina tylko razem z datą — RPC czyści starą godzinę przy nowej
+        // dacie bez godziny, a bez nowej daty nie dotyka jej wcale.
+        p_godzina_feedbacku: extract?.data_feedbacku ? (extract?.godzina_feedbacku || null) : null,
       });
       if (updateErr) throw new Error(`Zapis notatki do Leady B2C: ${updateErr.message}`);
 
@@ -365,6 +379,7 @@ function registerLeadyEndpoints(app, { getClient, requireView, requireEdit }) {
           ? { akcja: extract.najblizsza_akcja, termin: extract.najblizsza_akcja_termin || '', owner: handlowiec || '' }
           : null,
         data_feedbacku: extract?.data_feedbacku || null,
+        godzina_feedbacku: extract?.data_feedbacku ? (extract?.godzina_feedbacku || null) : null,
       });
     } catch (err) {
       handleError(res, err, 502);

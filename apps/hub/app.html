@@ -3,6 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link rel="manifest" href="/assets/manifest.webmanifest">
+  <meta name="theme-color" content="#000000">
   <title>LumLum — narzędzia</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -570,7 +575,9 @@
             const raw = String(f.feedback || '').split(' ')[0];
             const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
             const day = iso ? `${iso[3]}.${iso[2]}.${iso[1]}` : raw;
-            list.appendChild(todayItem(f, `status: ${f.status || '—'}`, f.zalegle ? `zaległy · ${day}` : 'dziś', f.zalegle));
+            // Umówiona godzina feedbacku (jeśli jest) — "dziś 14:00".
+            const oGodzinie = f.godzina ? ` ${f.godzina}` : '';
+            list.appendChild(todayItem(f, `status: ${f.status || '—'}`, f.zalegle ? `zaległy · ${day}${oGodzinie}` : `dziś${oGodzinie}`, f.zalegle));
           });
           group.append(h, list);
           if (feedbacki.length > LIMIT) {

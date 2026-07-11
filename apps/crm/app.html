@@ -3,6 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link rel="manifest" href="/assets/manifest.webmanifest">
+  <meta name="theme-color" content="#000000">
   <title>CRM</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -743,7 +748,9 @@
 
       const feedback = document.createElement('span');
       feedback.className = 'summary-feedback' + (isOverdue(lead['Data Feedbacku']) ? ' is-overdue' : '');
-      feedback.textContent = lead['Data Feedbacku'] ? `Data feedbacku: ${formatDateOnly(lead['Data Feedbacku'])}` : '';
+      feedback.textContent = lead['Data Feedbacku']
+        ? `Data feedbacku: ${formatDateOnly(lead['Data Feedbacku'])}${lead['Godzina Feedbacku'] ? ` ${lead['Godzina Feedbacku']}` : ''}`
+        : '';
 
       const statusPill = buildStatusPill(lead);
       rightAnchor.append(feedback, statusPill);

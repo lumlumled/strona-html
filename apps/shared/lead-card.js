@@ -229,6 +229,10 @@ window.LeadKarta = (() => {
     { col: 'Temperatura', label: 'Temperatura' },
     { col: '_kontakt_dzisiaj', label: 'Skontaktowane dziś', readonly: true, bool: true },
     { col: 'Data Feedbacku', label: 'Data feedbacku', datePicker: true, keepWhenEmpty: true },
+    // Opcjonalna godzina umówionego feedbacku ("HH:mm") — osobna kolumna,
+    // bo "Data Feedbacku" jest parsowana sztywnym DD.MM.YYYY. Sam dzień bez
+    // godziny to norma; godzina tylko gdy padła konkretna w rozmowie/notatce.
+    { col: 'Godzina Feedbacku', label: 'Godzina feedbacku', timePicker: true, keepWhenEmpty: true },
     { col: 'Email', label: 'Email', wide: true, copy: true, keepWhenEmpty: true },
     // Ręczna notatka handlowca — zlepek rozmów żyje w "Historia rozmów",
     // a "Podsumowanie AI" (Ocena AI kontaktu) na górze karty.
@@ -301,7 +305,7 @@ window.LeadKarta = (() => {
     // Tryb podglądu (użytkownik bez prawa edycji arkusza): każde pole
     // renderuje się jak readonly — serwer i tak odrzuca zapisy (403).
     if (ctx.readOnly && !spec.link && !spec.readonly && !spec.bool) {
-      spec = { ...spec, readonly: true, datePicker: false };
+      spec = { ...spec, readonly: true, datePicker: false, timePicker: false };
     }
 
     const labelText = typeof spec.label === 'function' ? spec.label(lead) : spec.label;
@@ -380,6 +384,43 @@ window.LeadKarta = (() => {
         ctx.feedbackSetters.push((stored) => {
           baselineIso = toIsoDateValue(stored);
           input.value = baselineIso;
+        });
+      }
+      wrap.append(label, input);
+      return wrap;
+    }
+
+    // Natywny zegarek dla godziny feedbacku — kolumna trzyma wprost "HH:mm",
+    // czyli format value inputa type="time"; bez konwersji. Zapis na 'change'
+    // jak datePicker; wyczyszczenie pola = null w bazie (saveField wysyła '',
+    // serwer zamienia na null).
+    if (spec.timePicker) {
+      const wrap = document.createElement('div');
+      wrap.className = 'lk-field' + (spec.wide ? ' wide' : '');
+      const label = document.createElement('span');
+      label.className = 'lk-label';
+      label.textContent = labelText;
+      const input = document.createElement('input');
+      input.type = 'time';
+      input.className = 'lk-value';
+      let baseline = String(lead[spec.col] || '');
+      input.value = baseline;
+      input.addEventListener('click', (e) => e.stopPropagation());
+      input.addEventListener('change', async () => {
+        if (input.value === baseline) return;
+        try {
+          await saveField(ctx.apiBase, lead, spec.col, input.value);
+          baseline = input.value;
+        } catch (err) {
+          input.value = baseline;
+          alert(`Błąd zapisu pola "${labelText}": ${err.message}`);
+        }
+      });
+      // Zewnętrzne aktualizacje (godzina feedbacku wyciągnięta z notatki).
+      if (spec.col === 'Godzina Feedbacku') {
+        ctx.godzinaFeedbackSetters.push((stored) => {
+          baseline = String(stored || '');
+          input.value = baseline;
         });
       }
       wrap.append(label, input);
@@ -708,7 +749,7 @@ window.LeadKarta = (() => {
     // readOnly: użytkownik ma tylko podgląd arkusza (uprawnienia z panelu
     // Pozwolenia) — cała karta renderuje się bez edycji, notatek i akcji.
     const readOnly = Boolean(opts.readOnly);
-    const ctx = { apiBase, onFeedbackDate: opts.onFeedbackDate, feedbackSetters: [], readOnly };
+    const ctx = { apiBase, onFeedbackDate: opts.onFeedbackDate, feedbackSetters: [], godzinaFeedbackSetters: [], readOnly };
 
     const body = document.createElement('div');
     body.className = 'lk-lead-body';
@@ -1009,6 +1050,10 @@ window.LeadKarta = (() => {
             lead['Data Feedbacku'] = resBody.data_feedbacku;
             ctx.feedbackSetters.forEach((fn) => fn(resBody.data_feedbacku));
             if (opts.onFeedbackDate) opts.onFeedbackDate(resBody.data_feedbacku);
+            // Godzina idzie w parze z datą — nowa data bez godziny czyści
+            // starą godzinę (ta sama semantyka co RPC po stronie bazy).
+            lead['Godzina Feedbacku'] = resBody.godzina_feedbacku || null;
+            ctx.godzinaFeedbackSetters.forEach((fn) => fn(resBody.godzina_feedbacku || ''));
           }
           prependHistoriaLocally(`[Notatka] ${tresc}`);
         } catch (err) {

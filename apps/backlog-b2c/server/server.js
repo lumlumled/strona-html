@@ -503,6 +503,14 @@ Przelicz względem DZISIAJ i zwróć w formacie DD.MM.YYYY.
 "za tydzień" → +7 dni od dzisiaj.
 Brak wyraźnego umówienia kontaktu → null.
 
+===== ZASADY godzina_feedbacku =====
+Wypełnij TYLKO gdy przy umówionym kolejnym kontakcie (data_feedbacku) padła
+KONKRETNA godzina: "zadzwonię o 15" → "15:00", "umówmy się na 14:30" → "14:30",
+"po siedemnastej" → "17:00". Format HH:MM (24h).
+Sam dzień bez godziny → null (dzień wystarczy, NIE wymyślaj godziny).
+Pory dnia bez konkretu ("rano", "po południu", "wieczorem") → null.
+Gdy data_feedbacku = null → godzina_feedbacku też ZAWSZE null.
+
 ===== ZASADY opis =====
 Zwięzłe podsumowanie najważniejszych informacji z TEJ rozmowy.
 Styl: konkretna notatka handlowca, bez lania wody.
@@ -673,6 +681,7 @@ Brak → null.
 {
   "status": "",
   "data_feedbacku": "DD.MM.YYYY lub null",
+  "godzina_feedbacku": "HH:MM lub null",
   "opis": "",
   "skrocony_opis": "",
   "wycena": "tak lub nie",
@@ -716,7 +725,7 @@ Pole typ_klienta: jeśli brak sygnałów B2B → zawsze "B2C".`;
 // rozmowy (status/data_feedbacku/produkty/kwota/jakość leada/zamknięcie na
 // dziś), przeniesiona z promptu, który wcześniej żył w scenariuszu Make.
 async function analyzeCall(transcript, { kierunek, dzisiaj, poprzedniOpis, poprzedniaAkcja }) {
-  const fallback = { status: null, data_feedbacku: null, opis: transcript ? transcript.slice(0, 200) : null, skrocony_opis: null, produkty: '', cena_zaproponowana: null, jakosc_leada: null, uzasadnienie_jakosci: '', zamkniete_dzis: false, najblizsza_akcja: null, najblizsza_akcja_termin: null };
+  const fallback = { status: null, data_feedbacku: null, godzina_feedbacku: null, opis: transcript ? transcript.slice(0, 200) : null, skrocony_opis: null, produkty: '', cena_zaproponowana: null, jakosc_leada: null, uzasadnienie_jakosci: '', zamkniete_dzis: false, najblizsza_akcja: null, najblizsza_akcja_termin: null };
   if (!OPENAI_API_KEY || !transcript) return fallback;
   try {
     const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -1093,6 +1102,11 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
         p_akcja: akcjaPoRozmowie,
         p_akcja_termin: akcjaTermin,
         p_akcja_owner: akcjaOwner,
+        // Tylko NOWA godzina z tej rozmowy — zachowanie/czyszczenie starej
+        // rozstrzyga RPC względem zmiany daty (add-godzina-feedbacku.js):
+        // nowa data bez godziny czyści starą godzinę, brak nowej daty nie
+        // dotyka jej wcale.
+        p_godzina_feedbacku: analysis?.data_feedbacku ? (analysis.godzina_feedbacku || null) : null,
       });
       if (updateErr) console.error('Błąd update Leady B2C:', updateErr.message);
 
@@ -1177,6 +1191,7 @@ app.get('/api/leady/nowe', async (req, res) => {
     // dawaj modelowi skrócony opis kontaktu, żeby case nie był pustką.
     opis: row['Notes'] || row['Ocena AI kontaktu'] || '',
         data_feedbacku: row['Data Feedbacku'] || '',
+        godzina_feedbacku: row['Godzina Feedbacku'] || '',
         temperatura: row['Temperatura'] || '',
         ostatni_kontakt: row['Ostatni kontakt'] || '',
         ilosc_telefonow: row['Ilość telefonów'] || 0,
@@ -1400,6 +1415,7 @@ function mapLeadRow(row, wycenaByPhone, callCountByPhone) {
     // dawaj modelowi skrócony opis kontaktu, żeby case nie był pustką.
     opis: row['Notes'] || row['Ocena AI kontaktu'] || '',
     data_feedbacku: formatPlDate(row['Data Feedbacku']),
+    godzina_feedbacku: row['Godzina Feedbacku'] || '',
     temperatura: row['Temperatura'] || '',
     ostatni_kontakt: row['Ostatni kontakt'] || '',
     // Deterministyczne, nadpisywane w postProcessCallCounts z realnych
