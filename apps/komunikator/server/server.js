@@ -12,6 +12,7 @@ const { createAuth, clientPayload, panelLinks, PANELS, CRM_SHEETS } = require('.
 const identity = require('./identity');
 const zernio = require('./ingest/zernio');
 const tiktok = require('./ingest/tiktok');
+const triage = require('./triage');
 const suggest = require('./suggest');
 
 const app = express();
@@ -67,17 +68,32 @@ function isCronAuthorized(req) {
   return req.headers.authorization === `Bearer ${secret}` || req.query.secret === secret;
 }
 
-app.all('/api/cron/tiktok-comments', async (req, res) => {
+// Worker: synchronizacja komentarzy TikTok + sweep triage (dokańcza
+// klasyfikację wiadomości, których LLM nie zdążył ocenić w webhooku).
+// /api/cron/tiktok-comments zostaje jako alias — wskazuje na niego
+// dzienny fallback w vercel.json i historyczne wpisy pg_cron.
+async function runWorker(req, res) {
   if (!isCronAuthorized(req)) return res.status(401).json({ error: 'Brak autoryzacji' });
+  const db = getClient();
+  const result = {};
   try {
-    const result = await tiktok.syncTikTokComments(getClient());
-    console.log('Cron tiktok-comments:', JSON.stringify(result));
-    res.json(result);
+    result.tiktok = await tiktok.syncTikTokComments(db);
   } catch (err) {
-    console.error('Cron tiktok-comments:', err.message);
-    res.status(502).json({ ok: false, error: err.message });
+    console.error('Worker (tiktok):', err.message);
+    result.tiktok = { ok: false, error: err.message };
   }
-});
+  try {
+    result.triage = await triage.sweep(db);
+  } catch (err) {
+    console.error('Worker (triage):', err.message);
+    result.triage = { error: err.message };
+  }
+  console.log('Cron worker:', JSON.stringify(result));
+  res.json(result);
+}
+
+app.all('/api/cron/worker', runWorker);
+app.all('/api/cron/tiktok-comments', runWorker);
 
 // ── Auth: to samo indywidualne logowanie co hub/CRM, panel 'wiadomosci' ─────
 
@@ -184,13 +200,17 @@ function computeSendState(thread, messagesAsc) {
 
 // ── API wątków ───────────────────────────────────────────────────────────────
 
+// Widoki listy: main = otwarte przefiltrowane (triage inbox) — selekcja
+// Antoniego; notifications = automaty do ogarnięcia; closed; all = wszystko
+// łącznie z odfiltrowanym syfem (celowo "bardziej ukryty" dostęp do całości).
 app.get('/api/threads', async (req, res) => {
   try {
     const db = getClient();
-    const statusFilter = String(req.query.status || 'open');
+    const view = String(req.query.view || req.query.status || 'main');
     let query = db.from('kom_threads').select('*').order('last_message_at', { ascending: false, nullsFirst: false });
-    if (statusFilter === 'open') query = query.in('status', ['attention', 'waiting']);
-    else if (statusFilter !== 'all') query = query.eq('status', statusFilter);
+    if (view === 'main' || view === 'open') query = query.in('status', ['attention', 'waiting']).eq('triage', 'inbox');
+    else if (view === 'notifications') query = query.in('status', ['attention', 'waiting']).eq('triage', 'notification');
+    else if (view !== 'all') query = query.eq('status', view);
     const { data: threads, error } = await query.limit(200);
     if (error) throw error;
 
@@ -229,6 +249,8 @@ app.get('/api/threads', async (req, res) => {
           id: t.id,
           channel: t.channel,
           status: t.status,
+          triage: t.triage,
+          triage_reason: t.triage_reason,
           last_message_at: t.last_message_at,
           customer: {
             id: customer.id,
@@ -533,6 +555,51 @@ app.post('/api/notes', async (req, res) => {
     if (msgErr) throw msgErr;
     await db.from('kom_threads').update({ last_message_at: new Date().toISOString() }).eq('id', thread.id);
     res.json({ ok: true, customer: customer.public_id, customerCreated: created, threadId: thread.id });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// ── Triage: wyciszanie i ręczne przywracanie ────────────────────────────────
+
+// "Nie chcę widzieć podobnych": twarde wyciszenie nadawcy + ostatnia
+// przychodząca jako przykład dla klasyfikatora ("podobne → archive").
+app.post('/api/threads/:id/mute', async (req, res) => {
+  try {
+    const db = getClient();
+    const { data: threads, error } = await db.from('kom_threads').select('*').eq('id', req.params.id).limit(1);
+    if (error) throw error;
+    const thread = threads && threads[0];
+    if (!thread) return res.status(404).json({ error: 'Nie znaleziono wątku' });
+
+    const { data: lastIn } = await db
+      .from('kom_messages').select('body').eq('thread_id', thread.id).eq('direction', 'in')
+      .order('created_at', { ascending: false }).limit(1);
+    const result = await triage.muteFromThread(db, thread, lastIn?.[0]?.body || null);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// Ręczna zmiana kategorii (np. przywrócenie odfiltrowanego do głównego) —
+// blokuje dalsze automatyczne przełączanie tego wątku (triage_locked).
+app.post('/api/threads/:id/triage', async (req, res) => {
+  try {
+    const value = String(req.body?.triage || '');
+    if (!['inbox', 'notification', 'archive'].includes(value)) {
+      return res.status(400).json({ error: 'Nieprawidłowa kategoria' });
+    }
+    const db = getClient();
+    const { data: threads, error } = await db.from('kom_threads').select('meta').eq('id', req.params.id).limit(1);
+    if (error) throw error;
+    if (!threads || !threads[0]) return res.status(404).json({ error: 'Nie znaleziono wątku' });
+    const meta = { ...(threads[0].meta || {}), triage_locked: true };
+    const { error: upErr } = await db.from('kom_threads')
+      .update({ triage: value, triage_reason: 'ustawione ręcznie', meta })
+      .eq('id', req.params.id);
+    if (upErr) throw upErr;
+    res.json({ ok: true });
   } catch (err) {
     handleError(res, err, 502);
   }

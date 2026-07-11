@@ -18,6 +18,7 @@
 // otwiera okna DM Meta, więc nie wolno go mieszać z wątkiem rozmowy).
 const crypto = require('crypto');
 const identity = require('../identity');
+const triage = require('../triage');
 
 const PLATFORM_MAP = {
   facebook: { channel: 'messenger', identityType: 'fb' },
@@ -141,18 +142,19 @@ async function handleMessage(db, payload) {
     }
   }
 
-  const { error: msgErr } = await db.from('kom_messages').insert({
+  const { data: inserted, error: msgErr } = await db.from('kom_messages').insert({
     thread_id: thread.id,
     direction: incoming ? 'in' : 'out',
     body: text,
     sent_by: incoming ? 'customer' : 'antoni',
     external_message_id: msg.id,
+    ...(incoming ? {} : { triage: 'inbox' }),
     meta: {
       zernio: { messageId: msg.id, platformMessageId: msg.platformMessageId, eventId: payload.id },
       ...(msg.attachments?.length ? { attachments: msg.attachments } : {}),
       ...(msg.sender?.instagramProfile ? { instagram_profile: msg.sender.instagramProfile } : {}),
     },
-  });
+  }).select('id');
   if (msgErr) {
     if (/duplicate|unique/i.test(msgErr.message)) return { ok: true, duplicate: true, customer: customer.public_id };
     throw msgErr;
@@ -161,7 +163,24 @@ async function handleMessage(db, payload) {
   await db.from('kom_threads')
     .update({ status: incoming ? 'attention' : 'waiting', last_message_at: new Date().toISOString() })
     .eq('id', thread.id);
-  return { ok: true, customer: customer.public_id, customerCreated: created, threadId: thread.id };
+
+  // Triage w budżecie czasu webhooka; porażka = wiadomość czeka na sweep.
+  let verdict = null;
+  if (incoming) {
+    const { data: history } = await db
+      .from('kom_messages').select('direction,body').eq('thread_id', thread.id)
+      .neq('id', inserted[0].id).order('created_at', { ascending: false }).limit(5);
+    verdict = await triage.classifyInWebhook(db, thread, inserted[0].id, {
+      kind: 'dm',
+      channel: mapped.channel,
+      text,
+      senderName: displayName,
+      senderType: mapped.identityType,
+      senderValue: identityValue,
+      history: (history || []).reverse(),
+    });
+  }
+  return { ok: true, customer: customer.public_id, customerCreated: created, threadId: thread.id, triage: verdict?.triage };
 }
 
 // ── conversation.started ─────────────────────────────────────────────────────
@@ -228,7 +247,7 @@ async function handleComment(db, payload) {
     participantName: author.name || null,
   });
 
-  const { error: msgErr } = await db.from('kom_messages').insert({
+  const { data: inserted, error: msgErr } = await db.from('kom_messages').insert({
     thread_id: thread.id,
     direction: 'in',
     body: text,
@@ -246,7 +265,7 @@ async function handleComment(db, payload) {
         eventId: payload.id,
       },
     },
-  });
+  }).select('id');
   if (msgErr) {
     if (/duplicate|unique/i.test(msgErr.message)) return { ok: true, duplicate: true, customer: customer.public_id };
     throw msgErr;
@@ -255,7 +274,17 @@ async function handleComment(db, payload) {
   const statusPatch = { last_message_at: new Date().toISOString() };
   if (threadCreated) statusPatch.status = 'waiting';
   await db.from('kom_threads').update(statusPatch).eq('id', thread.id);
-  return { ok: true, customer: customer.public_id, customerCreated: created, threadId: thread.id, comment: true };
+
+  const verdict = await triage.classifyInWebhook(db, thread, inserted[0].id, {
+    kind: 'comment',
+    channel: mapped.channel,
+    text,
+    senderName: author.name || author.username || null,
+    senderType: mapped.identityType,
+    senderValue: String(author.id),
+    history: [],
+  });
+  return { ok: true, customer: customer.public_id, customerCreated: created, threadId: thread.id, comment: true, triage: verdict?.triage };
 }
 
 // Główne wejście: jeden webhook → jeden rekord kom_inbox_raw + dispatch po

@@ -157,7 +157,8 @@
         <button class="btn" id="note-btn" title="Notatka z rozmowy telefonicznej">+ Notatka</button>
       </div>
       <div class="tabs" id="tabs">
-        <button class="tab active" data-status="open">Do ogarnięcia</button>
+        <button class="tab active" data-status="main">Do ogarnięcia</button>
+        <button class="tab" data-status="notifications">Powiadomienia</button>
         <button class="tab" data-status="closed">Zamknięte</button>
         <button class="tab" data-status="all">Wszystkie</button>
       </div>
@@ -178,6 +179,8 @@
         <div class="conv-actions">
           <button class="btn" id="btn-waiting">Ignoruj (czeka)</button>
           <button class="btn" id="btn-close">Zamknij wątek</button>
+          <button class="btn" id="btn-mute" hidden title="Wycisza nadawcę i uczy filtr na tej treści">Nie chcę widzieć podobnych</button>
+          <button class="btn" id="btn-restore" hidden>Pokaż w głównym</button>
           <a class="btn" id="btn-livechat" target="_blank" rel="noopener" hidden>Otwórz w Zernio ↗</a>
         </div>
       </div>
@@ -226,7 +229,7 @@
     };
 
     const state = {
-      statusFilter: 'open', threads: [], selectedId: null, detail: null,
+      statusFilter: 'main', threads: [], selectedId: null, detail: null,
       suggestion: null, // { id, forThread } — sugestia AI załadowana do composera
     };
 
@@ -263,7 +266,7 @@
     // ── Lista wątków ──
     async function loadThreads() {
       try {
-        const { data } = await api(`/threads?status=${state.statusFilter}`);
+        const { data } = await api(`/threads?view=${state.statusFilter}`);
         state.threads = data;
         renderThreads();
       } catch (err) {
@@ -283,7 +286,9 @@
         li.className = 'thread-item' + (t.id === state.selectedId ? ' selected' : '');
         const name = t.customer.display_name || t.customer.public_id || '(bez nazwy)';
         const badges = [];
-        if (t.status === 'attention') badges.push('<span class="badge attention">nowe</span>');
+        if (t.status === 'attention' && t.triage === 'inbox') badges.push('<span class="badge attention">nowe</span>');
+        if (t.triage === 'archive') badges.push(`<span class="badge" title="${escapeHtml(t.triage_reason || '')}">odfiltrowane</span>`);
+        if (t.triage === 'notification') badges.push(`<span class="badge" title="${escapeHtml(t.triage_reason || '')}">powiadomienie</span>`);
         if (t.has_pending_merge) badges.push('<span class="badge merge">scalenie?</span>');
         const preview = t.last_message
           ? (t.last_message.direction === 'out' ? '<span class="out">Ty: </span>' : '') + escapeHtml(t.last_message.body)
@@ -375,9 +380,16 @@
       }
 
       const idLabels = { fb: 'FB', ig: 'IG', wa: 'WA', tt: 'TikTok', phone: 'tel', email: 'email' };
-      $('conv-identities').innerHTML = d.customer.identities
+      const triageChip = d.thread.triage && d.thread.triage !== 'inbox'
+        ? `<span class="chip" title="${escapeHtml(d.thread.triage_reason || '')}">🔻 ${d.thread.triage === 'archive' ? 'odfiltrowane' : 'powiadomienie'}${d.thread.triage_reason ? ': ' + escapeHtml(d.thread.triage_reason) : ''}</span>`
+        : '';
+      $('conv-identities').innerHTML = triageChip + d.customer.identities
         .map((i) => `<span class="chip">${idLabels[i.type] || i.type}: ${escapeHtml(['fb', 'ig', 'tt'].includes(i.type) ? '✓ połączono' : i.value)}${i.confirmed ? '' : ' (?)'}</span>`)
         .join('');
+
+      // Wyciszanie / przywracanie: mute na widocznych, restore na odfiltrowanych.
+      $('btn-mute').hidden = d.thread.triage !== 'inbox';
+      $('btn-restore').hidden = d.thread.triage === 'inbox';
 
       // Propozycje scaleń
       const banners = $('merge-banners');
@@ -518,6 +530,29 @@
 
     $('btn-waiting').addEventListener('click', () => setThreadStatus('waiting', 'Wątek czeka'));
     $('btn-close').addEventListener('click', () => setThreadStatus('closed', 'Zamknięto wątek'));
+
+    $('btn-mute').addEventListener('click', async () => {
+      if (!state.detail) return;
+      try {
+        await api(`/threads/${state.detail.thread.id}/mute`, { method: 'POST' });
+        toast('Wyciszono — podobne nie będą się pokazywać');
+        loadThreads();
+        $('main').hidden = true;
+        $('placeholder').hidden = false;
+        $('layout').classList.remove('thread-open');
+        state.selectedId = null;
+      } catch (err) { toast(err.message); }
+    });
+
+    $('btn-restore').addEventListener('click', async () => {
+      if (!state.detail) return;
+      try {
+        await api(`/threads/${state.detail.thread.id}/triage`, { method: 'POST', body: JSON.stringify({ triage: 'inbox' }) });
+        toast('Przywrócono do głównego widoku');
+        openThread(state.detail.thread.id);
+        loadThreads();
+      } catch (err) { toast(err.message); }
+    });
 
     async function setThreadStatus(status, msg) {
       if (!state.detail) return;

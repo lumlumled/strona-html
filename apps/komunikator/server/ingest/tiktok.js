@@ -19,6 +19,7 @@
 // Komentarze WŁASNE (autor = podpięte konto lumlum.led) zapisują się jako
 // direction 'out' — odpowiedzi udzielone w aplikacji domykają wątek same.
 const identity = require('../identity');
+const triage = require('../triage');
 
 const APIFY_API = 'https://api.apify.com';
 // Aktor "TikTok Comments Scraper" od Clockworks (oficjalny w Apify Store,
@@ -168,6 +169,7 @@ async function ingestComments(db, items, { ownUsername }) {
   let added = 0;
   let duplicates = 0;
   const threadTouch = new Map(); // thread.id → { lastAt, status }
+  const toClassify = []; // klasyfikacja po pętli — na końcu znamy całe wątki
 
   for (const c of mapped) {
     const own = ownUsername && c.authorHandle && c.authorHandle.toLowerCase() === ownUsername.toLowerCase();
@@ -176,6 +178,7 @@ async function ingestComments(db, items, { ownUsername }) {
     // którego komentarzem odpowiedzieliśmy — nigdy do własnego wątku.
     // Własny komentarz bez rodzica (top-level pod swoim filmem) pomijamy.
     let threadId;
+    let threadObj = null;
     if (own) {
       if (!c.parentCommentId) continue;
       const { data: parents, error: parentErr } = await db
@@ -197,15 +200,17 @@ async function ingestComments(db, items, { ownUsername }) {
         thread.meta = meta;
       }
       threadId = thread.id;
+      threadObj = thread;
     }
 
-    const { error: msgErr } = await db.from('kom_messages').insert({
+    const { data: inserted, error: msgErr } = await db.from('kom_messages').insert({
       thread_id: threadId,
       direction: own ? 'out' : 'in',
       body: c.text,
       sent_by: own ? 'antoni' : 'customer',
       external_message_id: `tt:${c.commentId}`,
       created_at: c.createdAt,
+      ...(own ? { triage: 'inbox' } : {}),
       meta: {
         kind: 'comment',
         tiktok: {
@@ -223,6 +228,7 @@ async function ingestComments(db, items, { ownUsername }) {
       throw msgErr;
     }
     added += 1;
+    if (!own && threadObj) toClassify.push({ thread: threadObj, messageId: inserted[0].id, comment: c });
 
     const touch = threadTouch.get(threadId) || {};
     if (!touch.lastAt || c.createdAt > touch.lastAt) {
@@ -237,7 +243,21 @@ async function ingestComments(db, items, { ownUsername }) {
       .update({ status: touch.status, last_message_at: touch.lastAt })
       .eq('id', threadId);
   }
-  return { added, duplicates, threads: threadTouch.size };
+
+  // Triage: komentarz przechodzi selektywny filtr zakupowy (kontekst crona —
+  // spokojny budżet czasu; porażka = triage NULL, sweep dokończy).
+  for (const job of toClassify) {
+    await triage.classifyInWebhook(db, job.thread, job.messageId, {
+      kind: 'comment',
+      channel: 'tiktok',
+      text: job.comment.text,
+      senderName: job.comment.authorName || (job.comment.authorHandle ? `@${job.comment.authorHandle}` : null),
+      senderType: 'tt',
+      senderValue: job.comment.authorId || `@${job.comment.authorHandle}`,
+      history: [],
+    }, 20000);
+  }
+  return { added, duplicates, threads: threadTouch.size, classified: toClassify.length };
 }
 
 // ── Główne wejście crona ─────────────────────────────────────────────────────
