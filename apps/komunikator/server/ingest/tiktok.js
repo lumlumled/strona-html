@@ -6,16 +6,22 @@
 // w aplikacji TikToka i klika "Wysłane ręcznie".
 //
 // Po odłączeniu konta TikTok od Zernio (decyzja Antoniego 2026-07-11, ~$6/mies
-// oszczędności) także LISTA filmików idzie ze scrapera — łańcuch dwustopniowy,
-// stan między cyklami crona w kom_inbox_raw (source='tiktok_apify'):
+// oszczędności) także LISTA filmików idzie ze scrapera — stan między cyklami
+// crona w kom_inbox_raw (source='tiktok_apify'):
 //   stage 'profile'  → aktor listuje filmiki profilu (id, commentCount, url);
-//                      po sukcesie liczymy kandydatów (licznik > zapisane
-//                      i > stan z ostatniego scrapu) i startujemy stage 2
+//                      po sukcesie: dzienny snapshot statystyk do
+//                      kom_tiktok_stats + kandydaci (licznik > zapisane
+//                      i > stan z ostatniego scrapu) → start stage 'comments'
 //   stage 'comments' → aktor zbiera komentarze wskazanych filmików;
 //                      po sukcesie ingest do kom_* + triage
-// Lista profilu odświeża się co APIFY_TIKTOK_LIST_MINUTES (domyślnie 180) —
-// częstsze listowanie to realny koszt Apify, a komentarzowy ruch na TikToku
-// LumLum jest niewielki. Nowy komentarz pojawia się więc w panelu do ~3,5 h.
+//
+// Harmonogram (decyzja Antoniego 2026-07-11, dopasowany do kosztów Apify —
+// listing 25 filmików ≈ $0.09, zbiórka komentarzy ≈ $0.01):
+//   • listing profilu + statystyki: RAZ DZIENNIE rano (pierwszy cykl po 8:00)
+//   • komentarze: CO GODZINĘ 8–22 czasu PL, ale tylko dla ŚWIEŻYCH filmików
+//     (≤48 h od publikacji — tam pojawiają się komentarze); starsze filmiki
+//     łapie codzienny listing po wzroście licznika
+//   • w nocy (22–8) nic nie chodzi
 //
 // Komentarze WŁASNE (autor = TIKTOK_PROFILE) zapisują się jako direction 'out'
 // w wątku klienta-rodzica — odpowiedzi z aplikacji domykają wątek same.
@@ -41,8 +47,15 @@ function profileHandle() {
   return (process.env.TIKTOK_PROFILE || DEFAULT_PROFILE).replace(/^@/, '');
 }
 
-function listIntervalMs() {
-  return Number(process.env.APIFY_TIKTOK_LIST_MINUTES || 180) * 60 * 1000;
+// Godzina i data w strefie Antoniego (Europe/Warsaw) — okno pracy 8–22
+// i klucz dzienny snapshotu muszą chodzić po czasie lokalnym, nie UTC.
+function warsawNow() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Warsaw', hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit',
+  }).formatToParts(new Date());
+  const get = (type) => parts.find((p) => p.type === type)?.value;
+  return { date: `${get('year')}-${get('month')}-${get('day')}`, hour: Number(get('hour')) % 24 };
 }
 
 async function apifyRequest(method, pathname, body) {
@@ -75,12 +88,12 @@ async function getPendingRun(db) {
   return (data && data[0]) || null;
 }
 
-async function lastProfileRunAt(db) {
+async function lastRunStartedAt(db, stage) {
   const { data, error } = await db
     .from('kom_inbox_raw').select('created_at,payload').eq('source', 'tiktok_apify')
-    .order('created_at', { ascending: false }).limit(10);
+    .order('created_at', { ascending: false }).limit(30);
   if (error) throw error;
-  const row = (data || []).find((r) => r.payload?.stage === 'profile');
+  const row = (data || []).find((r) => (r.payload?.stage || 'comments') === stage);
   return row ? new Date(row.created_at).getTime() : 0;
 }
 
@@ -96,11 +109,57 @@ async function lastScrapedCounts(db) {
   const map = new Map();
   for (const row of data || []) {
     for (const v of row.payload?.videos || []) {
+      // Skany świeżych filmików nie znają licznika (reported=null) — nie
+      // mogą maskować prawdziwego stanu z runów licznikowych.
+      if (v.reported == null) continue;
       const key = String(v.videoId);
       if (!map.has(key)) map.set(key, v.reported || 0);
     }
   }
   return map;
+}
+
+// ── Dzienny snapshot statystyk + rejestr filmików (kom_tiktok_stats) ────────
+
+async function snapshotStats(db, items) {
+  const { date } = warsawNow();
+  const rows = [];
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+    const videoId = pick(item, 'id', 'videoId');
+    if (!videoId) continue;
+    rows.push({
+      video_id: videoId,
+      date,
+      url: pick(item, 'webVideoUrl', 'videoUrl') || null,
+      published_at: pick(item, 'createTimeISO') || null,
+      plays: Number(item.playCount ?? 0),
+      likes: Number(item.diggCount ?? 0),
+      comments: Number(item.commentCount ?? 0),
+      shares: Number(item.shareCount ?? 0),
+      saves: Number(item.collectCount ?? 0),
+    });
+  }
+  if (!rows.length) return 0;
+  const { error } = await db.from('kom_tiktok_stats').upsert(rows, { onConflict: 'video_id,date' });
+  if (error) throw error;
+  return rows.length;
+}
+
+// Świeże filmiki (≤48 h) do godzinowego skanu komentarzy — z rejestru
+// zasilanego porannym listingiem.
+async function freshVideos(db) {
+  const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await db
+    .from('kom_tiktok_stats').select('video_id,url,published_at')
+    .gte('published_at', cutoff).not('url', 'is', null)
+    .order('date', { ascending: false }).limit(30);
+  if (error) throw error;
+  const seen = new Map();
+  for (const row of data || []) {
+    if (!seen.has(row.video_id)) seen.set(row.video_id, { videoId: row.video_id, url: row.url, fresh: true });
+  }
+  return [...seen.values()].slice(0, MAX_VIDEOS_PER_RUN);
 }
 
 async function ingestedCount(db, videoId) {
@@ -307,6 +366,7 @@ async function syncTikTokComments(db) {
     if (run.status === 'SUCCEEDED') {
       const items = await apifyRequest('GET', `/v2/datasets/${run.defaultDatasetId}/items?clean=true&limit=5000`);
       if (stage === 'profile') {
+        result.statsSnapshot = await snapshotStats(db, Array.isArray(items) ? items : []);
         const candidates = await candidatesFromItems(db, Array.isArray(items) ? items : []);
         await db.from('kom_inbox_raw').update({ processed: true }).eq('id', pending.id);
         if (candidates.length) {
@@ -331,16 +391,33 @@ async function syncTikTokComments(db) {
     }
   }
 
-  // Faza 2: świeża lista filmików, jeśli poprzednia jest starsza niż interwał.
+  // Faza 2: starty wg harmonogramu (tylko w oknie 8–22 czasu PL).
+  const { hour } = warsawNow();
+  if (hour < 8 || hour >= 22) return { ...result, sleeping: true };
+
   const { data: stillPending } = await db
     .from('kom_inbox_raw').select('id').eq('source', 'tiktok_apify').eq('processed', false).limit(1);
-  if (!stillPending || !stillPending.length) {
-    const lastList = await lastProfileRunAt(db);
-    if (Date.now() - lastList >= listIntervalMs()) {
-      result.profileRun = await startProfileRun(db);
+  if (stillPending && stillPending.length) return result;
+
+  // Raz dziennie: listing profilu (statystyki + kandydaci po licznikach).
+  const lastList = await lastRunStartedAt(db, 'profile');
+  if (Date.now() - lastList >= 20 * 60 * 60 * 1000) {
+    result.profileRun = await startProfileRun(db);
+    return result;
+  }
+
+  // Co godzinę: komentarze świeżych filmików (≤48 h od publikacji).
+  const lastComments = await lastRunStartedAt(db, 'comments');
+  if (Date.now() - lastComments >= 55 * 60 * 1000) {
+    const fresh = await freshVideos(db);
+    if (fresh.length) {
+      result.commentsRun = await startCommentsRun(db, fresh);
+      result.freshVideos = fresh.length;
+    } else {
+      result.freshVideos = 0;
     }
   }
   return result;
 }
 
-module.exports = { syncTikTokComments, ingestComments, mapItem };
+module.exports = { syncTikTokComments, ingestComments, mapItem, snapshotStats, freshVideos };
