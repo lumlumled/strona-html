@@ -255,6 +255,64 @@ async function status(db) {
   return { configured: Boolean(clientConfig()), connected: Boolean(tokens?.refresh_token), email: tokens?.email || null };
 }
 
+// ── Wysyłka odpowiedzi z panelu ──────────────────────────────────────────────
+// Scope gmail.modify obejmuje też messages.send, więc to samo połączenie
+// OAuth wystarcza. Odpowiedź wpina się w istniejący wątek Gmaila: temat
+// "Re: ...", nagłówki In-Reply-To/References z ostatniego maila klienta
+// i threadId przy wysyłce — bez tego odbiorca dostałby osobny, nowy mail.
+
+// RFC 2047: temat z polskimi znakami musi być zakodowany w nagłówku.
+function encodeSubject(subject) {
+  if (/^[\x20-\x7e]*$/.test(subject)) return subject;
+  return `=?UTF-8?B?${Buffer.from(subject, 'utf8').toString('base64')}?=`;
+}
+
+async function sendReply(db, { to, subject, text, gmailThreadId, lastGmailMessageId }) {
+  const auth = await ensureAccessToken(db);
+  if (!auth) throw new Error('Gmail niepołączony — wejdź na /wiadomosci/api/gmail/auth');
+
+  // Message-ID/References ostatniego maila klienta dociągamy w momencie
+  // wysyłki (nie trzymamy ich w bazie). Brak nagłówków nie blokuje wysyłki —
+  // threadId i tak utrzyma wątek po stronie naszej skrzynki.
+  let inReplyTo = '';
+  let references = '';
+  if (lastGmailMessageId) {
+    try {
+      const meta = await gmailFetch(
+        auth.token,
+        `/messages/${lastGmailMessageId}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References`
+      );
+      inReplyTo = header(meta.payload, 'Message-ID');
+      references = [header(meta.payload, 'References'), inReplyTo].filter(Boolean).join(' ');
+    } catch (err) {
+      console.error('Gmail nagłówki wątkowania:', err.message);
+    }
+  }
+
+  const baseSubject = String(subject || '').trim();
+  const replySubject = /^re:/i.test(baseSubject) ? baseSubject : `Re: ${baseSubject}`.trim();
+  const mime = [
+    `From: ${auth.email}`,
+    `To: ${to}`,
+    `Subject: ${encodeSubject(replySubject)}`,
+    ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`] : []),
+    ...(references ? [`References: ${references}`] : []),
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    Buffer.from(String(text), 'utf8').toString('base64'),
+  ].join('\r\n');
+
+  const raw = Buffer.from(mime, 'utf8').toString('base64')
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const sent = await gmailFetch(auth.token, '/messages/send', {
+    method: 'POST',
+    body: JSON.stringify({ raw, ...(gmailThreadId ? { threadId: gmailThreadId } : {}) }),
+  });
+  return { id: sent.id, threadId: sent.threadId, from: auth.email };
+}
+
 // ── Push w czasie rzeczywistym (users.watch → Pub/Sub → nasz webhook) ───────
 // Gmail publikuje powiadomienie na topic Pub/Sub przy każdej zmianie w INBOX;
 // subskrypcja push woła /api/webhooks/gmail, a ten odpala syncGmail() —
@@ -282,4 +340,4 @@ async function ensureWatch(db) {
   return { renewed: true, expiresAt: new Date(Number(watch.expiration)).toISOString() };
 }
 
-module.exports = { authUrl, exchangeCode, syncGmail, ensureWatch, status };
+module.exports = { authUrl, exchangeCode, syncGmail, ensureWatch, status, sendReply };

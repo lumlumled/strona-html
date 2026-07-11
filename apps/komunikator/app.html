@@ -367,7 +367,7 @@
       // Fallback ręczny: manual_only → prosto do miejsca odpowiedzi (film
       // TikTok / wątek w Gmailu); rozmowy z Zernio → ich inbox.
       const liveChat = $('btn-livechat');
-      if (d.send?.mode === 'manual_only' && d.send.reply_url) {
+      if ((d.send?.mode === 'manual_only' || d.send?.mode === 'gmail') && d.send.reply_url) {
         liveChat.hidden = false;
         liveChat.href = d.send.reply_url;
         liveChat.textContent = d.send.reply_label || 'Otwórz źródło ↗';
@@ -459,6 +459,8 @@
         sendBtn.disabled = true;
         manualBtn.hidden = false;
         copyBtn.hidden = false;
+      } else if (send.mode === 'gmail') {
+        note.textContent = `Odpowiedź pójdzie mailem do ${send.email?.to || 'klienta'}, w tym samym wątku Gmaila.`;
       } else if (send.mode === 'open') {
         note.textContent = `Okno odpowiedzi Meta zamyka się za ${hoursLeft(send.window_expires_at).toFixed(1)} h.`;
       } else if (send.mode === 'human_agent') {

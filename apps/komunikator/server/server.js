@@ -221,13 +221,30 @@ function computeSendState(thread, messagesAsc) {
     };
   }
   if (thread.channel === 'email') {
-    const gmailThreadId = thread.meta?.gmail?.threadId
-      || [...messagesAsc].reverse().find((m) => m.meta?.gmail?.threadId)?.meta?.gmail?.threadId;
+    // Wysyłka przez Gmail API (scope gmail.modify obejmuje send): adresata,
+    // temat i nagłówki wątkowania bierzemy z ostatniego maila klienta.
+    const lastIn = [...messagesAsc].reverse()
+      .find((m) => m.direction === 'in' && m.meta?.gmail?.from);
+    const gmailThreadId = thread.meta?.gmail?.threadId || lastIn?.meta?.gmail?.threadId;
+    if (lastIn && gmailThreadId) {
+      return {
+        mode: 'gmail',
+        reply_url: `https://mail.google.com/mail/u/0/#all/${gmailThreadId}`,
+        reply_label: 'Otwórz w Gmailu ↗',
+        email: {
+          to: lastIn.meta.gmail.from,
+          subject: lastIn.meta.gmail.subject || '',
+          threadId: gmailThreadId,
+          lastMessageId: lastIn.meta.gmail.id || null,
+        },
+      };
+    }
+    // Wątek bez metadanych Gmaila (np. założony ręcznie): zostaje tryb ręczny.
     return {
       mode: 'manual_only',
       reply_url: gmailThreadId ? `https://mail.google.com/mail/u/0/#all/${gmailThreadId}` : 'https://mail.google.com/',
       reply_label: 'Otwórz w Gmailu ↗',
-      note: 'E-mail — wysyłka z panelu jeszcze niepodłączona. Skopiuj odpowiedź, wyślij z Gmaila i kliknij „Wysłane ręcznie”.',
+      note: 'E-mail bez danych wątku Gmaila: skopiuj odpowiedź, wyślij z Gmaila i kliknij „Wysłane ręcznie”.',
     };
   }
 
@@ -507,7 +524,7 @@ app.post('/api/threads/:id/messages', async (req, res) => {
     }
     if (sendState.mode === 'manual_only') {
       return res.status(409).json({
-        error: 'Komentarze TikTok są tylko do odczytu (brak API) — odpowiedz w aplikacji TikToka i kliknij „Wysłane ręcznie”.',
+        error: sendState.note || 'Ten kanał wymaga ręcznej odpowiedzi — skopiuj treść i kliknij „Wysłane ręcznie”.',
         window_closed: true,
       });
     }
@@ -516,8 +533,19 @@ app.post('/api/threads/:id/messages', async (req, res) => {
     }
 
     const outMeta = {};
+    let externalMessageId = null;
     try {
-      if (sendState.mode === 'private_reply') {
+      if (sendState.mode === 'gmail') {
+        const sent = await gmail.sendReply(db, {
+          to: sendState.email.to,
+          subject: sendState.email.subject,
+          text,
+          gmailThreadId: sendState.email.threadId,
+          lastGmailMessageId: sendState.email.lastMessageId,
+        });
+        outMeta.gmail = { id: sent.id, threadId: sent.threadId, from: sent.from };
+        externalMessageId = `gmail:${sent.id}`;
+      } else if (sendState.mode === 'private_reply') {
         await sendPrivateReply(thread, sendState.comment, text);
         outMeta.private_reply_to = sendState.comment.commentId;
       } else {
@@ -529,14 +557,16 @@ app.post('/api/threads/:id/messages', async (req, res) => {
       throw sendErr;
     }
 
-    // external_message_id celowo NULL — webhook message.sent dopina ID Zernio
-    // do tego wiersza (dedup po treści w ingest/zernio.js) zamiast dublować.
+    // external_message_id dla Zernio celowo NULL — webhook message.sent dopina
+    // ID Zernio do tego wiersza (dedup po treści w ingest/zernio.js) zamiast
+    // dublować. Gmail webhooka nie ma, więc ID wpisujemy od razu.
     const { error: msgErr } = await db.from('kom_messages').insert({
       thread_id: thread.id,
       direction: 'out',
       body: text,
       sent_by: 'antoni',
       suggestion_id: req.body?.suggestion_id || null,
+      ...(externalMessageId ? { external_message_id: externalMessageId } : {}),
       ...(Object.keys(outMeta).length ? { meta: outMeta } : {}),
     });
     if (msgErr) throw msgErr;
