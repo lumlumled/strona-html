@@ -32,7 +32,21 @@ zostawione dla kontekstu decyzji.
 zweryfikowana), okno 24 h, obsługa komentarzy (placeholder). Klucze ANTHROPIC/OPENAI
 w env (lokalnie + Vercel prod).
 
-**Plan dla nowego czatu (migracja na Zernio):**
+**✅ MIGRACJA WYKONANA (2026-07-11, commit 8cb957f, live na prod):** ingest/zernio.js
+(HMAC X-Zernio-Signature, message.received/sent z dedupem własnych wysyłek,
+conversation.started, comment.received z pełną treścią → osobny wątek
+`comments:<authorId>`), wysyłka przez Inbox API z automatycznym HUMAN_AGENT
+w przedziale 24 h–7 dni (FB/IG), private reply na komentarze (1/komentarz, 7 dni),
+fallback po 7 dniach (Otwórz w Zernio + Kopiuj treść + Wysłane ręcznie; sugestia AI
+generuje się także przy zamkniętym oknie — do skopiowania). ManyChat usunięty w całości
+(kod + env vary lokalnie i na Vercel). Webhook 'lumlum-komunikator'
+(id 6a52413273a2908524d4a93f) zarejestrowany przez scripts/register-zernio-webhook.js,
+testowa dostawa na prod = 200. Konta w Zernio: FB (LumLum), IG (lumlum.led), TikTok,
+Meta Ads. ⚠️ TikTok NIE MA inboxu w Zernio (ani DM, ani komentarzy — tylko publikacja
+i ads); WhatsApp czeka na weryfikację konta Antoniego (szablony poza oknem 24 h już
+obsłużone w API — pole template przy wysyłce).
+
+**Plan dla nowego czatu (migracja na Zernio) — wykonany, zostawiony dla kontekstu:**
 1. Antoni wkleja **klucz API Zernio** (Instagram jest już podłączony w ich dashboardzie;
    stronę FB podłączyć tak samo, gdy przyjdzie kolej).
 2. `ingest/zernio.js` zamiast `ingest/manychat.js`: endpoint `/api/webhooks/zernio`
