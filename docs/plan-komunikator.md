@@ -46,6 +46,23 @@ Meta Ads. ⚠️ TikTok NIE MA inboxu w Zernio (ani DM, ani komentarzy — tylko
 i ads); WhatsApp czeka na weryfikację konta Antoniego (szablony poza oknem 24 h już
 obsłużone w API — pole template przy wysyłce).
 
+**✅ KOMENTARZE TIKTOK (2026-07-11 późny wieczór, commity 3676a52+5d4f8c7, prod):**
+TikTok nie daje firmom z EOG API do DM-ów (blokada platformy — Business Messaging API
+niedostępne dla kont EOG/UK/CH; ManyChat/Respond.io też nie działają w UE) ani do
+komentarzy organicznych (oficjalne API komentarzy = tylko reklamy). Decyzja Antoniego:
+krok 1 = komentarze przez scraper publicznych danych (Apify,
+`clockworks~tiktok-comments-scraper`), read-only. Wdrożone: `ingest/tiktok.js`
+(kandydaci = natywne posty z Zernio z rosnącym licznikiem komentarzy, run Apify
+asynchronicznie między cyklami crona, własne odpowiedzi z aplikacji → `out` w wątku
+klienta po parentCommentId), kanał `tiktok` + tożsamość `tt` (migracja 003), tryb
+`manual_only` (sugestia AI + Kopiuj + link do filmu + „Wysłane ręcznie").
+⚠️ Vercel = plan HOBBY → crony tylko dzienne; harmonogram co 30 min robi **pg_cron
+w Supabase** (job `tiktok_comments_sync`, 5–21 UTC, przez pg_net → endpoint
+z CRON_SECRET); wpis w vercel.json (07:15) to tylko fallback. CZEKA NA: APIFY_TOKEN
+od Antoniego (darmowe konto apify.com, $5 kredytu/mies wystarczy) → env lokalnie
++ Vercel. DM-y TikTok: kierować ruch do bio-linku/WhatsApp; ewentualny eksperyment
+TikAPI (nieoficjalne, $29/mies, ryzyko konta) świadomie odłożony.
+
 **Plan dla nowego czatu (migracja na Zernio) — wykonany, zostawiony dla kontekstu:**
 1. Antoni wkleja **klucz API Zernio** (Instagram jest już podłączony w ich dashboardzie;
    stronę FB podłączyć tak samo, gdy przyjdzie kolej).
