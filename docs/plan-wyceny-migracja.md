@@ -65,6 +65,10 @@ Kluczowe ustalenia z audytu:
   POST wysyła pola formularza + `form_status: SUBMITTED` + `form_submitted_at`.
   **Zostaje wizualnie bez zmian** - podmieniamy tylko dwa URL-e
   (ORDER_GET/ORDER_POST z hook.eu1.make.com na lumlum.dev).
+  UWAGA: dziś webhook GET Make zwraca `form_status: "NEW"` NA SZTYWNO,
+  a blokada po wysłaniu (`state.locked`) żyje tylko w pamięci przeglądarki -
+  po odświeżeniu ten sam link znów jest aktywnym formularzem. Decyzja
+  Antoniego (2026-07-11): formularz ma być jednorazowy - patrz niżej.
 - **Sheets**: CRM LumLum 2.0 / CRM_CASES (76 kolumn - pełny stan pipeline:
   process_stage, shipment_id, tracking, invoice_*, PAID, lock_token, form_*,
   rabat24h_*) + kopia "Wyceny B2C" u Lorenzo (13 kolumn) + arkusz wysyłek.
@@ -75,21 +79,59 @@ Kluczowe ustalenia z audytu:
 
 ## Co wycinamy, co zostaje
 
-Wycinamy: Telegram (trigger i powiadomienia), Baselinker (zamówienia, kurier,
-statusy), Make (wszystkie scenariusze), Google Sheets jako baza (zostaje
-archiwum read-only), słowo-klucz "wycena", rozgałęzienie głosówka/tekst,
-routery-kopie (firma/prywatna x kurier/paczkomat x płatność = dziś ~20
-prawie identycznych gałęzi -> u nas jedna funkcja z parametrami).
+Wycinamy (decyzje Antoniego 2026-07-11): Telegram (trigger i powiadomienia),
+Baselinker (zamówienia, kurier, statusy), Make (wszystkie scenariusze),
+Google Sheets jako baza (zostaje archiwum read-only), słowo-klucz "wycena",
+rozgałęzienie głosówka/tekst, routery-kopie (firma/prywatna x kurier/paczkomat
+x płatność = dziś ~20 prawie identycznych gałęzi -> u nas jedna funkcja
+z parametrami), **Notion** (służył optymalizacji leadów - wygaszamy),
+**kopia wycen do arkusza Lorenzo** (Lorenzo widzi wyceny w panelu per owner).
 
-Zostaje: InPost ShipX (kurier + paczkomat, jedno API), inFakt (faktury,
-proformy, szybkie płatności, KSeF, webhook opłacenia), formularz liquid
-w niezmienionej formie, rabat 24h, Geowidget, logika parsera GPT,
-maile do klienta (przez Gmail API - wysyłkę z panelu już mamy w komunikatorze,
-skrzynka kontakt@lumlum.co).
+Zostaje: InPost ShipX (kurier + paczkomat, jedno API - wszystkie przesyłki
+widoczne w Menedżerze Paczek, koniec z rozjazdem web tracker / Menedżer),
+inFakt (faktury, proformy, szybkie płatności, KSeF, webhook opłacenia),
+formularz liquid w niezmienionej formie wizualnej, rabat 24h, Geowidget,
+logika parsera GPT, maile do klienta (przez Gmail API - wysyłkę z panelu
+już mamy w komunikatorze, skrzynka kontakt@lumlum.co), **Google Drive
+na PDF-y faktur** (jak dziś - Antoni potwierdził, że chce kopię u siebie).
 
-Furgonetka: nie występuje w żadnym z dostarczonych blueprintów - do
-potwierdzenia gdzie jest używana (osobny scenariusz? ręcznie?). Jeśli jest
-potrzebna jako drugi przewoźnik, dojdzie jako drugi provider obok ShipX.
+### Wysyłka zagraniczna = Furgonetka (nowe, decyzja 2026-07-11)
+
+Furgonetki nie ma w blueprintach, bo służy do wysyłek zagranicznych
+(obsługiwane dotąd poza tym mechanizmem). Wchodzi do pipeline jako drugi
+provider:
+
+- **Routing**: kraj dostawy z formularza (`ship_country`) jest źródłem
+  prawdy - PL -> InPost ShipX; kraj != PL (Europa) -> **API Furgonetki**.
+  Brak polskiego numeru telefonu przy wycenie to tylko sygnał, że pewnie
+  będzie zagranica - decyduje formularz.
+- **Flat fee za wysyłkę zagraniczną**: kwota konfigurowalna, na start
+  50 zł, doliczana do sumy. Musi być WIDOCZNA w podsumowaniu formularza
+  od razu po zmianie kraju na != PL (mała zmiana w liquid - wiersz
+  "Wysyłka zagraniczna" w podsumowaniu; inaczej klient widzi inną kwotę
+  niż zapłaci) i jako pozycja na fakturze.
+- Formularz już dziś wspiera zagranicę częściowo: select kraju, pobranie
+  automatycznie blokowane poza PL, paczkomat tylko PL. W Make gałąź
+  "Wysyłka nie do Polski" kończyła się fakturą bez zamówienia przesyłki
+  (ręczna wysyłka) - u nas domyka ją Furgonetka.
+- Do przygotowania: konto API Furgonetki (OAuth2), wybór usług kurierskich
+  per kraj, mapowanie etykiety/trackingu do wyceny_shipments (provider:
+  'shipx' | 'furgonetka').
+
+### Formularz jednorazowy (nowe, decyzja 2026-07-11)
+
+Formularz wizualnie zostaje jaki jest ("podoba mi się jak wygląda"),
+ale link ma być jednorazowy:
+
+- nasz GET zwraca PRAWDZIWY `form_status` z bazy (Make hardkoduje "NEW"),
+- liquid dostaje jeden dodatkowy stan: jeśli `form_status != NEW` ->
+  zamiast formularza ekran "Zamówienie zostało już złożone" (bez danych
+  osobowych, bez możliwości ponownej wysyłki),
+- POST po stronie serwera też odrzuca zapis, gdy wycena ma już SUBMITTED
+  (ochrona przed double-submit i race'em dwóch kart),
+- odblokowanie linku (np. klient pomylił adres) = akcja na karcie wyceny
+  w panelu ("Otwórz formularz ponownie" -> status wraca do NEW, historia
+  poprzedniego submitu zostaje w wyceny_events).
 
 ## Architektura docelowa
 
@@ -120,8 +162,9 @@ potrzebna jako drugi przewoźnik, dojdzie jako drugi provider obok ShipX.
     kwota_sprzedazy_brutto, rabat_kwota, rabat24h_kwota, rabat24h_wazny_do,
     partner, prowizja_status, dane_do_faktury, form_* (status, submitted_at,
     token), pola adresowe z formularza, payment_method, history_log (jsonb).
-  - `wyceny_shipments` - shipment_id ShipX, service, tracking_number,
-    delivery_status, label_url, cod_amount, checked_at.
+  - `wyceny_shipments` - provider ('shipx' | 'furgonetka'), shipment_id,
+    service, tracking_number, delivery_status, label_url, cod_amount,
+    checked_at, nadana_at (ręcznie albo z trackingu - panel Fulfillment).
   - `wyceny_invoices` - infakt_uuid, kind (proforma/vat), status, paid_at,
     ksef_at, pdf_url, quick_payment_url.
   - `wyceny_events` - log zdarzeń pipeline (audyt zamiast history_log
@@ -244,16 +287,21 @@ gdy nasz pipeline przejdzie testy end-to-end.
 
 - Implementacja kroków: ShipX paczkomat (locker_standard, jak dziś) +
   ShipX kurier (courier_standard - przejęcie z Baselinkera, COD/insurance
-  w polach shipmentu), etykiety; inFakt faktura/proforma + szybka
+  w polach shipmentu), etykiety; **Furgonetka dla kraju != PL** (+ flat
+  fee 50 zł w formularzu i na fakturze); inFakt faktura/proforma + szybka
   płatność + KSeF + delete proformy; mail do klienta przez Gmail API
   (kontakt@lumlum.co, szablony przeniesione z Make); maszyna stanów +
   worker pg_cron (tracking, retry); webhook inFakt na nasz endpoint.
 - Weryfikacja rabatu jako ujemnej pozycji na fakturze inFakt.
+- Formularz jednorazowy: prawdziwy form_status w GET + ekran "zamówienie
+  już złożone" + odrzucanie POST przy SUBMITTED + "Otwórz ponownie"
+  w panelu.
 - **Testy na sobie**: zamówienie testowe (paczkomat i kurier) na własny
   adres, przelew i pobranie, firma i prywatna - pełne przejście pipeline
   na środowisku produkcyjnym z prawdziwą przesyłką co najmniej raz.
+  Furgonetka: przynajmniej jedna testowa przesyłka zagraniczna.
 - Nowe env vars: INFAKT_API_KEY (zrotowany), INPOST_SHIPX_TOKEN
-  (zrotowany), INPOST_ORG_ID.
+  (zrotowany), INPOST_ORG_ID, FURGONETKA_CLIENT_ID/SECRET.
 
 ### Etap 5 - Cutover POST i wygaszenie Make
 
@@ -264,24 +312,40 @@ gdy nasz pipeline przejdzie testy end-to-end.
   (archiwum), skasowanie scenariuszy Make, rotacja sekretów (stare były
   w blueprintach na dysku), usunięcie Baselinkera.
 
-### Etap 6 - Uszczelnienie i wygoda (po stabilizacji)
+### Etap 6 - Panel Fulfillment (osobny tool)
+
+Decyzja Antoniego (2026-07-11): fulfillment to OSOBNE narzędzie w hubie
+(analogicznie planowany osobno magazyn), nie zakładka wycen. Zastępuje
+scenariusze "#5 Fulfillment" i "Przesyłka nadana" oraz arkusz wysyłek:
+
+- Widok "**Przesyłki do nadania dziś**": zamówienia w stanie SHIPPED-
+  -zlecone (etykieta wygenerowana, paczka fizycznie do nadania).
+- Przesyłka znika z listy, gdy:
+  1. ręcznie klikam "Nadana", ALBO
+  2. automat (pg_cron, codziennie ok. 17:00-18:00) sprawdza tracking
+     (ShipX / Furgonetka) - jeśli przesyłka ma status nadania u
+     przewoźnika, sama przechodzi w "Wysłane".
+- Dalej ten sam tracking prowadzi do "Doręczone" (i przy pobraniu odpala
+  fakturę końcową - to już worker z etapu 4; panel tylko to pokazuje).
+- Później dołączy tu magazyn (stany komponentów pod zamówienia).
+
+### Etap 7 - Uszczelnienie i wygoda (po stabilizacji)
 
 - Rozliczenia COD z InPost (raporty) + widok "pobrania bez wpłaty".
 - Integracja bankowa inFakt (auto-dopasowanie przelewów PKO) - zbadać.
 - Push: formularz wypełniony / opłacone / doręczono / błąd pipeline.
 - Wycena z poziomu komunikatora (rozmowa -> szybkie dodanie z prefill).
 
-## Pytania otwarte (do decyzji Antoniego)
+## Rozstrzygnięte pytania (decyzje Antoniego 2026-07-11)
 
-1. **Furgonetka** - nie ma jej w blueprintach; gdzie jest dziś używana
-   i czy ma wejść jako drugi przewoźnik obok ShipX?
-2. **Notion** (#5 Fulfillment aktualizuje bazę Notion) - zachować sync,
-   czy Notion też do wygaszenia?
-3. **Google Drive** - czy PDF-y faktur/etykiet muszą lądować na Drive
-   (księgowość?), czy wystarczą linki inFakt/ShipX w panelu?
-4. **Arkusz wysyłek** (drugi spreadsheet w "Przesyłka nadana") - do czego
-   służy i czy przenosimy jego funkcję?
-5. **Scenariusz "# 1 B2B"** - poza rabatem 24h różni się od zwykłego #1
-   głównie brakiem ścieżki głosówek i drugim addRow (kopia do arkusza
-   Lorenzo). Zakładam: jeden wspólny parser w panelu, kopia dla Lorenzo
-   niepotrzebna (Lorenzo widzi wyceny w panelu per owner). Potwierdzić.
+1. **Furgonetka** - do wysyłek zagranicznych: kraj != PL -> API Furgonetki,
+   flat fee 50 zł (Europa) doliczane i widoczne w formularzu. Wysyłki
+   krajowe w całości ShipX (wszystko w Menedżerze Paczek).
+2. **Notion** - wygaszamy (służył optymalizacji leadów, niepotrzebny).
+3. **Google Drive** - zostaje, PDF-y faktur nadal lądują na Drive.
+4. **Arkusz wysyłek / fulfillment** - zastępuje go osobny panel
+   Fulfillment (etap 6).
+5. **Kopia wycen dla Lorenzo** - niepotrzebna, Lorenzo widzi wyceny
+   w panelu per owner.
+6. **Formularz** - zostaje wizualnie, staje się jednorazowy (zamyka się
+   po złożeniu zamówienia, odblokowanie tylko z panelu).
