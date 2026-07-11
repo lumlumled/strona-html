@@ -4,15 +4,18 @@
 //   syf → archive ORAZ oznaczenie jako przeczytane w Gmailu (wymóg Antoniego:
 //   skrzynka Gmail ma nie być zasypana).
 // OAuth: aplikacja "Internal" w Google Workspace lumlum.co (zero weryfikacji,
-// refresh token nie wygasa). Tokeny w kom_settings (klucz 'gmail_oauth') —
-// env trzyma tylko GOOGLE_CLIENT_ID/SECRET.
-// Sync odpala worker (pg_cron co 30 min): lista wiadomości z INBOX z ostatnich
-// dni, dedup po external_message_id 'gmail:<id>'.
+// refresh token nie wygasa). Env trzyma tylko GOOGLE_CLIENT_ID/SECRET.
+// MULTI-USER: skrzynki w tabeli kom_mailboxes (migracja 008) — każdy wiersz to
+// jedna skrzynka Gmail z tokenami i przypisaniem do app_users (kontakt@lumlum.co
+// → Antoni; skrzynka Lorenza → Lorenzo, gdy zostanie podłączona przez
+// /api/gmail/auth). Sync, watch i wysyłka iterują po aktywnych skrzynkach;
+// wątek pamięta swoją skrzynkę w meta.gmail.mailbox.
+// Sync odpala worker (pg_cron): lista wiadomości z INBOX z ostatnich dni,
+// dedup po external_message_id 'gmail:<id>'.
 const identity = require('../identity');
 const triage = require('../triage');
 
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify';
-const SETTINGS_KEY = 'gmail_oauth';
 const MAX_MESSAGES_PER_SYNC = 25;
 
 function clientConfig() {
@@ -26,18 +29,33 @@ function redirectUri() {
   return process.env.GMAIL_REDIRECT_URI || 'https://lumlum.dev/wiadomosci/api/gmail/callback';
 }
 
-// ── Tokeny w kom_settings ────────────────────────────────────────────────────
+// ── Skrzynki w kom_mailboxes ─────────────────────────────────────────────────
 
-async function loadTokens(db) {
-  const { data, error } = await db.from('kom_settings').select('value').eq('key', SETTINGS_KEY).limit(1);
+async function listMailboxes(db) {
+  const { data, error } = await db.from('kom_mailboxes').select('*').eq('active', true);
   if (error) throw error;
-  return data?.[0]?.value || null;
+  return data || [];
 }
 
-async function saveTokens(db, value) {
-  const { error } = await db.from('kom_settings')
-    .upsert({ key: SETTINGS_KEY, value, updated_at: new Date().toISOString() });
+async function updateMailbox(db, id, patch) {
+  const { error } = await db.from('kom_mailboxes')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', id);
   if (error) throw error;
+}
+
+// Wybór skrzynki do operacji: jawnie wskazana (meta.gmail.mailbox wątku),
+// a przy jednej podłączonej — ona. Przy wielu skrzynkach brak wskazania to
+// błąd: nie zgadujemy, z czyjego adresu wychodzi mail do klienta.
+async function mailboxFor(db, email) {
+  const boxes = await listMailboxes(db);
+  if (email) {
+    const found = boxes.find((b) => b.email.toLowerCase() === String(email).toLowerCase());
+    if (found) return found;
+  }
+  if (boxes.length === 1) return boxes[0];
+  if (!boxes.length) throw new Error('Gmail niepołączony — wejdź na /wiadomosci/api/gmail/auth');
+  throw new Error(`Wątek nie wskazuje skrzynki nadawczej (podłączone: ${boxes.map((b) => b.email).join(', ')})`);
 }
 
 // ── OAuth ────────────────────────────────────────────────────────────────────
@@ -67,7 +85,7 @@ async function tokenRequest(body) {
   return JSON.parse(raw);
 }
 
-async function exchangeCode(db, code) {
+async function exchangeCode(db, code, { connectedByUserId = null } = {}) {
   const cfg = clientConfig();
   if (!cfg) throw new Error('Brak GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET w konfiguracji serwera');
   const tokens = await tokenRequest({
@@ -79,23 +97,45 @@ async function exchangeCode(db, code) {
   });
   if (!tokens.refresh_token) throw new Error('Google nie zwrócił refresh_token — odłącz aplikację na myaccount.google.com/permissions i spróbuj ponownie');
 
-  // Czyj to inbox — do pokazania w panelu i logach.
+  // Czyj to inbox — do zapisu skrzynki i pokazania w panelu.
   const profile = await gmailFetch(tokens.access_token, '/profile');
-  await saveTokens(db, {
-    refresh_token: tokens.refresh_token,
-    access_token: tokens.access_token,
-    expires_at: new Date(Date.now() + (tokens.expires_in - 60) * 1000).toISOString(),
-    email: profile.emailAddress,
+  const email = String(profile.emailAddress).toLowerCase();
+
+  // Przypisanie do użytkownika: ponowna autoryzacja zachowuje właściciela;
+  // nowa skrzynka → app_user o tym samym adresie, a gdy go nie ma —
+  // użytkownik, który kliknął autoryzację (Antoni konfigurujący skrzynkę).
+  const { data: existing, error: exErr } = await db
+    .from('kom_mailboxes').select('id,app_user_id').eq('email', email).limit(1);
+  if (exErr) throw exErr;
+  let appUserId = existing?.[0]?.app_user_id ?? null;
+  if (appUserId == null) {
+    const { data: users } = await db.from('app_users').select('id,email');
+    const match = (users || []).find((u) => String(u.email).toLowerCase() === email);
+    appUserId = match ? match.id : connectedByUserId;
+  }
+
+  const { error: upErr } = await db.from('kom_mailboxes').upsert({
+    provider: 'gmail',
+    email,
+    app_user_id: appUserId,
+    tokens: {
+      refresh_token: tokens.refresh_token,
+      access_token: tokens.access_token,
+      expires_at: new Date(Date.now() + (tokens.expires_in - 60) * 1000).toISOString(),
+    },
+    active: true,
     connected_at: new Date().toISOString(),
-  });
-  return { email: profile.emailAddress };
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'email' });
+  if (upErr) throw upErr;
+  return { email };
 }
 
-async function ensureAccessToken(db) {
-  const stored = await loadTokens(db);
-  if (!stored?.refresh_token) return null;
+async function ensureAccessToken(db, box) {
+  const stored = box.tokens || {};
+  if (!stored.refresh_token) return null;
   if (stored.access_token && stored.expires_at && new Date(stored.expires_at) > new Date()) {
-    return { token: stored.access_token, email: stored.email };
+    return { token: stored.access_token, email: box.email };
   }
   const cfg = clientConfig();
   if (!cfg) throw new Error('Brak GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET w konfiguracji serwera');
@@ -105,12 +145,13 @@ async function ensureAccessToken(db) {
     client_secret: cfg.clientSecret,
     grant_type: 'refresh_token',
   });
-  await saveTokens(db, {
+  const tokens = {
     ...stored,
     access_token: refreshed.access_token,
     expires_at: new Date(Date.now() + (refreshed.expires_in - 60) * 1000).toISOString(),
-  });
-  return { token: refreshed.access_token, email: stored.email };
+  };
+  await updateMailbox(db, box.id, { tokens });
+  return { token: tokens.access_token, email: box.email };
 }
 
 // ── Gmail API ────────────────────────────────────────────────────────────────
@@ -170,8 +211,30 @@ function extractText(payload) {
 
 async function syncGmail(db) {
   if (!clientConfig()) return { ok: true, skipped: 'brak GOOGLE_CLIENT_ID/SECRET — Gmail czeka na konfigurację OAuth' };
-  const auth = await ensureAccessToken(db);
-  if (!auth) return { ok: true, skipped: 'Gmail niepołączony — wejdź na /wiadomosci/api/gmail/auth' };
+  const boxes = await listMailboxes(db);
+  if (!boxes.length) return { ok: true, skipped: 'Gmail niepołączony — wejdź na /wiadomosci/api/gmail/auth' };
+
+  // Nadawcy będący naszymi skrzynkami to korespondencja wewnętrzna,
+  // nie klient — pomijamy w każdej skrzynce.
+  const ownEmails = new Set(boxes.map((b) => b.email.toLowerCase()));
+  const result = { ok: true, added: 0, markedRead: 0, mailboxes: {} };
+  for (const box of boxes) {
+    try {
+      const r = await syncMailbox(db, box, ownEmails);
+      result.added += r.added || 0;
+      result.markedRead += r.markedRead || 0;
+      result.mailboxes[box.email] = r;
+    } catch (err) {
+      console.error(`Gmail sync ${box.email}:`, err.message);
+      result.mailboxes[box.email] = { error: err.message };
+    }
+  }
+  return result;
+}
+
+async function syncMailbox(db, box, ownEmails) {
+  const auth = await ensureAccessToken(db, box);
+  if (!auth) return { skipped: 'brak refresh_token — połącz skrzynkę ponownie' };
 
   // Świeże wiadomości z INBOX; dedup po ID zrobi unique w kom_messages.
   const list = await gmailFetch(auth.token, `/messages?q=${encodeURIComponent('in:inbox newer_than:3d')}&maxResults=${MAX_MESSAGES_PER_SYNC}`);
@@ -191,7 +254,7 @@ async function syncGmail(db) {
   for (const id of fresh) {
     const msg = await gmailFetch(auth.token, `/messages/${id}?format=full`);
     const from = parseFrom(header(msg.payload, 'From'));
-    if (!from.email || from.email === auth.email) continue; // własne/wysłane pomijamy
+    if (!from.email || ownEmails.has(from.email)) continue; // własne skrzynki pomijamy
     const subject = header(msg.payload, 'Subject') || '(bez tematu)';
     const bodyText = (extractText(msg.payload) || msg.snippet || '').slice(0, 3000).trim();
 
@@ -199,8 +262,13 @@ async function syncGmail(db) {
       type: 'email', value: from.email, displayName: from.name, source: 'webhook',
     });
     const { thread } = await identity.attachThread(db, customer, 'email', msg.threadId);
-    if (!thread.meta?.gmail) {
-      const meta = { ...(thread.meta || {}), gmail: { threadId: msg.threadId } };
+    // meta.gmail.mailbox = skrzynka, do której przyszedł mail; przez nią
+    // wychodzi odpowiedź (i po niej wątek jest przypisany do użytkownika).
+    if (!thread.meta?.gmail?.mailbox) {
+      const meta = {
+        ...(thread.meta || {}),
+        gmail: { ...(thread.meta?.gmail || {}), threadId: msg.threadId, mailbox: box.email },
+      };
       await db.from('kom_threads').update({ meta }).eq('id', thread.id);
       thread.meta = meta;
     }
@@ -212,7 +280,7 @@ async function syncGmail(db) {
       sent_by: 'customer',
       external_message_id: `gmail:${id}`,
       created_at: msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : new Date().toISOString(),
-      meta: { gmail: { id, threadId: msg.threadId, subject, from: from.email } },
+      meta: { gmail: { id, threadId: msg.threadId, subject, from: from.email, mailbox: box.email } },
     }).select('id');
     if (msgErr) {
       if (/duplicate|unique/i.test(msgErr.message)) continue;
@@ -251,15 +319,31 @@ async function syncGmail(db) {
 }
 
 async function status(db) {
-  const tokens = await loadTokens(db);
-  return { configured: Boolean(clientConfig()), connected: Boolean(tokens?.refresh_token), email: tokens?.email || null };
+  const boxes = await listMailboxes(db);
+  return {
+    configured: Boolean(clientConfig()),
+    connected: boxes.length > 0,
+    email: boxes[0]?.email || null, // kompatybilność ze starszym frontem
+    mailboxes: boxes.map((b) => ({
+      email: b.email,
+      app_user_id: b.app_user_id,
+      connected_at: b.connected_at,
+    })),
+  };
 }
 
 // Oznacz istniejące wiadomości jako przeczytane w Gmailu — używane przy
 // wyciszaniu wątku e-mail ("nie chcę widzieć podobnych" = zniknij też z oczu
 // w skrzynce). Best-effort: błąd jednej wiadomości nie blokuje reszty.
-async function markMessagesRead(db, gmailIds) {
-  const auth = await ensureAccessToken(db);
+// mailbox = skrzynka wątku (meta.gmail.mailbox); przy jednej podłączonej zbędne.
+async function markMessagesRead(db, gmailIds, { mailbox = null } = {}) {
+  let auth = null;
+  try {
+    auth = await ensureAccessToken(db, await mailboxFor(db, mailbox));
+  } catch (err) {
+    console.error('Gmail markMessagesRead:', err.message);
+    return 0;
+  }
   if (!auth) return 0;
   let marked = 0;
   for (const id of gmailIds) {
@@ -288,9 +372,10 @@ function encodeSubject(subject) {
   return `=?UTF-8?B?${Buffer.from(subject, 'utf8').toString('base64')}?=`;
 }
 
-async function sendReply(db, { to, subject, text, gmailThreadId, lastGmailMessageId }) {
-  const auth = await ensureAccessToken(db);
-  if (!auth) throw new Error('Gmail niepołączony — wejdź na /wiadomosci/api/gmail/auth');
+async function sendReply(db, { mailbox, to, subject, text, gmailThreadId, lastGmailMessageId }) {
+  const box = await mailboxFor(db, mailbox);
+  const auth = await ensureAccessToken(db, box);
+  if (!auth) throw new Error(`Skrzynka ${box.email} bez ważnego tokenu — połącz ponownie na /wiadomosci/api/gmail/auth`);
 
   // Message-ID/References ostatniego maila klienta dociągamy w momencie
   // wysyłki (nie trzymamy ich w bazie). Brak nagłówków nie blokuje wysyłki —
@@ -341,24 +426,36 @@ async function sendReply(db, { to, subject, text, gmailThreadId, lastGmailMessag
 // "dzwonkiem", nie źródłem danych. watch wygasa po ~7 dniach → worker
 // odnawia go, gdy zostało <24 h.
 
+// Wspólny topic dla wszystkich skrzynek — powiadomienie niesie adres skrzynki,
+// ale i tak odpalamy pełny sync (idempotentny), więc rozróżnianie jest zbędne.
 async function ensureWatch(db) {
   const topic = process.env.GMAIL_PUBSUB_TOPIC; // projects/<projekt>/topics/<topic>
   if (!topic) return { skipped: 'brak GMAIL_PUBSUB_TOPIC — push wyłączony, działa polling' };
-  const auth = await ensureAccessToken(db);
-  if (!auth) return { skipped: 'Gmail niepołączony' };
+  const boxes = await listMailboxes(db);
+  if (!boxes.length) return { skipped: 'Gmail niepołączony' };
 
-  const stored = await loadTokens(db);
-  const expiresAt = stored?.watch?.expiration ? Number(stored.watch.expiration) : 0;
-  if (expiresAt - Date.now() > 24 * 60 * 60 * 1000 && stored?.watch?.topic === topic) {
-    return { active: true, expiresAt: new Date(expiresAt).toISOString() };
+  const out = {};
+  for (const box of boxes) {
+    try {
+      const auth = await ensureAccessToken(db, box);
+      if (!auth) { out[box.email] = { skipped: 'brak refresh_token' }; continue; }
+      const expiresAt = box.watch?.expiration ? Number(box.watch.expiration) : 0;
+      if (expiresAt - Date.now() > 24 * 60 * 60 * 1000 && box.watch?.topic === topic) {
+        out[box.email] = { active: true, expiresAt: new Date(expiresAt).toISOString() };
+        continue;
+      }
+      const watch = await gmailFetch(auth.token, '/watch', {
+        method: 'POST',
+        body: JSON.stringify({ topicName: topic, labelIds: ['INBOX'], labelFilterBehavior: 'INCLUDE' }),
+      });
+      await updateMailbox(db, box.id, { watch: { topic, expiration: watch.expiration, historyId: watch.historyId } });
+      out[box.email] = { renewed: true, expiresAt: new Date(Number(watch.expiration)).toISOString() };
+    } catch (err) {
+      console.error(`Gmail watch ${box.email}:`, err.message);
+      out[box.email] = { error: err.message };
+    }
   }
-
-  const watch = await gmailFetch(auth.token, '/watch', {
-    method: 'POST',
-    body: JSON.stringify({ topicName: topic, labelIds: ['INBOX'], labelFilterBehavior: 'INCLUDE' }),
-  });
-  await saveTokens(db, { ...(await loadTokens(db)), watch: { topic, expiration: watch.expiration, historyId: watch.historyId } });
-  return { renewed: true, expiresAt: new Date(Number(watch.expiration)).toISOString() };
+  return out;
 }
 
 module.exports = { authUrl, exchangeCode, syncGmail, ensureWatch, status, sendReply, markMessagesRead };

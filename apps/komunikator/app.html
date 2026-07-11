@@ -462,7 +462,8 @@
         manualBtn.hidden = false;
         copyBtn.hidden = false;
       } else if (send.mode === 'gmail') {
-        note.textContent = `Odpowiedź pójdzie mailem do ${send.email?.to || 'klienta'}, w tym samym wątku Gmaila.`;
+        const skrzynka = send.email?.mailbox ? ` ze skrzynki ${send.email.mailbox}` : '';
+        note.textContent = `Odpowiedź pójdzie mailem do ${send.email?.to || 'klienta'}${skrzynka}, w tym samym wątku Gmaila.`;
       } else if (send.mode === 'open') {
         note.textContent = `Okno odpowiedzi Meta zamyka się za ${hoursLeft(send.window_expires_at).toFixed(1)} h.`;
       } else if (send.mode === 'human_agent') {

@@ -1,7 +1,9 @@
 // Testy wysyłki odpowiedzi przez Gmail API (node --test).
-// Krytyczne: odpowiedź musi wpiąć się w istniejący wątek (threadId +
+// Krytyczne: (1) odpowiedź musi wpiąć się w istniejący wątek (threadId +
 // In-Reply-To/References) i poprawnie kodować polskie znaki (RFC 2047 w
-// temacie, base64 w treści) — inaczej klient dostaje krzaki albo nowy mail.
+// temacie, base64 w treści) — inaczej klient dostaje krzaki albo nowy mail;
+// (2) multi-user: mail wychodzi ze skrzynki wątku, a przy wielu skrzynkach
+// bez wskazania NIE zgadujemy nadawcy.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -30,26 +32,30 @@ global.fetch = async (url, opts = {}) => {
 
 const gmail = require('./ingest/gmail');
 
-// kom_settings z ważnym access_tokenem — ensureAccessToken nie robi refreshu.
-const db = {
-  from: () => ({
-    select: () => ({
-      eq: () => ({
-        limit: async () => ({
-          data: [{
-            value: {
-              refresh_token: 'r',
-              access_token: 'a',
-              email: 'kontakt@lumlum.co',
-              expires_at: new Date(Date.now() + 3600e3).toISOString(),
-            },
-          }],
-          error: null,
-        }),
-      }),
-    }),
-  }),
-};
+// kom_mailboxes z ważnymi access_tokenami — ensureAccessToken nie robi refreshu.
+function makeDb(boxes) {
+  return {
+    from(table) {
+      if (table !== 'kom_mailboxes') throw new Error(`nieznana tabela ${table}`);
+      return { select: () => ({ eq: async () => ({ data: boxes, error: null }) }) };
+    },
+  };
+}
+
+function makeBox(email) {
+  return {
+    id: `box-${email}`,
+    email,
+    active: true,
+    tokens: {
+      refresh_token: 'r',
+      access_token: `token-${email}`,
+      expires_at: new Date(Date.now() + 3600e3).toISOString(),
+    },
+  };
+}
+
+const dbJednaSkrzynka = makeDb([makeBox('kontakt@lumlum.co')]);
 
 function decodeRaw(raw) {
   return Buffer.from(raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
@@ -57,7 +63,7 @@ function decodeRaw(raw) {
 
 test('odpowiedź idzie w wątku Gmaila z poprawnym MIME i polskimi znakami', async () => {
   calls.length = 0;
-  const res = await gmail.sendReply(db, {
+  const res = await gmail.sendReply(dbJednaSkrzynka, {
     to: 'jan@klient.pl',
     subject: 'Wycena oświetlenia schodów',
     text: 'Dzień dobry, całość wyjdzie 2999 zł.',
@@ -86,7 +92,7 @@ test('odpowiedź idzie w wątku Gmaila z poprawnym MIME i polskimi znakami', asy
 
 test('temat już z "Re:" nie jest dublowany, ASCII bez kodowania', async () => {
   calls.length = 0;
-  await gmail.sendReply(db, {
+  await gmail.sendReply(dbJednaSkrzynka, {
     to: 'jan@klient.pl',
     subject: 'Re: Zapytanie LED',
     text: 'Ok',
@@ -98,4 +104,33 @@ test('temat już z "Re:" nie jest dublowany, ASCII bez kodowania', async () => {
   assert.ok(mime.includes('Subject: Re: Zapytanie LED'));
   assert.ok(!mime.includes('Re: Re:'), 'podwójne Re: w temacie');
   assert.ok(!mime.includes('In-Reply-To:'), 'bez ID ostatniego maila nie zgadujemy nagłówków');
+});
+
+test('multi-user: mail wychodzi ze skrzynki wątku, jej tokenem', async () => {
+  calls.length = 0;
+  const db = makeDb([makeBox('kontakt@lumlum.co'), makeBox('lorenzo@lumlum.co')]);
+  await gmail.sendReply(db, {
+    mailbox: 'lorenzo@lumlum.co',
+    to: 'jan@klient.pl',
+    subject: 'Zapytanie',
+    text: 'Ok',
+    gmailThreadId: 'th-1',
+    lastGmailMessageId: null,
+  });
+  const sendCall = calls.find((c) => c.url.endsWith('/messages/send'));
+  const mime = decodeRaw(JSON.parse(sendCall.opts.body).raw);
+  assert.ok(mime.includes('From: lorenzo@lumlum.co'), 'From musi być skrzynką wątku');
+  assert.equal(
+    sendCall.opts.headers.Authorization,
+    'Bearer token-lorenzo@lumlum.co',
+    'wysyłka musi użyć tokenu skrzynki wątku, nie pierwszej z brzegu'
+  );
+});
+
+test('multi-user: wiele skrzynek bez wskazania = błąd, nie zgadywanie nadawcy', async () => {
+  const db = makeDb([makeBox('kontakt@lumlum.co'), makeBox('lorenzo@lumlum.co')]);
+  await assert.rejects(
+    () => gmail.sendReply(db, { to: 'jan@klient.pl', subject: 'X', text: 'Ok', gmailThreadId: 'th-1' }),
+    /nie wskazuje skrzynki/i
+  );
 });

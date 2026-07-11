@@ -236,6 +236,9 @@ function computeSendState(thread, messagesAsc) {
           subject: lastIn.meta.gmail.subject || '',
           threadId: gmailThreadId,
           lastMessageId: lastIn.meta.gmail.id || null,
+          // skrzynka wątku (multi-user): odpowiedź wychodzi z tej skrzynki,
+          // do której klient napisał; null = jedyna podłączona (fallback).
+          mailbox: thread.meta?.gmail?.mailbox || lastIn.meta.gmail.mailbox || null,
         },
       };
     }
@@ -537,6 +540,7 @@ app.post('/api/threads/:id/messages', async (req, res) => {
     try {
       if (sendState.mode === 'gmail') {
         const sent = await gmail.sendReply(db, {
+          mailbox: sendState.email.mailbox,
           to: sendState.email.to,
           subject: sendState.email.subject,
           text,
@@ -564,7 +568,7 @@ app.post('/api/threads/:id/messages', async (req, res) => {
       thread_id: thread.id,
       direction: 'out',
       body: text,
-      sent_by: 'antoni',
+      sent_by: req.user?.email || 'antoni',
       suggestion_id: req.body?.suggestion_id || null,
       ...(externalMessageId ? { external_message_id: externalMessageId } : {}),
       ...(Object.keys(outMeta).length ? { meta: outMeta } : {}),
@@ -601,7 +605,7 @@ app.post('/api/threads/:id/manual-sent', async (req, res) => {
       thread_id: req.params.id,
       direction: 'out',
       body: text,
-      sent_by: 'antoni',
+      sent_by: req.user?.email || 'antoni',
       suggestion_id: req.body?.suggestion_id || null,
       meta: { manual_business_suite: true },
     });
@@ -654,7 +658,7 @@ app.post('/api/notes', async (req, res) => {
       thread_id: thread.id,
       direction: 'internal',
       body: text,
-      sent_by: 'antoni',
+      sent_by: req.user?.email || 'antoni',
       meta: { note: true },
     });
     if (msgErr) throw msgErr;
@@ -681,7 +685,11 @@ app.get('/api/gmail/callback', async (req, res) => {
   try {
     if (req.query.error) throw new Error(`Google odmówił: ${req.query.error}`);
     if (!req.query.code) throw new Error('Brak kodu autoryzacji w odpowiedzi Google');
-    const { email } = await gmail.exchangeCode(getClient(), String(req.query.code));
+    // connectedByUserId: nowa skrzynka bez pasującego app_usera przypisuje
+    // się do zalogowanego, który kliknął autoryzację (domyślnie właściciel).
+    const { email } = await gmail.exchangeCode(getClient(), String(req.query.code), {
+      connectedByUserId: req.user?.id ?? null,
+    });
     res.type('html').send(`<meta charset="utf-8"><body style="font-family:sans-serif;padding:2rem">
       <h2>✅ Gmail połączony: ${email}</h2>
       <p>E-maile zaczną wpadać do panelu przy najbliższym cyklu (max 30 min).</p>
@@ -722,7 +730,11 @@ app.post('/api/threads/:id/mute', async (req, res) => {
       const { data: gmailMsgs } = await db
         .from('kom_messages').select('meta').eq('thread_id', thread.id).eq('direction', 'in');
       const ids = (gmailMsgs || []).map((m) => m.meta?.gmail?.id).filter(Boolean);
-      if (ids.length) result.markedRead = await gmail.markMessagesRead(db, ids);
+      if (ids.length) {
+        result.markedRead = await gmail.markMessagesRead(db, ids, {
+          mailbox: thread.meta?.gmail?.mailbox || null,
+        });
+      }
     }
     res.json({ ok: true, ...result });
   } catch (err) {
