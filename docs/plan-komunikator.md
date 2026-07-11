@@ -65,6 +65,24 @@ bo licznik TikToka bywa wyższy niż dostępne komentarze).
 DM-y TikTok: kierować ruch do bio-linku/WhatsApp; ewentualny eksperyment
 TikAPI (nieoficjalne, $29/mies, ryzyko konta) świadomie odłożony.
 
+**✅ TRIAGE AI (2026-07-11 noc, commit 0b9086e, prod zweryfikowany):** selekcja na
+wejściu wg decyzji Antoniego — do głównego widoku trafia tylko to, co warte
+odpowiedzi. Polaryzacja: komentarze BARDZO selektywnie (inbox tylko przy jasnych
+sygnałach zakupowych), DM/e-mail domyślnie inbox (archive tylko przy jasnym spamie),
+notification = automaty wymagające uwagi (osobna zakładka). `server/triage.js`:
+klasyfikator (task classify, env LLM_CLASSIFY=anthropic:claude-haiku-4-5) + twarde
+reguły wyciszeń (kom_triage_rules: nadawca + przykład treści uczący filtr) + sweep
+zaległości. Webhook Zernio klasyfikuje inline w budżecie 2,5 s; TikTok w cronie;
+sweep w workerze dokańcza NULL-e. UI: zakładki Do ogarnięcia / Powiadomienia /
+Zamknięte / Wszystkie (pełny "ukryty" podgląd z badge+powodem), przyciski
+„Nie chcę widzieć podobnych" (mute) i „Pokaż w głównym" (triage_locked chroni
+ręczną decyzję przed auto-cofnięciem). Cron: pg_cron job `komunikator_worker`
+co 30 min → /api/cron/worker (tiktok sync + sweep); stary job tiktok_comments_sync
+usunięty. Zweryfikowane na realnych komentarzach: zakupowe→inbox, hejt/komplementy→archive.
+NASTĘPNY KROK (życzenie Antoniego): Gmail jako kanał email do tej samej warstwy
+triage (syf→archive + oznaczenie jako przeczytane w Gmailu, automaty→Powiadomienia);
+wymaga od Antoniego decyzji o metodzie dostępu (OAuth Gmail API vs przekierowanie).
+
 **Plan dla nowego czatu (migracja na Zernio) — wykonany, zostawiony dla kontekstu:**
 1. Antoni wkleja **klucz API Zernio** (Instagram jest już podłączony w ich dashboardzie;
    stronę FB podłączyć tak samo, gdy przyjdzie kolej).
