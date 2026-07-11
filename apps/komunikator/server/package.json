@@ -1,0 +1,18 @@
+{
+  "name": "komunikator-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Komunikator (panel Wiadomości) — zunifikowana komunikacja i pamięć klienta LumLum",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test",
+    "migrate": "node ../migrations/run.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "pg": "^8.12.0"
+  }
+}

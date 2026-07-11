@@ -12,6 +12,10 @@
     "api/crm.js": {
       "includeFiles": "{apps/crm/app.html,apps/crm/assets/**,apps/shared/**}",
       "maxDuration": 180
+    },
+    "api/komunikator.js": {
+      "includeFiles": "{apps/komunikator/app.html,apps/komunikator/assets/**,apps/shared/**}",
+      "maxDuration": 180
     }
   },
   "crons": [
@@ -21,13 +25,16 @@
   ],
   "redirects": [
     { "source": "/backlog-b2c", "destination": "/backlog-b2c/", "permanent": false },
-    { "source": "/crm", "destination": "/crm/", "permanent": false }
+    { "source": "/crm", "destination": "/crm/", "permanent": false },
+    { "source": "/wiadomosci", "destination": "/wiadomosci/", "permanent": false }
   ],
   "rewrites": [
     { "source": "/backlog-b2c/", "destination": "/api/backlog-b2c" },
     { "source": "/backlog-b2c/:path*", "destination": "/api/backlog-b2c" },
     { "source": "/crm/", "destination": "/api/crm" },
     { "source": "/crm/:path*", "destination": "/api/crm" },
+    { "source": "/wiadomosci/", "destination": "/api/komunikator" },
+    { "source": "/wiadomosci/:path*", "destination": "/api/komunikator" },
     { "source": "/", "destination": "/api/index" },
     { "source": "/login", "destination": "/api/index" },
     { "source": "/logout", "destination": "/api/index" },

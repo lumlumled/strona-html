@@ -17,6 +17,7 @@ window.LumTopbar = (() => {
     { key: 'hub', label: 'Start' },
     { key: 'backlog-b2c', label: 'Backlog B2C' },
     { key: 'crm', label: 'CRM' },
+    { key: 'wiadomosci', label: 'Wiadomości' },
     { key: 'pozwolenia', label: 'Pozwolenia', adminOnly: true },
   ];
 

@@ -1,0 +1,387 @@
+// Komunikator — panel "Wiadomości" (lumlum.dev/wiadomosci): zunifikowana
+// komunikacja przychodząca (Messenger/IG/WhatsApp przez ManyChat, telefon
+// przez Zadarmę — Etap 3, notatki głosowe) z jedną kartą klienta LL-XXXXX.
+// Pełna architektura: docs/plan-komunikator.md. Ten serwer to Etapy 0–2:
+// tożsamość + ingest ManyChat + widok wątków + wysyłanie odpowiedzi.
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
+require('dotenv').config();
+const fs = require('fs');
+const express = require('express');
+const { getClient } = require('./supabase');
+const { createAuth, clientPayload, panelLinks, PANELS, CRM_SHEETS } = require('../../shared/server/auth');
+const identity = require('./identity');
+const manychat = require('./ingest/manychat');
+
+const app = express();
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: false }));
+
+// Patrz apps/backlog-b2c/server/server.js — bez no-store Vercel CDN
+// cache'owałby odpowiedzi po zalogowaniu i serwował je każdemu.
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/assets/')) res.set('Cache-Control', 'no-store');
+  next();
+});
+
+// Statyki przed bramką auth (strona logowania potrzebuje logo/styli).
+app.get('/assets/:file', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'assets', req.params.file));
+});
+app.get('/shared/:file', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', '..', 'shared', req.params.file));
+});
+
+// ── Webhooki: własny sekret w query stringu zamiast sesji użytkownika ───────
+// publicPrefixes w createAuth wyłącza bramkę logowania dla /api/webhooks/.
+
+function requireWebhookToken(req, res, next) {
+  const expected = process.env.MANYCHAT_WEBHOOK_TOKEN;
+  if (!expected || req.query.token !== expected) {
+    return res.status(401).json({ error: 'Nieprawidłowy token webhooka' });
+  }
+  return next();
+}
+
+app.post('/api/webhooks/manychat', requireWebhookToken, async (req, res) => {
+  try {
+    const result = await manychat.handleWebhook(getClient(), req.body || {}, req.query.channel);
+    res.json(result);
+  } catch (err) {
+    console.error('Webhook ManyChat:', err.message);
+    // 200 zamiast 4xx/5xx dla błędów treści payloadu — ManyChat nie będzie
+    // retry'ował w kółko czegoś, co i tak jest niepoprawne; payload leży
+    // w kom_inbox_raw z opisem błędu do ręcznego obejrzenia.
+    res.json({ ok: false, error: err.message });
+  }
+});
+
+// ── Auth: to samo indywidualne logowanie co hub/CRM, panel 'wiadomosci' ─────
+
+const auth = createAuth({
+  getClient,
+  panelKey: 'wiadomosci',
+  publicPrefixes: ['/api/webhooks/'],
+  loginTitle: 'Wiadomości',
+});
+auth.register(app);
+
+const APP_HTML = fs.readFileSync(path.join(__dirname, '..', 'app.html'), 'utf8');
+
+app.get('/', (req, res) => {
+  const payload = {
+    API_BASE: req.baseUrl,
+    LUMLUM_USER: clientPayload(req.user),
+    LUMLUM_LINKS: panelLinks(),
+    LUMLUM_PANELS: PANELS,
+    LUMLUM_CRM_SHEETS: CRM_SHEETS,
+  };
+  const script = Object.entries(payload)
+    .map(([key, value]) => `window.${key} = ${JSON.stringify(value)};`)
+    .join('\n');
+  res.type('html').send(APP_HTML.replace('<head>', `<head>\n<script>\n${script}\n</script>`));
+});
+
+function handleError(res, err, fallbackStatus = 400) {
+  console.error(err);
+  const message = err.message || 'Wewnętrzny błąd serwera';
+  const status = /brak/i.test(message) ? 500 : fallbackStatus;
+  res.status(status).json({ error: message });
+}
+
+// ── Okno 24 h Meta ───────────────────────────────────────────────────────────
+// Standardową wiadomość na Messengerze/IG/WhatsAppie wolno wysłać do 24 h od
+// ostatniej wiadomości klienta (polityka platformy, nie ManyChata).
+const WINDOWED_CHANNELS = new Set(['messenger', 'instagram', 'whatsapp']);
+
+function windowExpiresAt(thread, lastInboundAt) {
+  if (!WINDOWED_CHANNELS.has(thread.channel) || !lastInboundAt) return null;
+  return new Date(new Date(lastInboundAt).getTime() + 24 * 60 * 60 * 1000).toISOString();
+}
+
+// ── API wątków ───────────────────────────────────────────────────────────────
+
+app.get('/api/threads', async (req, res) => {
+  try {
+    const db = getClient();
+    const statusFilter = String(req.query.status || 'open');
+    let query = db.from('kom_threads').select('*').order('last_message_at', { ascending: false, nullsFirst: false });
+    if (statusFilter === 'open') query = query.in('status', ['attention', 'waiting']);
+    else if (statusFilter !== 'all') query = query.eq('status', statusFilter);
+    const { data: threads, error } = await query.limit(200);
+    if (error) throw error;
+
+    const customerIds = [...new Set((threads || []).map((t) => t.customer_id))];
+    const threadIds = (threads || []).map((t) => t.id);
+
+    const [customersRes, messagesRes, proposalsRes] = await Promise.all([
+      customerIds.length
+        ? db.from('kom_customers').select('*').in('id', customerIds)
+        : { data: [] },
+      threadIds.length
+        ? db.from('kom_messages').select('thread_id,direction,body,created_at')
+            .in('thread_id', threadIds).order('created_at', { ascending: false }).limit(600)
+        : { data: [] },
+      threadIds.length
+        ? db.from('kom_merge_proposals').select('thread_id').in('thread_id', threadIds).eq('status', 'pending')
+        : { data: [] },
+    ]);
+    if (customersRes.error) throw customersRes.error;
+    if (messagesRes.error) throw messagesRes.error;
+
+    const customers = new Map((customersRes.data || []).map((c) => [c.id, c]));
+    const lastMsg = new Map();
+    const lastInbound = new Map();
+    (messagesRes.data || []).forEach((m) => {
+      if (!lastMsg.has(m.thread_id)) lastMsg.set(m.thread_id, m);
+      if (m.direction === 'in' && !lastInbound.has(m.thread_id)) lastInbound.set(m.thread_id, m.created_at);
+    });
+    const pendingMerge = new Set((proposalsRes.data || []).map((p) => p.thread_id));
+
+    res.json({
+      data: (threads || []).map((t) => {
+        const customer = customers.get(t.customer_id) || {};
+        const last = lastMsg.get(t.id);
+        return {
+          id: t.id,
+          channel: t.channel,
+          status: t.status,
+          last_message_at: t.last_message_at,
+          customer: {
+            id: customer.id,
+            public_id: customer.public_id,
+            display_name: customer.display_name,
+          },
+          last_message: last ? { direction: last.direction, body: String(last.body).slice(0, 140) } : null,
+          window_expires_at: windowExpiresAt(t, lastInbound.get(t.id)),
+          has_pending_merge: pendingMerge.has(t.id),
+        };
+      }),
+    });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+app.get('/api/threads/:id', async (req, res) => {
+  try {
+    const db = getClient();
+    const { data: threads, error } = await db.from('kom_threads').select('*').eq('id', req.params.id).limit(1);
+    if (error) throw error;
+    const thread = threads && threads[0];
+    if (!thread) return res.status(404).json({ error: 'Nie znaleziono wątku' });
+
+    const customer = await identity.loadCustomer(db, thread.customer_id);
+    const [messagesRes, identitiesRes, proposalsRes, threadsRes] = await Promise.all([
+      db.from('kom_messages').select('*').eq('thread_id', thread.id).order('created_at', { ascending: true }).limit(500),
+      db.from('kom_customer_identities').select('*').eq('customer_id', customer.id),
+      db.from('kom_merge_proposals').select('*').eq('thread_id', thread.id).eq('status', 'pending'),
+      db.from('kom_threads').select('*').eq('customer_id', customer.id),
+    ]);
+    for (const r of [messagesRes, identitiesRes, proposalsRes, threadsRes]) if (r.error) throw r.error;
+
+    // Kandydaci propozycji scalenia — z nazwą, żeby UI miał co pokazać.
+    const proposals = proposalsRes.data || [];
+    const candidateIds = [...new Set(proposals.map((p) => p.candidate_id))];
+    let candidates = new Map();
+    if (candidateIds.length) {
+      const { data: cands, error: candErr } = await db.from('kom_customers').select('*').in('id', candidateIds);
+      if (candErr) throw candErr;
+      candidates = new Map((cands || []).map((c) => [c.id, c]));
+    }
+
+    const lastInbound = [...(messagesRes.data || [])].reverse().find((m) => m.direction === 'in');
+
+    res.json({
+      thread,
+      customer: {
+        id: customer.id,
+        public_id: customer.public_id,
+        display_name: customer.display_name,
+        notes: customer.notes,
+        identities: (identitiesRes.data || []).map((i) => ({ type: i.type, value: i.value, confirmed: i.confirmed })),
+        threads: (threadsRes.data || []).map((t) => ({ id: t.id, channel: t.channel, status: t.status })),
+      },
+      messages: messagesRes.data || [],
+      window_expires_at: windowExpiresAt(thread, lastInbound?.created_at),
+      merge_proposals: proposals.map((p) => ({
+        id: p.id,
+        reason: p.reason,
+        evidence: p.evidence,
+        confidence: p.confidence,
+        candidate: (() => {
+          const c = candidates.get(p.candidate_id);
+          return c ? { public_id: c.public_id, display_name: c.display_name } : null;
+        })(),
+      })),
+    });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+app.post('/api/threads/:id/status', async (req, res) => {
+  try {
+    const status = String(req.body?.status || '');
+    if (!['attention', 'waiting', 'closed'].includes(status)) {
+      return res.status(400).json({ error: 'Nieprawidłowy status' });
+    }
+    const { error } = await getClient().from('kom_threads').update({ status }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// ── Wysyłanie odpowiedzi przez ManyChat ─────────────────────────────────────
+
+async function sendViaManyChat(subscriberId, text) {
+  const token = process.env.MANYCHAT_API_TOKEN;
+  if (!token) throw new Error('Brak MANYCHAT_API_TOKEN w konfiguracji serwera');
+  const response = await fetch('https://api.manychat.com/fb/sending/sendContent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      subscriber_id: Number(subscriberId) || subscriberId,
+      data: { version: 'v2', content: { messages: [{ type: 'text', text }] } },
+    }),
+  });
+  const body = await response.text();
+  if (!response.ok) throw new Error(`ManyChat ${response.status}: ${body.slice(0, 300)}`);
+  return JSON.parse(body);
+}
+
+app.post('/api/threads/:id/messages', async (req, res) => {
+  try {
+    const text = String(req.body?.body || '').trim();
+    if (!text) return res.status(400).json({ error: 'Pusta wiadomość' });
+    const db = getClient();
+
+    const { data: threads, error } = await db.from('kom_threads').select('*').eq('id', req.params.id).limit(1);
+    if (error) throw error;
+    const thread = threads && threads[0];
+    if (!thread) return res.status(404).json({ error: 'Nie znaleziono wątku' });
+    if (!WINDOWED_CHANNELS.has(thread.channel)) {
+      return res.status(400).json({ error: 'Ten kanał nie obsługuje wysyłania z panelu' });
+    }
+
+    // Okno 24 h: po zamknięciu Meta odrzuci wysyłkę — zamiast strzelać,
+    // od razu kierujemy na fallback (Business Suite / telefon).
+    const { data: lastIn, error: inErr } = await db
+      .from('kom_messages').select('created_at').eq('thread_id', thread.id)
+      .eq('direction', 'in').order('created_at', { ascending: false }).limit(1);
+    if (inErr) throw inErr;
+    const expires = windowExpiresAt(thread, lastIn?.[0]?.created_at);
+    if (expires && new Date(expires) < new Date()) {
+      return res.status(409).json({
+        error: 'Okno 24 h Meta zamknięte — wyślij ręcznie przez Business Suite albo zadzwoń',
+        window_closed: true,
+      });
+    }
+
+    await sendViaManyChat(thread.external_thread_id, text);
+
+    const { error: msgErr } = await db.from('kom_messages').insert({
+      thread_id: thread.id,
+      direction: 'out',
+      body: text,
+      sent_by: 'antoni',
+      suggestion_id: req.body?.suggestion_id || null,
+    });
+    if (msgErr) throw msgErr;
+    await db.from('kom_threads').update({ status: 'waiting', last_message_at: new Date().toISOString() }).eq('id', thread.id);
+    res.json({ ok: true });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// Odpowiedź wysłana ręcznie (Business Suite po zamknięciu okna 24 h) — panel
+// tylko dopisuje ją do historii wątku, żeby kontekst został kompletny.
+app.post('/api/threads/:id/manual-sent', async (req, res) => {
+  try {
+    const text = String(req.body?.body || '').trim();
+    if (!text) return res.status(400).json({ error: 'Pusta wiadomość' });
+    const db = getClient();
+    const { error: msgErr } = await db.from('kom_messages').insert({
+      thread_id: req.params.id,
+      direction: 'out',
+      body: text,
+      sent_by: 'antoni',
+      meta: { manual_business_suite: true },
+    });
+    if (msgErr) throw msgErr;
+    await db.from('kom_threads').update({ status: 'waiting', last_message_at: new Date().toISOString() }).eq('id', req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// ── Notatka (Wispr Flow): tekst + numer telefonu klienta ────────────────────
+
+app.post('/api/notes', async (req, res) => {
+  try {
+    const text = String(req.body?.text || '').trim();
+    const phone = String(req.body?.phone || '').trim();
+    if (!text) return res.status(400).json({ error: 'Pusta notatka' });
+    if (!phone) return res.status(400).json({ error: 'Podaj numer telefonu klienta' });
+
+    const db = getClient();
+    const { customer, created } = await identity.resolveCustomer(db, {
+      type: 'phone', value: phone, source: 'manual',
+    });
+
+    // Notatka dokleja się do wątku telefonicznego klienta, jeśli istnieje —
+    // rozmowa i notatka o niej to jeden kontekst; inaczej osobny wątek 'note'.
+    const { data: phoneThreads, error: ptErr } = await db
+      .from('kom_threads').select('*').eq('customer_id', customer.id).eq('channel', 'phone').limit(1);
+    if (ptErr) throw ptErr;
+    const thread = phoneThreads && phoneThreads[0]
+      ? phoneThreads[0]
+      : (await identity.attachThread(db, customer, 'note', identity.normalize('phone', phone))).thread;
+
+    const { error: msgErr } = await db.from('kom_messages').insert({
+      thread_id: thread.id,
+      direction: 'internal',
+      body: text,
+      sent_by: 'antoni',
+      meta: { note: true },
+    });
+    if (msgErr) throw msgErr;
+    await db.from('kom_threads').update({ last_message_at: new Date().toISOString() }).eq('id', thread.id);
+    res.json({ ok: true, customer: customer.public_id, customerCreated: created, threadId: thread.id });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// ── Propozycje scaleń ────────────────────────────────────────────────────────
+
+app.post('/api/merge-proposals/:id/confirm', async (req, res) => {
+  try {
+    const winner = await identity.confirmMerge(getClient(), req.params.id);
+    res.json({ ok: true, customer: winner.public_id });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+app.post('/api/merge-proposals/:id/reject', async (req, res) => {
+  try {
+    await identity.rejectMerge(getClient(), req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+const PORT = process.env.PORT || 3004;
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Komunikator działa na http://localhost:${PORT}`);
+  });
+}
+
+module.exports = app;

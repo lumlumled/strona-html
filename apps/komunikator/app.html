@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wiadomości</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared/topbar.css">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --surface-1: #ffffff;
+      --page: #f5f5f4;
+      --text-primary: #111111;
+      --text-secondary: #52514e;
+      --text-muted: #8a8984;
+      --border: rgba(17, 17, 17, 0.12);
+      --accent: #111111;
+      --accent-contrast: #ffffff;
+      --accent-soft: #ececea;
+      --good: #0ca30c;
+      --bad: #b5433f;
+      --warn: #b07a1f;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-1: #161616;
+        --page: #0a0a0a;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted: #8a8984;
+        --border: rgba(255, 255, 255, 0.14);
+        --accent: #ffffff;
+        --accent-contrast: #0a0a0a;
+        --accent-soft: #262626;
+        --good: #16c116;
+        --bad: #e08585;
+        --warn: #e0b165;
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--page);
+      color: var(--text-primary);
+      min-height: 100vh;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 1rem;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 1rem;
+      align-items: start;
+    }
+    @media (max-width: 800px) {
+      .layout { grid-template-columns: 1fr; }
+      .layout.thread-open .sidebar { display: none; }
+      .layout:not(.thread-open) .main { display: none; }
+    }
+
+    /* ── Lista wątków ── */
+    .sidebar { background: var(--surface-1); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
+    .sidebar-head { padding: .9rem 1rem .6rem; display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+    .sidebar-head h1 { font-size: 1.05rem; }
+    .tabs { display: flex; gap: .35rem; padding: 0 1rem .7rem; flex-wrap: wrap; }
+    .tab {
+      border: 1px solid var(--border); background: transparent; color: var(--text-secondary);
+      font: inherit; font-size: .78rem; font-weight: 600; padding: .3rem .7rem; border-radius: 999px; cursor: pointer;
+    }
+    .tab.active { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+    .thread-list { list-style: none; max-height: calc(100vh - 220px); overflow-y: auto; }
+    .thread-item { padding: .7rem 1rem; border-top: 1px solid var(--border); cursor: pointer; display: grid; gap: .15rem; }
+    .thread-item:hover { background: var(--accent-soft); }
+    .thread-item.selected { background: var(--accent-soft); }
+    .thread-top { display: flex; align-items: center; gap: .45rem; }
+    .thread-name { font-weight: 600; font-size: .9rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .thread-preview { font-size: .8rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .thread-preview .out { color: var(--text-secondary); }
+    .badge {
+      font-size: .65rem; font-weight: 700; padding: .1rem .45rem; border-radius: 999px;
+      border: 1px solid var(--border); color: var(--text-secondary); white-space: nowrap;
+    }
+    .badge.attention { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+    .badge.merge { color: var(--warn); border-color: var(--warn); }
+    .empty { padding: 1.2rem 1rem; color: var(--text-muted); font-size: .85rem; }
+
+    /* ── Rozmowa ── */
+    .main { background: var(--surface-1); border: 1px solid var(--border); border-radius: 16px; display: flex; flex-direction: column; min-height: 60vh; }
+    .conv-head { padding: .9rem 1.1rem; border-bottom: 1px solid var(--border); display: grid; gap: .35rem; }
+    .conv-title-row { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+    .back-btn { display: none; border: 1px solid var(--border); background: transparent; color: inherit; border-radius: 999px; font: inherit; font-size: .8rem; padding: .25rem .7rem; cursor: pointer; }
+    @media (max-width: 800px) { .back-btn { display: inline-block; } }
+    .conv-title { font-size: 1rem; font-weight: 700; }
+    .chips { display: flex; gap: .35rem; flex-wrap: wrap; }
+    .chip { font-size: .72rem; color: var(--text-secondary); border: 1px solid var(--border); border-radius: 999px; padding: .12rem .55rem; }
+    .conv-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
+    .btn {
+      border: 1px solid var(--border); background: transparent; color: inherit; border-radius: 999px;
+      font: inherit; font-size: .8rem; font-weight: 600; padding: .35rem .85rem; cursor: pointer;
+    }
+    .btn.primary { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+
+    .merge-banner {
+      margin: .8rem 1.1rem 0; border: 1px solid var(--warn); border-radius: 12px; padding: .7rem .9rem;
+      font-size: .85rem; display: grid; gap: .5rem;
+    }
+    .merge-banner b { color: var(--warn); }
+    .merge-actions { display: flex; gap: .4rem; }
+
+    .messages { flex: 1; overflow-y: auto; padding: 1rem 1.1rem; display: flex; flex-direction: column; gap: .5rem; }
+    .msg { max-width: 72%; padding: .55rem .8rem; border-radius: 14px; font-size: .9rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+    .msg.in { align-self: flex-start; background: var(--accent-soft); border-bottom-left-radius: 4px; }
+    .msg.out { align-self: flex-end; background: var(--accent); color: var(--accent-contrast); border-bottom-right-radius: 4px; }
+    .msg.internal { align-self: center; max-width: 88%; background: transparent; border: 1px dashed var(--border); color: var(--text-secondary); font-size: .82rem; }
+    .msg-time { display: block; font-size: .65rem; opacity: .6; margin-top: .2rem; }
+
+    .window-note { padding: .4rem 1.1rem; font-size: .78rem; color: var(--text-muted); }
+    .window-note.closed { color: var(--bad); font-weight: 600; }
+
+    .composer { border-top: 1px solid var(--border); padding: .8rem 1.1rem; display: grid; gap: .5rem; }
+    .composer textarea {
+      width: 100%; min-height: 70px; resize: vertical; font: inherit; font-size: .9rem;
+      background: var(--page); color: inherit; border: 1px solid var(--border); border-radius: 12px; padding: .6rem .75rem;
+    }
+    .composer-row { display: flex; gap: .5rem; justify-content: flex-end; flex-wrap: wrap; }
+
+    /* ── Notatka ── */
+    dialog {
+      border: 1px solid var(--border); border-radius: 16px; background: var(--surface-1); color: inherit;
+      padding: 1.2rem; max-width: 420px; width: calc(100vw - 2rem);
+    }
+    dialog::backdrop { background: rgba(0,0,0,.45); }
+    dialog h2 { font-size: 1rem; margin-bottom: .8rem; }
+    dialog input, dialog textarea {
+      width: 100%; font: inherit; font-size: .9rem; background: var(--page); color: inherit;
+      border: 1px solid var(--border); border-radius: 10px; padding: .55rem .7rem; margin-bottom: .6rem;
+    }
+    dialog textarea { min-height: 110px; resize: vertical; }
+    .toast {
+      position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%);
+      background: var(--accent); color: var(--accent-contrast); padding: .55rem 1rem; border-radius: 999px;
+      font-size: .85rem; font-weight: 600; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 50;
+    }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div class="layout" id="layout">
+    <section class="sidebar">
+      <div class="sidebar-head">
+        <h1>Wiadomości</h1>
+        <button class="btn" id="note-btn" title="Notatka z rozmowy telefonicznej">+ Notatka</button>
+      </div>
+      <div class="tabs" id="tabs">
+        <button class="tab active" data-status="open">Do ogarnięcia</button>
+        <button class="tab" data-status="closed">Zamknięte</button>
+        <button class="tab" data-status="all">Wszystkie</button>
+      </div>
+      <ul class="thread-list" id="thread-list">
+        <li class="empty">Ładowanie…</li>
+      </ul>
+    </section>
+
+    <section class="main" id="main" hidden>
+      <div class="conv-head">
+        <div class="conv-title-row">
+          <button class="back-btn" id="back-btn">← Lista</button>
+          <span class="conv-title" id="conv-title"></span>
+          <span class="badge" id="conv-channel"></span>
+          <span class="chip" id="conv-llid"></span>
+        </div>
+        <div class="chips" id="conv-identities"></div>
+        <div class="conv-actions">
+          <button class="btn" id="btn-waiting">Ignoruj (czeka)</button>
+          <button class="btn" id="btn-close">Zamknij wątek</button>
+        </div>
+      </div>
+      <div id="merge-banners"></div>
+      <div class="messages" id="messages"></div>
+      <div class="window-note" id="window-note" hidden></div>
+      <div class="composer">
+        <textarea id="reply-text" placeholder="Napisz odpowiedź…"></textarea>
+        <div class="composer-row">
+          <button class="btn" id="btn-manual" hidden>Wysłane ręcznie (Business Suite)</button>
+          <button class="btn primary" id="btn-send">Wyślij</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="main" id="placeholder">
+      <div class="empty" style="padding:2rem;">Wybierz wątek z listy albo dodaj notatkę z rozmowy telefonicznej.</div>
+    </section>
+  </div>
+
+  <dialog id="note-dialog">
+    <h2>Notatka z rozmowy telefonicznej</h2>
+    <form method="dialog" id="note-form">
+      <input id="note-phone" type="tel" placeholder="Numer telefonu klienta (np. 604 650 590)" required>
+      <textarea id="note-text" placeholder="Treść notatki (Wispr Flow / dyktowanie)…" required></textarea>
+      <div class="composer-row">
+        <button class="btn" value="cancel">Anuluj</button>
+        <button class="btn primary" id="note-save" value="save">Zapisz</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="shared/topbar.js"></script>
+  <script>
+    'use strict';
+    LumTopbar.mount({ active: 'wiadomosci' });
+
+    const API = (window.API_BASE || '') + '/api';
+    const CHANNEL_LABELS = {
+      messenger: 'Messenger', instagram: 'Instagram', whatsapp: 'WhatsApp',
+      phone: 'Telefon', email: 'E-mail', note: 'Notatki',
+    };
+
+    const state = { statusFilter: 'open', threads: [], selectedId: null, detail: null };
+
+    const $ = (id) => document.getElementById(id);
+
+    function toast(msg) {
+      const el = $('toast');
+      el.textContent = msg;
+      el.classList.add('show');
+      setTimeout(() => el.classList.remove('show'), 2600);
+    }
+
+    async function api(path, options = {}) {
+      const res = await fetch(API + path, {
+        headers: { 'Content-Type': 'application/json' },
+        ...options,
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw Object.assign(new Error(body.error || `Błąd ${res.status}`), { body });
+      return body;
+    }
+
+    function fmtTime(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      const today = new Date();
+      const sameDay = d.toDateString() === today.toDateString();
+      return sameDay
+        ? d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })
+        : d.toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' }) + ' ' +
+          d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    // ── Lista wątków ──
+    async function loadThreads() {
+      try {
+        const { data } = await api(`/threads?status=${state.statusFilter}`);
+        state.threads = data;
+        renderThreads();
+      } catch (err) {
+        $('thread-list').innerHTML = `<li class="empty">Błąd: ${err.message}</li>`;
+      }
+    }
+
+    function renderThreads() {
+      const list = $('thread-list');
+      if (!state.threads.length) {
+        list.innerHTML = '<li class="empty">Pusto — nic do ogarnięcia 🎉</li>';
+        return;
+      }
+      list.innerHTML = '';
+      state.threads.forEach((t) => {
+        const li = document.createElement('li');
+        li.className = 'thread-item' + (t.id === state.selectedId ? ' selected' : '');
+        const name = t.customer.display_name || t.customer.public_id || '(bez nazwy)';
+        const badges = [];
+        if (t.status === 'attention') badges.push('<span class="badge attention">nowe</span>');
+        if (t.has_pending_merge) badges.push('<span class="badge merge">scalenie?</span>');
+        const preview = t.last_message
+          ? (t.last_message.direction === 'out' ? '<span class="out">Ty: </span>' : '') + escapeHtml(t.last_message.body)
+          : '';
+        li.innerHTML = `
+          <div class="thread-top">
+            <span class="thread-name">${escapeHtml(name)}</span>
+            ${badges.join('')}
+            <span class="badge">${CHANNEL_LABELS[t.channel] || t.channel}</span>
+          </div>
+          <div class="thread-preview">${preview}</div>`;
+        li.addEventListener('click', () => openThread(t.id));
+        list.appendChild(li);
+      });
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+      }[c]));
+    }
+
+    // ── Rozmowa ──
+    async function openThread(id) {
+      state.selectedId = id;
+      renderThreads();
+      try {
+        state.detail = await api(`/threads/${id}`);
+        renderDetail();
+      } catch (err) {
+        toast(err.message);
+      }
+    }
+
+    function renderDetail() {
+      const d = state.detail;
+      $('placeholder').hidden = true;
+      $('main').hidden = false;
+      $('layout').classList.add('thread-open');
+
+      $('conv-title').textContent = d.customer.display_name || d.customer.public_id;
+      $('conv-llid').textContent = d.customer.public_id;
+      $('conv-channel').textContent = CHANNEL_LABELS[d.thread.channel] || d.thread.channel;
+
+      const idLabels = { fb: 'FB', ig: 'IG', wa: 'WA', phone: 'tel', email: 'email' };
+      $('conv-identities').innerHTML = d.customer.identities
+        .map((i) => `<span class="chip">${idLabels[i.type] || i.type}: ${escapeHtml(i.type === 'fb' || i.type === 'ig' ? '✓ połączono' : i.value)}${i.confirmed ? '' : ' (?)'}</span>`)
+        .join('');
+
+      // Propozycje scaleń
+      const banners = $('merge-banners');
+      banners.innerHTML = '';
+      (d.merge_proposals || []).forEach((p) => {
+        const div = document.createElement('div');
+        div.className = 'merge-banner';
+        const who = p.candidate ? `${escapeHtml(p.candidate.display_name || '')} (${p.candidate.public_id})` : 'inny klient';
+        div.innerHTML = `
+          <div><b>Wykryto prawdopodobne dopasowanie:</b> ten wątek może należeć do ${who}.
+          ${p.evidence?.type ? `Wspólny identyfikator: ${escapeHtml(p.evidence.type)} ${escapeHtml(p.evidence.value || '')}.` : ''}
+          Potwierdzasz scalenie?</div>
+          <div class="merge-actions">
+            <button class="btn primary" data-act="confirm">Tak, to ten sam klient</button>
+            <button class="btn" data-act="reject">Nie, osobni</button>
+          </div>`;
+        div.querySelector('[data-act="confirm"]').addEventListener('click', async () => {
+          try { await api(`/merge-proposals/${p.id}/confirm`, { method: 'POST' }); toast('Scalono'); openThread(d.thread.id); loadThreads(); }
+          catch (err) { toast(err.message); }
+        });
+        div.querySelector('[data-act="reject"]').addEventListener('click', async () => {
+          try { await api(`/merge-proposals/${p.id}/reject`, { method: 'POST' }); toast('Odrzucono'); openThread(d.thread.id); loadThreads(); }
+          catch (err) { toast(err.message); }
+        });
+        banners.appendChild(div);
+      });
+
+      // Wiadomości
+      const wrap = $('messages');
+      wrap.innerHTML = '';
+      d.messages.forEach((m) => {
+        const div = document.createElement('div');
+        div.className = `msg ${m.direction}`;
+        const label = m.direction === 'internal' ? '📝 ' : '';
+        div.innerHTML = `${label}${escapeHtml(m.body)}<span class="msg-time">${fmtTime(m.created_at)}${m.meta?.manual_business_suite ? ' · ręcznie (BS)' : ''}</span>`;
+        wrap.appendChild(div);
+      });
+      wrap.scrollTop = wrap.scrollHeight;
+
+      // Okno 24 h
+      const note = $('window-note');
+      const sendBtn = $('btn-send');
+      const manualBtn = $('btn-manual');
+      const windowed = ['messenger', 'instagram', 'whatsapp'].includes(d.thread.channel);
+      if (!windowed) {
+        note.hidden = false;
+        note.className = 'window-note';
+        note.textContent = 'Kanał bez wysyłania z panelu — odpowiedz telefonicznie albo zapisz notatkę.';
+        sendBtn.disabled = true;
+        manualBtn.hidden = true;
+      } else if (d.window_expires_at && new Date(d.window_expires_at) < new Date()) {
+        note.hidden = false;
+        note.className = 'window-note closed';
+        note.textContent = 'Okno 24 h Meta zamknięte — wyślij ręcznie w Business Suite (skopiuj treść) albo zadzwoń, potem kliknij „Wysłane ręcznie”.';
+        sendBtn.disabled = true;
+        manualBtn.hidden = false;
+      } else {
+        note.hidden = !d.window_expires_at;
+        note.className = 'window-note';
+        if (d.window_expires_at) {
+          const hoursLeft = Math.max(0, (new Date(d.window_expires_at) - new Date()) / 36e5);
+          note.textContent = `Okno odpowiedzi Meta zamyka się za ${hoursLeft.toFixed(1)} h.`;
+        }
+        sendBtn.disabled = false;
+        manualBtn.hidden = true;
+      }
+    }
+
+    // ── Akcje ──
+    $('btn-send').addEventListener('click', async () => {
+      const text = $('reply-text').value.trim();
+      if (!text || !state.detail) return;
+      $('btn-send').disabled = true;
+      try {
+        await api(`/threads/${state.detail.thread.id}/messages`, { method: 'POST', body: JSON.stringify({ body: text }) });
+        $('reply-text').value = '';
+        toast('Wysłano');
+        openThread(state.detail.thread.id);
+        loadThreads();
+      } catch (err) {
+        if (err.body?.window_closed) { toast(err.message); renderDetail(); }
+        else toast(err.message);
+      } finally {
+        $('btn-send').disabled = false;
+      }
+    });
+
+    $('btn-manual').addEventListener('click', async () => {
+      const text = $('reply-text').value.trim();
+      if (!text || !state.detail) return toast('Wpisz treść, którą wysłałeś ręcznie');
+      try {
+        await api(`/threads/${state.detail.thread.id}/manual-sent`, { method: 'POST', body: JSON.stringify({ body: text }) });
+        $('reply-text').value = '';
+        toast('Dopisano do historii');
+        openThread(state.detail.thread.id);
+        loadThreads();
+      } catch (err) { toast(err.message); }
+    });
+
+    $('btn-waiting').addEventListener('click', () => setThreadStatus('waiting', 'Wątek czeka'));
+    $('btn-close').addEventListener('click', () => setThreadStatus('closed', 'Zamknięto wątek'));
+
+    async function setThreadStatus(status, msg) {
+      if (!state.detail) return;
+      try {
+        await api(`/threads/${state.detail.thread.id}/status`, { method: 'POST', body: JSON.stringify({ status }) });
+        toast(msg);
+        loadThreads();
+        $('main').hidden = true;
+        $('placeholder').hidden = false;
+        $('layout').classList.remove('thread-open');
+        state.selectedId = null;
+      } catch (err) { toast(err.message); }
+    }
+
+    $('back-btn').addEventListener('click', () => {
+      $('layout').classList.remove('thread-open');
+      $('main').hidden = true;
+      $('placeholder').hidden = false;
+      state.selectedId = null;
+      renderThreads();
+    });
+
+    // ── Notatka ──
+    $('note-btn').addEventListener('click', () => $('note-dialog').showModal());
+    $('note-form').addEventListener('submit', async (e) => {
+      if (e.submitter?.value !== 'save') return;
+      e.preventDefault();
+      try {
+        const result = await api('/notes', {
+          method: 'POST',
+          body: JSON.stringify({ phone: $('note-phone').value, text: $('note-text').value }),
+        });
+        $('note-dialog').close();
+        $('note-phone').value = '';
+        $('note-text').value = '';
+        toast(`Notatka zapisana (${result.customer})`);
+        loadThreads();
+      } catch (err) { toast(err.message); }
+    });
+
+    // ── Zakładki ──
+    $('tabs').addEventListener('click', (e) => {
+      const btn = e.target.closest('.tab');
+      if (!btn) return;
+      document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+      btn.classList.add('active');
+      state.statusFilter = btn.dataset.status;
+      loadThreads();
+    });
+
+    loadThreads();
+    setInterval(loadThreads, 30000); // odśwież listę co 30 s
+  </script>
+</body>
+</html>

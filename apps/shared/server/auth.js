@@ -36,7 +36,7 @@ const PANELS = [
   { key: 'backlog-b2c', label: 'Backlog B2C', desc: 'Dzienny standup: plan dnia, Umowa, priorytety, podsumowanie', status: 'live' },
   { key: 'crm', label: 'CRM', desc: 'Leady B2C: arkusz, karta leada, pytania do AI', status: 'live' },
   { key: 'wyceny', label: 'Wyceny', desc: 'Panel wycen: tworzenie, edycja kwot i statusów', status: 'soon' },
-  { key: 'wiadomosci', label: 'Wiadomości', desc: 'Hub wiadomości: komunikacja z klientami w jednym miejscu', status: 'soon' },
+  { key: 'wiadomosci', label: 'Wiadomości', desc: 'Komunikator: Messenger, IG, telefon i notatki w jednym wątku klienta', status: 'live' },
   { key: 'statystyki', label: 'Statystyki', desc: 'Lejek, telefony, skuteczność — dane z całego systemu', status: 'soon' },
   { key: 'pozwolenia', label: 'Pozwolenia', desc: 'Użytkownicy i dostępy do paneli oraz arkuszy', status: 'live', adminOnly: true },
 ];
@@ -122,7 +122,7 @@ function panelLinks() {
       'backlog-b2c': '/backlog-b2c/',
       crm: '/crm/',
       wyceny: '/wyceny',
-      wiadomosci: '/wiadomosci',
+      wiadomosci: '/wiadomosci/',
       statystyki: '/statystyki',
       pozwolenia: '/pozwolenia',
     };
@@ -133,7 +133,7 @@ function panelLinks() {
     'backlog-b2c': 'http://localhost:3001/',
     crm: 'http://localhost:3002/',
     wyceny: `${hub}/wyceny`,
-    wiadomosci: `${hub}/wiadomosci`,
+    wiadomosci: 'http://localhost:3004/',
     statystyki: `${hub}/statystyki`,
     pozwolenia: `${hub}/pozwolenia`,
   };

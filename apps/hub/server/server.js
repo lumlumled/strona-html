@@ -75,7 +75,8 @@ app.get('/pozwolenia', auth.requireAdmin, (req, res) => {
 // Strony-atrapy przyszłych paneli: jeden szablon, treść z rejestru PANELS.
 // Dostęp wg uprawnień jak do prawdziwego panelu — kafelek i strona zachowują
 // się od dziś tak, jak będą się zachowywać po zbudowaniu funkcjonalności.
-const SOON_PAGES = { wyceny: 'wyceny', wiadomosci: 'wiadomosci', statystyki: 'statystyki' };
+// wiadomosci wypadło z atrap — to żywy panel apps/komunikator/ pod /wiadomosci/.
+const SOON_PAGES = { wyceny: 'wyceny', statystyki: 'statystyki' };
 
 Object.entries(SOON_PAGES).forEach(([route, panelKey]) => {
   app.get(`/${route}`, (req, res) => {
