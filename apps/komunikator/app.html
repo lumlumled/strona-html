@@ -222,7 +222,7 @@
     const API = (window.API_BASE || '') + '/api';
     const CHANNEL_LABELS = {
       messenger: 'Messenger', instagram: 'Instagram', whatsapp: 'WhatsApp',
-      phone: 'Telefon', email: 'E-mail', note: 'Notatki',
+      tiktok: 'TikTok', phone: 'Telefon', email: 'E-mail', note: 'Notatki',
     };
 
     const state = {
@@ -359,19 +359,24 @@
       $('conv-llid').textContent = d.customer.public_id;
       $('conv-channel').textContent = CHANNEL_LABELS[d.thread.channel] || d.thread.channel;
 
-      // Fallback ręczny: rozmowy z Zernio otwiera się w ich inboxie (jeden
-      // wspólny widok — konkretny wątek znajduje się po nazwie rozmówcy).
+      // Fallback ręczny: TikTok → prosto do filmu z komentarzem; rozmowy
+      // z Zernio → ich inbox (konkretny wątek po nazwie rozmówcy).
       const liveChat = $('btn-livechat');
-      if (d.thread.meta?.zernio) {
+      if (d.send?.mode === 'manual_only' && d.send.video_url) {
+        liveChat.hidden = false;
+        liveChat.href = d.send.video_url;
+        liveChat.textContent = 'Otwórz film w TikTok ↗';
+      } else if (d.thread.meta?.zernio) {
         liveChat.hidden = false;
         liveChat.href = 'https://zernio.com/dashboard/inbox';
+        liveChat.textContent = 'Otwórz w Zernio ↗';
       } else {
         liveChat.hidden = true;
       }
 
-      const idLabels = { fb: 'FB', ig: 'IG', wa: 'WA', phone: 'tel', email: 'email' };
+      const idLabels = { fb: 'FB', ig: 'IG', wa: 'WA', tt: 'TikTok', phone: 'tel', email: 'email' };
       $('conv-identities').innerHTML = d.customer.identities
-        .map((i) => `<span class="chip">${idLabels[i.type] || i.type}: ${escapeHtml(i.type === 'fb' || i.type === 'ig' ? '✓ połączono' : i.value)}${i.confirmed ? '' : ' (?)'}</span>`)
+        .map((i) => `<span class="chip">${idLabels[i.type] || i.type}: ${escapeHtml(['fb', 'ig', 'tt'].includes(i.type) ? '✓ połączono' : i.value)}${i.confirmed ? '' : ' (?)'}</span>`)
         .join('');
 
       // Propozycje scaleń
@@ -437,6 +442,11 @@
       if (send.mode === 'none') {
         note.textContent = 'Kanał bez wysyłania z panelu — odpowiedz telefonicznie albo zapisz notatkę.';
         sendBtn.disabled = true;
+      } else if (send.mode === 'manual_only') {
+        note.textContent = 'Komentarz na TikToku (tylko odczyt — brak API). Skopiuj treść, odpowiedz pod filmem i kliknij „Wysłane ręcznie”.';
+        sendBtn.disabled = true;
+        manualBtn.hidden = false;
+        copyBtn.hidden = false;
       } else if (send.mode === 'open') {
         note.textContent = `Okno odpowiedzi Meta zamyka się za ${hoursLeft(send.window_expires_at).toFixed(1)} h.`;
       } else if (send.mode === 'human_agent') {

@@ -26,7 +26,7 @@ function normalize(type, value) {
   return s;
 }
 
-const IDENTITY_TYPES = new Set(['fb', 'ig', 'wa', 'phone', 'email']);
+const IDENTITY_TYPES = new Set(['fb', 'ig', 'wa', 'tt', 'phone', 'email']);
 
 function assertType(type) {
   if (!IDENTITY_TYPES.has(type)) throw new Error(`Nieznany typ tożsamości: ${type}`);

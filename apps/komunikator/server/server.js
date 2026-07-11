@@ -11,6 +11,7 @@ const { getClient } = require('./supabase');
 const { createAuth, clientPayload, panelLinks, PANELS, CRM_SHEETS } = require('../../shared/server/auth');
 const identity = require('./identity');
 const zernio = require('./ingest/zernio');
+const tiktok = require('./ingest/tiktok');
 const suggest = require('./suggest');
 
 const app = express();
@@ -56,12 +57,34 @@ app.post('/api/webhooks/zernio', async (req, res) => {
   }
 });
 
+// ── Cron: komentarze TikTok przez scraper (patrz ingest/tiktok.js) ──────────
+// Ten sam wzorzec autoryzacji co crony Backlogu: Vercel wysyła
+// Authorization: Bearer CRON_SECRET; ręczne odpalenie przez ?secret=.
+
+function isCronAuthorized(req) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+  return req.headers.authorization === `Bearer ${secret}` || req.query.secret === secret;
+}
+
+app.all('/api/cron/tiktok-comments', async (req, res) => {
+  if (!isCronAuthorized(req)) return res.status(401).json({ error: 'Brak autoryzacji' });
+  try {
+    const result = await tiktok.syncTikTokComments(getClient());
+    console.log('Cron tiktok-comments:', JSON.stringify(result));
+    res.json(result);
+  } catch (err) {
+    console.error('Cron tiktok-comments:', err.message);
+    res.status(502).json({ ok: false, error: err.message });
+  }
+});
+
 // ── Auth: to samo indywidualne logowanie co hub/CRM, panel 'wiadomosci' ─────
 
 const auth = createAuth({
   getClient,
   panelKey: 'wiadomosci',
-  publicPrefixes: ['/api/webhooks/'],
+  publicPrefixes: ['/api/webhooks/', '/api/cron/'],
   loginTitle: 'Wiadomości',
 });
 auth.register(app);
@@ -123,6 +146,14 @@ function isCommentsThread(thread) {
 // walidacja). messagesAsc = wszystkie wiadomości wątku rosnąco po czasie.
 function computeSendState(thread, messagesAsc) {
   const now = new Date();
+
+  // TikTok = tylko odczyt (scraper): sugestia się generuje, wysyłka ręcznie
+  // w aplikacji TikToka + "Wysłane ręcznie". Link do filmu dla UI.
+  if (thread.channel === 'tiktok') {
+    const lastComment = [...messagesAsc].reverse()
+      .find((m) => m.direction === 'in' && m.meta?.kind === 'comment');
+    return { mode: 'manual_only', video_url: lastComment?.meta?.tiktok?.videoUrl || null };
+  }
 
   if (isCommentsThread(thread)) {
     const lastComment = [...messagesAsc].reverse()
@@ -391,6 +422,12 @@ app.post('/api/threads/:id/messages', async (req, res) => {
     const sendState = computeSendState(thread, messages || []);
     if (sendState.mode === 'none') {
       return res.status(400).json({ error: 'Ten kanał nie obsługuje wysyłania z panelu' });
+    }
+    if (sendState.mode === 'manual_only') {
+      return res.status(409).json({
+        error: 'Komentarze TikTok są tylko do odczytu (brak API) — odpowiedz w aplikacji TikToka i kliknij „Wysłane ręcznie”.',
+        window_closed: true,
+      });
     }
     if (sendState.mode === 'closed') {
       return res.status(409).json({ error: SEND_CLOSED_MESSAGES[sendState.reason], window_closed: true });
