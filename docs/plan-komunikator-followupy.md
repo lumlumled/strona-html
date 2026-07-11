@@ -45,20 +45,37 @@ treść in-wiadomości → regex → dla każdego znaleziska:
   identity.enrichCustomer(customer, {type, value, source:'ai_extracted'})
     'added'      → tożsamość dopięta; następny mail z tego adresu
                    resolveCustomer() trafi w TEGO klienta = zero nowych bytów
-    'conflict'   → identity.proposeMerge() → baner "Scalenie?" (UI już jest)
+    'conflict'   → decyzja auto-merge / propozycja (niżej)
     'already_own'→ nic
 ```
 
+**Decyzja Antoniego (2026-07-11): oczywiste przypadki scalamy AUTOMATYCZNIE,
+bez banera.** Zasada: auto-merge tylko przy 100% pewności, każda wątpliwość
+→ propozycja (baner "Scalenie?" zostaje jako droga dla niepewnych).
+
+Co znaczy "100% pewności" przy konflikcie identyfikatora:
+
+- klient sam podaje SWÓJ kontakt ("mój mail to…", "proszę pisać na…",
+  podpis z numerem) → to jego identyfikator → **auto-merge**;
+- miękka wzmianka spinająca kanały ("pisałem też maila", "Dzień dobry,
+  z tej strony Krzysiek" - a kontekst rozmowy z drugiego kanału pasuje)
+  → ocena LLM (task 'identity'): czy identyfikator/osoba to NA PEWNO
+  nadawca? pewne → **auto-merge**, niepewne → propozycja;
+- e-mail/telefon w treści, ale może być osoby trzeciej (przekazany kontakt
+  montera, "proszę wysłać do żony") → NIGDY auto → propozycja albo nic.
+
+Auto-merge techniczne: `confirmMerge()` już istnieje - auto-ścieżka tworzy
+propozycję i od razu ją potwierdza (`status='confirmed'`, w evidence
+`auto: true` + uzasadnienie), więc pełny ślad w kom_merge_proposals zostaje
+i scalenie widać w historii tak samo jak ręczne.
+
 Kluczowy efekt kolejnościowy: FB-wiadomość z e-mailem PRZED mailem → enrich
-dopina e-mail do klienta FB → późniejszy mail dołącza do niego automatycznie
-(bez propozycji). Mail PRZED wiadomością FB → enrich zgłasza konflikt →
-propozycja scalenia do potwierdzenia. Oba scenariusze kończą się jednym klientem.
+dopina e-mail do klienta FB → późniejszy mail dołącza do niego automatycznie.
+Mail PRZED wiadomością FB → konflikt → auto-merge (gdy pewne) albo baner.
+Oba scenariusze kończą się jednym klientem.
 
 Dodatkowo: skrypt retro `scripts/extract-identities.js` - przejście po
 istniejących `kom_messages` (direction='in') i to samo, żeby scalić historię.
-
-v2 (później): miękkie wzmianki ("pisałem do was na Facebooku") przez LLM przy
-okazji ekstrakcji obietnic z Etapu 3 - zawsze jako propozycja, nigdy auto.
 
 ## Etap 2 - Panel per KLIENT, odpowiedź ostatnim kanałem
 
@@ -74,6 +91,10 @@ Jednostką listy przestaje być wątek, staje się klient:
   ("odpisz tam, gdzie klient jest teraz"); obok przełącznik kanału (np. klient
   pisał na FB, ale wolę odpisać mailem). `computeSendState` liczony per wybrany
   wątek (okno 7 dni Messengera, mailbox Gmaila itd. bez zmian).
+  **Telefon NIE jest kanałem odpowiedzi**: po rozmowie telefonicznej (kontakt
+  zaczął się np. na Messengerze) pisemna odpowiedź i tak idzie Messengerem -
+  "ostatni kanał" liczymy po kanałach PISANYCH, telefon to tylko zdarzenie
+  w osi czasu klienta.
 - Scalenie klientów (Etap 1) automatycznie skleja rozmowę w jedną kartę -
   to jest właściwa nagroda za merge.
 
@@ -89,15 +110,21 @@ i otwartej rozmowy w `app.html`. Endpointy wysyłki zostają per wątek.
    (webhook poza budżetem → sweep cron dokańcza, wzór jak triage).
    Zwraca listę: `{description, owner: 'my'|'klient', due_at}`.
    - daty względne ("za dwa tygodnie") liczone od `created_at` wiadomości;
-   - obietnica klienta bez terminu ("zmierzę i napiszę") → domyślnie +4 dni;
+   - obietnica klienta BEZ terminu ("zmierzę i napiszę"): najpierw pętla
+     sugestii ma o termin DOPYTAĆ (wskazówka do promptu suggest.js: gdy
+     wykryto obietnicę klienta bez daty, odpowiedź powinna zapytać "kiedy
+     mniej więcej…?"); jeśli terminu dalej nie ma, AI sam ocenia pilność
+     tematu i wybiera termin z widełek **3 dni / tydzień / 2 tygodnie**
+     (decyzja Antoniego: pole decyzyjne dla AI, nie sztywny default);
    - dedupe: nie twórz, jeśli w wątku jest otwarta obietnica o zbliżonym opisie.
 2. **Ręcznie z rozmowy**: przycisk "+ przypomnienie" (opis + data, skróty:
    jutro / 3 dni / tydzień / 2 tygodnie), `created_by='manual'`.
 
-Model zaufania: AI tworzy obietnicę OD RAZU jako `open` (bez kolejki
-zatwierdzania - zgubiony follow-up kosztuje więcej niż nadmiarowy, a usunięcie
-to jeden klik "anuluj" w wątku). Bezpiecznik jak przy triage: chipy obietnic
-widoczne w rozmowie zaraz po utworzeniu.
+Model zaufania (decyzja Antoniego 2026-07-11): AI tworzy obietnicę OD RAZU
+jako `open`, bez kolejki zatwierdzania - zgubiony follow-up kosztuje więcej
+niż nadmiarowy, a przypomnienie "z dupy" odrzuca się jednym klikiem "anuluj"
+w wątku. Bezpiecznik jak przy triage: chipy obietnic widoczne w rozmowie
+zaraz po utworzeniu.
 
 ### Gdzie je widać
 
@@ -153,6 +180,7 @@ a częstszy cron w vercel.json = cichy brak deployu z pusha).
 - Automatyczna wysyłka bez potwierdzenia (v2 Etapu 4).
 - LLM-owa ocena, czy odpowiedź klienta realizuje obietnicę (v1: każda
   wiadomość domyka).
-- Scalanie po imieniu/nazwisku lub podobieństwie treści - NIGDY auto,
-  najwyżej propozycja (zasada z identity.js zostaje).
+- Scalanie po SAMYM imieniu/nazwisku albo ogólnym podobieństwie treści,
+  bez twardego identyfikatora lub jednoznacznego kontekstu - to nadal
+  najwyżej propozycja, nigdy auto (auto-merge tylko wg zasad z Etapu 1).
 - Powiązanie kom_customers ↔ CRM lead (`crm_lead_id`) - osobny temat.
