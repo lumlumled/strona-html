@@ -235,44 +235,76 @@
           <option value="team" ${f.visibility === 'team' ? 'selected' : ''}>👥 Zespół — Lorenzo i narzędzia dla klientów</option>
           <option value="public" ${f.visibility === 'public' ? 'selected' : ''}>🌍 Publiczny — można cytować klientowi</option>
         </select>
-        <label class="small">Komentarz (poprawi treść przed zatwierdzeniem — napisz albo podyktuj)</label>
+        <label class="small">Komentarz — napisz albo podyktuj, potem „Popraw komentarzem"</label>
         <div class="comment-row">
           <textarea class="comment" placeholder="np. cena nieaktualna, ma być 85 zł; usuń część o..."></textarea>
           <button class="mic" title="Dyktuj">🎙</button>
         </div>
         <div class="btn-row">
-          <button class="btn primary approve">Zatwierdź</button>
+          <button class="btn primary revise">🪄 Popraw komentarzem</button>
+          <button class="btn approve">Zatwierdź bez zmian</button>
           <button class="btn danger reject">Odrzuć</button>
-        </div>`;
+        </div>
+        <div class="preview" hidden></div>`;
       card.appendChild(tools);
       const comment = tools.querySelector('.comment');
+      const preview = tools.querySelector('.preview');
       attachMic(tools.querySelector('.mic'), comment);
+      const buttons = () => tools.querySelectorAll('.btn');
 
-      const act = async (decision) => {
-        const btns = tools.querySelectorAll('.btn');
-        btns.forEach((b) => { b.disabled = true; });
+      // Zapis decyzji: approve może nieść poprawioną treść z podglądu.
+      const saveDecision = async (decision, revised) => {
+        buttons().forEach((b) => { b.disabled = true; });
         try {
-          const res = await api(`/api/facts/${f.id}/review`, {
+          await api(`/api/facts/${f.id}/review`, {
             method: 'POST',
-            body: { decision, comment: comment.value, visibility: tools.querySelector('.vis').value },
+            body: {
+              decision,
+              title: revised?.title,
+              content: revised?.content,
+              visibility: tools.querySelector('.vis').value,
+            },
           });
-          if (decision === 'approve' && res.data?.revised) {
-            const note = document.createElement('div');
-            note.className = 'revised-note';
-            note.textContent = `✅ Zatwierdzono z poprawką:\n${res.data.revised.title}\n${res.data.revised.content}`;
-            card.innerHTML = ''; card.appendChild(note);
-            setTimeout(() => card.remove(), 6000);
-          } else {
-            card.remove();
-            toast(decision === 'approve' ? 'Zatwierdzono ✓' : 'Odrzucono');
-          }
+          card.remove();
+          toast(decision === 'approve' ? (revised ? 'Poprawka zapisana ✓' : 'Zatwierdzono ✓') : 'Odrzucono');
           refreshStats();
         } catch (e) {
-          toast(e.message); btns.forEach((b) => { b.disabled = false; });
+          toast(e.message); buttons().forEach((b) => { b.disabled = false; });
         }
       };
-      tools.querySelector('.approve').onclick = () => act('approve');
-      tools.querySelector('.reject').onclick = () => act('reject');
+
+      // Popraw komentarzem → analiza AI → PODGLĄD korekty → Zapisz / Odrzuć poprawkę.
+      tools.querySelector('.revise').onclick = async () => {
+        if (!comment.value.trim()) { toast('Najpierw napisz albo podyktuj komentarz'); comment.focus(); return; }
+        const btn = tools.querySelector('.revise');
+        btn.disabled = true; btn.textContent = 'Analizuję…';
+        try {
+          const res = await api(`/api/facts/${f.id}/poprawka`, { method: 'POST', body: { comment: comment.value } });
+          const rev = res.data;
+          preview.hidden = false;
+          preview.innerHTML = `
+            <div class="revised-note">
+              <div style="font-weight:600;margin-bottom:0.4rem;">Proponowana korekta:</div>
+              <div class="fact-title">${esc(rev.title)}</div>
+              <div class="fact-content">${esc(rev.content)}</div>
+              <div class="btn-row">
+                <button class="btn primary save-rev">Zapisz poprawkę</button>
+                <button class="btn drop-rev">Odrzuć poprawkę</button>
+              </div>
+            </div>`;
+          preview.querySelector('.save-rev').onclick = () => saveDecision('approve', rev);
+          preview.querySelector('.drop-rev').onclick = () => {
+            preview.hidden = true; preview.innerHTML = '';
+            toast('Poprawka odrzucona — możesz zmienić komentarz i spróbować znowu');
+            comment.focus();
+          };
+          preview.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } catch (e) { toast(e.message); }
+        btn.disabled = false; btn.textContent = '🪄 Popraw komentarzem';
+      };
+
+      tools.querySelector('.approve').onclick = () => saveDecision('approve', null);
+      tools.querySelector('.reject').onclick = () => saveDecision('reject', null);
       return card;
     }
 

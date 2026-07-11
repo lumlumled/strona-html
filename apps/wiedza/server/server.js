@@ -180,32 +180,40 @@ app.post('/api/facts', async (req, res) => {
   }
 });
 
-// POST /api/facts/:id/review — decyzja z kolejki (tylko admin).
-// { decision:'approve'|'reject', comment?, visibility?, tags? }
-// Komentarz (tekst lub dyktowany) = poprawka: LLM przepisuje fakt zgodnie
-// z uwagą, dopiero taka wersja jest zatwierdzana. Działa też na faktach
-// 'active' (edycja w miejscu).
-app.post('/api/facts/:id/review', auth.requireAdmin, async (req, res) => {
+// POST /api/facts/:id/poprawka — PODGLĄD korekty (tylko admin, NIC nie
+// zapisuje): komentarz Antoniego (tekst lub dyktowany) → LLM analizuje fakt
+// i zwraca poprawioną wersję. Antoni w panelu decyduje: Zapisz albo Odrzuć.
+app.post('/api/facts/:id/poprawka', auth.requireAdmin, async (req, res) => {
   try {
-    const db = getClient();
-    const { decision, comment, visibility, tags } = req.body || {};
-    const { data, error } = await db.from('kb_facts').select('*').eq('id', req.params.id).limit(1);
+    const comment = String(req.body?.comment || '').trim();
+    if (!comment) return res.status(400).json({ error: 'Napisz albo podyktuj komentarz' });
+    const { data, error } = await getClient().from('kb_facts').select('*').eq('id', req.params.id).limit(1);
     if (error) throw error;
     const fact = data && data[0];
     if (!fact) return res.status(404).json({ error: 'Nie znaleziono faktu' });
+    const revised = await knowledge.reviseWithComment({ fact, comment });
+    res.json({ data: revised });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
 
-    let revised = null;
-    if (decision === 'approve' && String(comment || '').trim()) {
-      revised = await knowledge.reviseWithComment({ fact, comment: String(comment).trim() });
-    }
-    const result = await knowledge.reviewFact(db, fact.id, {
+// POST /api/facts/:id/review — decyzja (tylko admin).
+// { decision:'approve'|'reject', title?, content?, visibility?, tags? }
+// title/content przychodzą z ZATWIERDZONEGO przez Antoniego podglądu
+// korekty (endpoint /poprawka). Działa też na faktach 'active' (edycja).
+app.post('/api/facts/:id/review', auth.requireAdmin, async (req, res) => {
+  try {
+    const db = getClient();
+    const { decision, title, content, visibility, tags } = req.body || {};
+    const result = await knowledge.reviewFact(db, req.params.id, {
       decision,
-      title: revised?.title,
-      content: revised?.content,
+      title: String(title || '').trim() || undefined,
+      content: String(content || '').trim() || undefined,
       visibility: WIDOCZNOSCI.has(visibility) ? visibility : undefined,
       tags: Array.isArray(tags) ? tags : undefined,
     });
-    res.json({ data: { ...result, revised } });
+    res.json({ data: result });
   } catch (err) {
     handleError(res, err, 502);
   }
