@@ -305,6 +305,12 @@ natomiast to OSOBNY panel (nowa apka, np. lumlum.dev/sprzedaze):
   Edycja istniejącej wyceny = quote_mode REPLACE_EXISTING z merge'em
   jak w promptcie MERGE (FULL_REPLACE / KEEP_OLD) przy dodaniu tekstem,
   albo zwykły zapis przy edycji w formularzu strukturalnym.
+- Nacisk Antoniego (2026-07-11): wycena ma być "ŻYJĄCA" - otwierasz
+  i edytujesz produkty, rabat, kwoty w każdej chwili; produkty na karcie
+  wyceny wyświetlane ŁADNIE ZE ZDJĘCIAMI, jak w formularzu klienckim
+  (image_url z SKU; CSV "CRM LumLum 2.0 - SKU.csv" ma kolumnę "Link do
+  zdjęć" -> cdn.shopify.com; kolumny kosztów/marż z SKU NIGDY nie trafiają
+  do UI poza ownerem - zasada jak w kb-import-sku.js).
 - Zapis WYŁĄCZNIE do Supabase (bez dual-write - decyzja 2026-07-11).
   Do cutoveru nowe wyceny dodane w panelu nie przejdą przez Make -
   testujemy je naszym pipeline'em na formularz-test; realne wyceny do
