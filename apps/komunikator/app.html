@@ -178,7 +178,7 @@
         <div class="conv-actions">
           <button class="btn" id="btn-waiting">Ignoruj (czeka)</button>
           <button class="btn" id="btn-close">Zamknij wątek</button>
-          <a class="btn" id="btn-livechat" target="_blank" rel="noopener" hidden>Otwórz w ManyChat ↗</a>
+          <a class="btn" id="btn-livechat" target="_blank" rel="noopener" hidden>Otwórz w Zernio ↗</a>
         </div>
       </div>
       <div id="merge-banners"></div>
@@ -188,7 +188,8 @@
         <div class="window-note" id="suggestion-note" hidden></div>
         <textarea id="reply-text" placeholder="Napisz odpowiedź…"></textarea>
         <div class="composer-row">
-          <button class="btn" id="btn-manual" hidden>Wysłane ręcznie (Business Suite)</button>
+          <button class="btn" id="btn-copy" hidden>Kopiuj treść</button>
+          <button class="btn" id="btn-manual" hidden>Wysłane ręcznie</button>
           <button class="btn primary" id="btn-send">Wyślij</button>
         </div>
       </div>
@@ -324,16 +325,14 @@
       }
     }
 
-    // Sugestia AI ładuje się lazy: tylko gdy ostatnia wiadomość jest OD
-    // klienta, kanał pozwala wysyłać i okno 24 h jeszcze otwarte.
+    // Sugestia AI ładuje się lazy: gdy ostatnia wiadomość jest OD klienta
+    // (DM albo komentarz — Zernio daje pełną treść, jest na co odpowiadać).
+    // Przy zamkniętym oknie też: wtedy sugestię kopiuje się i wysyła ręcznie.
     async function maybeLoadSuggestion() {
       const d = state.detail;
       if (!d) return;
-      const windowed = ['messenger', 'instagram', 'whatsapp'].includes(d.thread.channel);
-      const windowOpen = !d.window_expires_at || new Date(d.window_expires_at) > new Date();
       const last = d.messages[d.messages.length - 1];
-      if (!windowed || !windowOpen || !last || last.direction !== 'in') return;
-      if (last.meta?.kind === 'comment') return; // komentarz ≠ DM, nie ma na co odpowiadać
+      if (d.send?.mode === 'none' || !last || last.direction !== 'in') return;
 
       const note = $('suggestion-note');
       note.hidden = false;
@@ -360,10 +359,12 @@
       $('conv-llid').textContent = d.customer.public_id;
       $('conv-channel').textContent = CHANNEL_LABELS[d.thread.channel] || d.thread.channel;
 
+      // Fallback ręczny: rozmowy z Zernio otwiera się w ich inboxie (jeden
+      // wspólny widok — konkretny wątek znajduje się po nazwie rozmówcy).
       const liveChat = $('btn-livechat');
-      if (d.thread.meta?.live_chat_url) {
+      if (d.thread.meta?.zernio) {
         liveChat.hidden = false;
-        liveChat.href = d.thread.meta.live_chat_url;
+        liveChat.href = 'https://zernio.com/dashboard/inbox';
       } else {
         liveChat.hidden = true;
       }
@@ -406,37 +407,52 @@
         const div = document.createElement('div');
         div.className = `msg ${m.direction}`;
         const label = m.direction === 'internal' ? '📝 ' : (m.meta?.kind === 'comment' ? '💬 [komentarz pod postem] ' : '');
-        div.innerHTML = `${label}${escapeHtml(m.body)}<span class="msg-time">${fmtTime(m.created_at)}${m.meta?.manual_business_suite ? ' · ręcznie (BS)' : ''}</span>`;
+        const marks = [
+          m.meta?.manual_business_suite ? 'ręcznie' : '',
+          m.meta?.human_agent ? 'human agent' : '',
+          m.meta?.private_reply_to ? 'private reply' : '',
+        ].filter(Boolean).map((x) => ` · ${x}`).join('');
+        div.innerHTML = `${label}${escapeHtml(m.body)}<span class="msg-time">${fmtTime(m.created_at)}${marks}</span>`;
         wrap.appendChild(div);
       });
       wrap.scrollTop = wrap.scrollHeight;
 
-      // Okno 24 h
+      // Tryb wysyłki — liczony na serwerze (computeSendState), UI tylko
+      // dobiera komunikat: open → zwykły DM; human_agent → tag HUMAN_AGENT
+      // (FB/IG do 7 dni); private_reply → DM do autora komentarza (1 na
+      // komentarz, 7 dni); closed → fallback ręczny przez inbox Zernio.
       const note = $('window-note');
       const sendBtn = $('btn-send');
       const manualBtn = $('btn-manual');
-      const windowed = ['messenger', 'instagram', 'whatsapp'].includes(d.thread.channel);
-      if (!windowed) {
-        note.hidden = false;
-        note.className = 'window-note';
+      const copyBtn = $('btn-copy');
+      const send = d.send || { mode: 'none' };
+      const hoursLeft = (iso) => Math.max(0, (new Date(iso) - new Date()) / 36e5);
+      const daysLeft = (iso) => Math.max(0, hoursLeft(iso) / 24);
+      note.hidden = false;
+      note.className = 'window-note';
+      sendBtn.disabled = false;
+      manualBtn.hidden = true;
+      copyBtn.hidden = true;
+
+      if (send.mode === 'none') {
         note.textContent = 'Kanał bez wysyłania z panelu — odpowiedz telefonicznie albo zapisz notatkę.';
         sendBtn.disabled = true;
-        manualBtn.hidden = true;
-      } else if (d.window_expires_at && new Date(d.window_expires_at) < new Date()) {
-        note.hidden = false;
+      } else if (send.mode === 'open') {
+        note.textContent = `Okno odpowiedzi Meta zamyka się za ${hoursLeft(send.window_expires_at).toFixed(1)} h.`;
+      } else if (send.mode === 'human_agent') {
+        note.textContent = `Okno 24 h minęło — wyślemy z tagiem HUMAN_AGENT (odpowiedź człowieka, zostało ${daysLeft(send.human_agent_expires_at).toFixed(1)} dnia).`;
+      } else if (send.mode === 'private_reply') {
+        note.textContent = `Komentarz pod postem — odpowiedź pójdzie jako prywatna wiadomość do autora (1 na komentarz, zostało ${daysLeft(send.comment_reply_expires_at).toFixed(1)} dnia).`;
+      } else {
         note.className = 'window-note closed';
-        note.textContent = 'Okno 24 h Meta zamknięte — kliknij „Otwórz w ManyChat”, wyślij tam ręcznie, wróć i kliknij „Wysłane ręcznie” (dopisze się do historii).';
+        note.textContent = send.reason === 'already_replied'
+          ? 'Private reply do tego komentarza już poszedł — Meta pozwala na jeden. Czekamy, aż klient odpisze w DM.'
+          : send.reason === 'no_inbound'
+            ? 'Klient nie napisał jeszcze DM — nie da się zacząć rozmowy z panelu.'
+            : 'Okno Meta zamknięte (7 dni minęło) — skopiuj treść, kliknij „Otwórz w Zernio”, odpowiedz tam ręcznie i wróć kliknąć „Wysłane ręcznie”.';
         sendBtn.disabled = true;
         manualBtn.hidden = false;
-      } else {
-        note.hidden = !d.window_expires_at;
-        note.className = 'window-note';
-        if (d.window_expires_at) {
-          const hoursLeft = Math.max(0, (new Date(d.window_expires_at) - new Date()) / 36e5);
-          note.textContent = `Okno odpowiedzi Meta zamyka się za ${hoursLeft.toFixed(1)} h.`;
-        }
-        sendBtn.disabled = false;
-        manualBtn.hidden = true;
+        copyBtn.hidden = false;
       }
     }
 
@@ -462,6 +478,19 @@
         else toast(err.message);
       } finally {
         $('btn-send').disabled = false;
+      }
+    });
+
+    $('btn-copy').addEventListener('click', async () => {
+      const text = $('reply-text').value.trim();
+      if (!text) return toast('Brak treści do skopiowania');
+      try {
+        await navigator.clipboard.writeText(text);
+        toast('Skopiowano — wklej w inboxie Zernio');
+      } catch {
+        $('reply-text').select();
+        document.execCommand('copy');
+        toast('Skopiowano');
       }
     });
 

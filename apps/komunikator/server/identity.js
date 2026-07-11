@@ -11,7 +11,7 @@
 
 // Normalizacja: jedna postać identyfikatora w bazie, żeby unique(type,value)
 // faktycznie łapał duplikaty. Telefon = same cyfry z prefiksem kraju (48...),
-// email = lowercase; ID z ManyChata (fb/ig/wa) = surowy string.
+// email = lowercase; ID platformy Meta (fb/ig/wa, np. IGSID/PSID) = surowy string.
 function normalize(type, value) {
   const s = String(value ?? '').trim();
   if (!s) return '';

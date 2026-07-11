@@ -1,8 +1,7 @@
 // Komunikator — panel "Wiadomości" (lumlum.dev/wiadomosci): zunifikowana
-// komunikacja przychodząca (Messenger/IG/WhatsApp przez ManyChat, telefon
+// komunikacja przychodząca (Messenger/IG/WhatsApp przez Zernio, telefon
 // przez Zadarmę — Etap 3, notatki głosowe) z jedną kartą klienta LL-XXXXX.
-// Pełna architektura: docs/plan-komunikator.md. Ten serwer to Etapy 0–2:
-// tożsamość + ingest ManyChat + widok wątków + wysyłanie odpowiedzi.
+// Pełna architektura: docs/plan-komunikator.md (sekcja ⚡ = pivot na Zernio).
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 require('dotenv').config();
@@ -11,11 +10,12 @@ const express = require('express');
 const { getClient } = require('./supabase');
 const { createAuth, clientPayload, panelLinks, PANELS, CRM_SHEETS } = require('../../shared/server/auth');
 const identity = require('./identity');
-const manychat = require('./ingest/manychat');
+const zernio = require('./ingest/zernio');
 const suggest = require('./suggest');
 
 const app = express();
-app.use(express.json({ limit: '1mb' }));
+// rawBody potrzebny do weryfikacji X-Zernio-Signature (HMAC surowego body).
+app.use(express.json({ limit: '1mb', verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(express.urlencoded({ extended: false }));
 
 // Patrz apps/backlog-b2c/server/server.js — bez no-store Vercel CDN
@@ -33,26 +33,25 @@ app.get('/shared/:file', (req, res) => {
   res.sendFile(path.join(__dirname, '..', '..', 'shared', req.params.file));
 });
 
-// ── Webhooki: własny sekret w query stringu zamiast sesji użytkownika ───────
+// ── Webhooki: podpis HMAC zamiast sesji użytkownika ─────────────────────────
 // publicPrefixes w createAuth wyłącza bramkę logowania dla /api/webhooks/.
+// Zernio podpisuje każdy request sekretem webhooka (X-Zernio-Signature =
+// hex HMAC-SHA256 surowego body) — patrz scripts/register-zernio-webhook.js.
 
-function requireWebhookToken(req, res, next) {
-  const expected = process.env.MANYCHAT_WEBHOOK_TOKEN;
-  if (!expected || req.query.token !== expected) {
-    return res.status(401).json({ error: 'Nieprawidłowy token webhooka' });
+app.post('/api/webhooks/zernio', async (req, res) => {
+  const secret = process.env.ZERNIO_WEBHOOK_SECRET;
+  if (!secret) return res.status(500).json({ error: 'Brak ZERNIO_WEBHOOK_SECRET w konfiguracji serwera' });
+  if (!zernio.verifySignature(req.rawBody, req.get('X-Zernio-Signature'), secret)) {
+    return res.status(401).json({ error: 'Nieprawidłowy podpis webhooka' });
   }
-  return next();
-}
-
-app.post('/api/webhooks/manychat', requireWebhookToken, async (req, res) => {
   try {
-    const result = await manychat.handleWebhook(getClient(), req.body || {}, req.query.channel, req.query.kind);
+    const result = await zernio.handleWebhook(getClient(), req.body || {});
     res.json(result);
   } catch (err) {
-    console.error('Webhook ManyChat:', err.message);
-    // 200 zamiast 4xx/5xx dla błędów treści payloadu — ManyChat nie będzie
-    // retry'ował w kółko czegoś, co i tak jest niepoprawne; payload leży
-    // w kom_inbox_raw z opisem błędu do ręcznego obejrzenia.
+    console.error('Webhook Zernio:', err.message);
+    // 200 zamiast 4xx/5xx dla błędów treści payloadu — Zernio nie będzie
+    // retry'ował w kółko (7 prób/~51 h) czegoś, co i tak jest niepoprawne;
+    // payload leży w kom_inbox_raw z opisem błędu do ręcznego obejrzenia.
     res.json({ ok: false, error: err.message });
   }
 });
@@ -90,11 +89,16 @@ function handleError(res, err, fallbackStatus = 400) {
   res.status(status).json({ error: message });
 }
 
-// ── Okno 24 h Meta ───────────────────────────────────────────────────────────
+// ── Okna wysyłki Meta ────────────────────────────────────────────────────────
 // Standardową wiadomość na Messengerze/IG/WhatsAppie wolno wysłać do 24 h od
-// ostatniej wiadomości klienta (polityka platformy, nie ManyChata).
-// UWAGA: komentarz pod postem (meta.kind='comment') NIE otwiera okna DM.
+// ostatniej wiadomości klienta (polityka Meta). Na FB/IG tag HUMAN_AGENT
+// (odpowiedź człowieka) rozciąga to do 7 dni — Zernio przyjmuje go w polu
+// messageTag. WhatsApp poza oknem wymaga szablonów (wejdzie z WhatsAppem).
+// UWAGA: komentarz pod postem (meta.kind='comment') NIE otwiera okna DM;
+// zamiast tego działa private reply: 1 wiadomość na komentarz, do 7 dni.
 const WINDOWED_CHANNELS = new Set(['messenger', 'instagram', 'whatsapp']);
+const HUMAN_AGENT_CHANNELS = new Set(['messenger', 'instagram']);
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 function opensWindow(message) {
   return message.direction === 'in' && message.meta?.kind !== 'comment';
@@ -103,6 +107,48 @@ function opensWindow(message) {
 function windowExpiresAt(thread, lastInboundAt) {
   if (!WINDOWED_CHANNELS.has(thread.channel) || !lastInboundAt) return null;
   return new Date(new Date(lastInboundAt).getTime() + 24 * 60 * 60 * 1000).toISOString();
+}
+
+function humanAgentExpiresAt(thread, lastInboundAt) {
+  if (!HUMAN_AGENT_CHANNELS.has(thread.channel) || !lastInboundAt) return null;
+  return new Date(new Date(lastInboundAt).getTime() + SEVEN_DAYS_MS).toISOString();
+}
+
+function isCommentsThread(thread) {
+  return thread.meta?.zernio?.kind === 'comments';
+}
+
+// Jedno źródło prawdy o tym, czy i jak da się wysłać — używane przez widok
+// wątku (UI dobiera komunikat i przyciski) oraz endpoint wysyłki (twarda
+// walidacja). messagesAsc = wszystkie wiadomości wątku rosnąco po czasie.
+function computeSendState(thread, messagesAsc) {
+  const now = new Date();
+
+  if (isCommentsThread(thread)) {
+    const lastComment = [...messagesAsc].reverse()
+      .find((m) => m.direction === 'in' && m.meta?.kind === 'comment');
+    const commentId = lastComment?.meta?.zernio?.commentId;
+    if (!lastComment || !commentId) return { mode: 'closed', reason: 'no_comment' };
+    const replied = messagesAsc.some((m) => m.direction === 'out' && m.meta?.private_reply_to === commentId);
+    const expiresAt = new Date(new Date(lastComment.created_at).getTime() + SEVEN_DAYS_MS).toISOString();
+    if (replied) return { mode: 'closed', reason: 'already_replied', comment_reply_expires_at: expiresAt };
+    if (new Date(expiresAt) < now) return { mode: 'closed', reason: 'expired', comment_reply_expires_at: expiresAt };
+    return {
+      mode: 'private_reply',
+      comment_reply_expires_at: expiresAt,
+      comment: { commentId, postId: lastComment.meta.zernio.postId },
+    };
+  }
+
+  if (!WINDOWED_CHANNELS.has(thread.channel)) return { mode: 'none' };
+  const lastIn = [...messagesAsc].reverse().find(opensWindow);
+  if (!lastIn) return { mode: 'closed', reason: 'no_inbound' };
+  const window24 = windowExpiresAt(thread, lastIn.created_at);
+  const window7d = humanAgentExpiresAt(thread, lastIn.created_at);
+  const base = { window_expires_at: window24, human_agent_expires_at: window7d };
+  if (new Date(window24) > now) return { mode: 'open', ...base };
+  if (window7d && new Date(window7d) > now) return { mode: 'human_agent', ...base };
+  return { mode: 'closed', reason: 'expired', ...base };
 }
 
 // ── API wątków ───────────────────────────────────────────────────────────────
@@ -196,7 +242,7 @@ app.get('/api/threads/:id', async (req, res) => {
       candidates = new Map((cands || []).map((c) => [c.id, c]));
     }
 
-    const lastInbound = [...(messagesRes.data || [])].reverse().find(opensWindow);
+    const sendState = computeSendState(thread, messagesRes.data || []);
 
     res.json({
       thread,
@@ -209,7 +255,8 @@ app.get('/api/threads/:id', async (req, res) => {
         threads: (threadsRes.data || []).map((t) => ({ id: t.id, channel: t.channel, status: t.status })),
       },
       messages: messagesRes.data || [],
-      window_expires_at: windowExpiresAt(thread, lastInbound?.created_at),
+      send: sendState,
+      window_expires_at: sendState.window_expires_at || null,
       merge_proposals: proposals.map((p) => ({
         id: p.id,
         reason: p.reason,
@@ -269,32 +316,61 @@ app.post('/api/threads/:id/suggestion', async (req, res) => {
   }
 });
 
-// ── Wysyłanie odpowiedzi przez ManyChat ─────────────────────────────────────
+// ── Wysyłanie odpowiedzi przez Zernio Inbox API ─────────────────────────────
 
-async function sendViaManyChat(subscriberId, text) {
-  const token = process.env.MANYCHAT_API_TOKEN;
-  if (!token) throw new Error('Brak MANYCHAT_API_TOKEN w konfiguracji serwera');
-  const response = await fetch('https://api.manychat.com/fb/sending/sendContent', {
+const ZERNIO_API = 'https://zernio.com/api';
+
+async function zernioRequest(pathname, body) {
+  const key = process.env.ZERNIO_API_KEY;
+  if (!key) throw new Error('Brak ZERNIO_API_KEY w konfiguracji serwera');
+  const response = await fetch(`${ZERNIO_API}${pathname}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({
-      subscriber_id: Number(subscriberId) || subscriberId,
-      data: { version: 'v2', content: { messages: [{ type: 'text', text }] } },
-    }),
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+    body: JSON.stringify(body),
   });
-  const body = await response.text();
+  const raw = await response.text();
   if (!response.ok) {
-    // Kod 3011/3031 = ostatnia interakcja klienta ponad 24 h temu (polityka
-    // Meta) — mapujemy na czytelny błąd zamiast surowego JSON-a ManyChata.
-    if (/3011|3031|message tag/i.test(body)) {
-      const err = new Error('Okno 24 h Meta zamknięte — wyślij ręcznie (link ManyChat przy wątku) albo zadzwoń');
+    // Meta odrzuciła wysyłkę poza oknem — czytelny błąd zamiast surowego JSON-a.
+    if (/window|24.?h|outside|human.?agent|message.?tag/i.test(raw)) {
+      const err = new Error('Meta odrzuciła wysyłkę (okno zamknięte) — wyślij ręcznie przez inbox Zernio albo zadzwoń');
       err.windowClosed = true;
       throw err;
     }
-    throw new Error(`ManyChat ${response.status}: ${body.slice(0, 300)}`);
+    throw new Error(`Zernio ${response.status}: ${raw.slice(0, 300)}`);
   }
-  return JSON.parse(body);
+  return raw ? JSON.parse(raw) : {};
 }
+
+// Zwykły DM; humanAgent=true dokleja tag HUMAN_AGENT (FB/IG, do 7 dni od
+// ostatniej wiadomości klienta — odpowiedź człowieka, nie automat).
+async function sendViaZernio(thread, text, { humanAgent = false } = {}) {
+  const z = thread.meta?.zernio || {};
+  if (!z.conversationId || !z.accountId) {
+    throw new Error('Wątek bez danych Zernio (conversationId/accountId) — poczekaj na pierwszą wiadomość przez webhook');
+  }
+  return zernioRequest(`/v1/inbox/conversations/${encodeURIComponent(z.conversationId)}/messages`, {
+    accountId: z.accountId,
+    message: text,
+    ...(humanAgent ? { messagingType: 'MESSAGE_TAG', messageTag: 'HUMAN_AGENT' } : {}),
+  });
+}
+
+// Private reply na komentarz: DM do autora, 1 na komentarz, do 7 dni (Meta).
+async function sendPrivateReply(thread, comment, text) {
+  const z = thread.meta?.zernio || {};
+  if (!z.accountId) throw new Error('Wątek bez danych Zernio (accountId)');
+  return zernioRequest(
+    `/v1/inbox/comments/${encodeURIComponent(comment.postId)}/${encodeURIComponent(comment.commentId)}/private-reply`,
+    { accountId: z.accountId, message: text }
+  );
+}
+
+const SEND_CLOSED_MESSAGES = {
+  no_inbound: 'Klient nie napisał jeszcze DM — nie można wysłać wiadomości. Poczekaj na jego wiadomość albo zadzwoń.',
+  no_comment: 'Brak komentarza, na który dałoby się odpowiedzieć.',
+  already_replied: 'Private reply do tego komentarza już poszedł (Meta pozwala na 1 na komentarz). Poczekaj, aż klient odpisze w DM.',
+  expired: 'Okno Meta zamknięte (minęło 7 dni) — otwórz rozmowę w inboxie Zernio i odpowiedz ręcznie albo zadzwoń, potem kliknij „Wysłane ręcznie”.',
+};
 
 app.post('/api/threads/:id/messages', async (req, res) => {
   try {
@@ -306,45 +382,43 @@ app.post('/api/threads/:id/messages', async (req, res) => {
     if (error) throw error;
     const thread = threads && threads[0];
     if (!thread) return res.status(404).json({ error: 'Nie znaleziono wątku' });
-    if (!WINDOWED_CHANNELS.has(thread.channel)) {
+
+    const { data: messages, error: msgsErr } = await db
+      .from('kom_messages').select('id,direction,body,created_at,meta')
+      .eq('thread_id', thread.id).order('created_at', { ascending: true }).limit(500);
+    if (msgsErr) throw msgsErr;
+
+    const sendState = computeSendState(thread, messages || []);
+    if (sendState.mode === 'none') {
       return res.status(400).json({ error: 'Ten kanał nie obsługuje wysyłania z panelu' });
     }
-
-    // Okno 24 h: po zamknięciu Meta odrzuci wysyłkę — zamiast strzelać,
-    // od razu kierujemy na fallback (Business Suite / telefon). Komentarze
-    // pod postem nie liczą się jako otwarcie okna DM.
-    const { data: lastIn, error: inErr } = await db
-      .from('kom_messages').select('created_at,direction,meta').eq('thread_id', thread.id)
-      .eq('direction', 'in').order('created_at', { ascending: false }).limit(10);
-    if (inErr) throw inErr;
-    const lastWindowOpener = (lastIn || []).find(opensWindow);
-    const expires = windowExpiresAt(thread, lastWindowOpener?.created_at);
-    if (!lastWindowOpener) {
-      return res.status(409).json({
-        error: 'Klient nie napisał jeszcze DM (tylko komentarz) — nie można wysłać wiadomości. Odpowiedz pod postem albo poczekaj na jego DM.',
-        window_closed: true,
-      });
-    }
-    if (expires && new Date(expires) < new Date()) {
-      return res.status(409).json({
-        error: 'Okno 24 h Meta zamknięte — wyślij ręcznie przez ManyChat/Business Suite albo zadzwoń',
-        window_closed: true,
-      });
+    if (sendState.mode === 'closed') {
+      return res.status(409).json({ error: SEND_CLOSED_MESSAGES[sendState.reason], window_closed: true });
     }
 
+    const outMeta = {};
     try {
-      await sendViaManyChat(thread.external_thread_id, text);
+      if (sendState.mode === 'private_reply') {
+        await sendPrivateReply(thread, sendState.comment, text);
+        outMeta.private_reply_to = sendState.comment.commentId;
+      } else {
+        await sendViaZernio(thread, text, { humanAgent: sendState.mode === 'human_agent' });
+        if (sendState.mode === 'human_agent') outMeta.human_agent = true;
+      }
     } catch (sendErr) {
       if (sendErr.windowClosed) return res.status(409).json({ error: sendErr.message, window_closed: true });
       throw sendErr;
     }
 
+    // external_message_id celowo NULL — webhook message.sent dopina ID Zernio
+    // do tego wiersza (dedup po treści w ingest/zernio.js) zamiast dublować.
     const { error: msgErr } = await db.from('kom_messages').insert({
       thread_id: thread.id,
       direction: 'out',
       body: text,
       sent_by: 'antoni',
       suggestion_id: req.body?.suggestion_id || null,
+      ...(Object.keys(outMeta).length ? { meta: outMeta } : {}),
     });
     if (msgErr) throw msgErr;
     await db.from('kom_threads').update({ status: 'waiting', last_message_at: new Date().toISOString() }).eq('id', thread.id);
@@ -367,8 +441,8 @@ app.post('/api/threads/:id/messages', async (req, res) => {
   }
 });
 
-// Odpowiedź wysłana ręcznie (Business Suite po zamknięciu okna 24 h) — panel
-// tylko dopisuje ją do historii wątku, żeby kontekst został kompletny.
+// Odpowiedź wysłana ręcznie (inbox Zernio / Business Suite po zamknięciu
+// okna) — panel tylko dopisuje ją do historii wątku, kontekst zostaje pełny.
 app.post('/api/threads/:id/manual-sent', async (req, res) => {
   try {
     const text = String(req.body?.body || '').trim();
