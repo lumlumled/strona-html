@@ -1,8 +1,57 @@
 # Plan: Komunikator — zunifikowana komunikacja i pamięć klienta
 
-Status: **plan do akceptacji, zero implementacji**. Data: 2026-07-11.
+Panel: **Wiadomości** (`apps/komunikator/`, live na `lumlum.dev/wiadomosci`).
 
-Nazwa robocza panelu: **Komunikator** (`apps/komunikator/`, ścieżka `lumlum.dev/komunikator`) — do zmiany, patrz pytania otwarte.
+## ⚡ AKTUALIZACJA 2026-07-11 wieczór — PIVOT: ManyChat OUT, Zernio IN
+
+**Decyzja Antoniego:** ManyChat wylatuje W CAŁOŚCI (nie był jeszcze aktywny produkcyjnie,
+zero kosztów utopionych). Kanały social (FB/IG/WhatsApp) wchodzą przez **Zernio**
+(zernio.com, pełna dokumentacja: `docs.zernio.com/llms-full.txt` — przeanalizowana,
+lokalna kopia była w scratchpadzie). Wszystkie sekcje o ManyChat poniżej = NIEAKTUALNE,
+zostawione dla kontekstu decyzji.
+
+**Dlaczego Zernio wygrywa (zweryfikowane w ich dokumentacji):**
+- `comment.received` niesie PEŁNĄ TREŚĆ komentarza + autora (ManyChat w ogóle nie udostępnia treści)
+- tag `HUMAN_AGENT` na IG i FB = okno odpowiedzi **7 dni** zamiast 24 h
+- private reply na komentarz przez API (7 dni, 1/komentarz)
+- API-first: webhooki rejestrowane kodem (`POST /v1/webhooks/settings`), HMAC-SHA256
+  (`X-Zernio-Signature`, hex hmac surowego body), retry 7 prób/~51 h, dedup po `payload.id`
+- payload: `message.text`, `message.sender` (z `instagramProfile`: followerCount, isFollower),
+  `comment.text`+`comment.author`; eventy: `message.received/sent/edited/deleted/read`,
+  `comment.received`, `conversation.started`
+- wysyłka: `POST /v1/inbox/conversations/{id}/messages` (+ `/read`, `/typing`);
+  `messageTag:"HUMAN_AGENT"` + `messagingType:"MESSAGE_TAG"` poza oknem 24 h
+- WhatsApp pełny (szablony poza oknem, zakup numerów, sandbox)
+- cennik: $6/$3/$1 za konto-miesiąc progresywnie, $12 kredytu/mies → FB+IG ≈ $0
+- BONUS do zbadania: Zernio ma telefonię (numery, `call.received`, `call.ended` z nagraniem)
+  — potencjalnie zamiast Zadarmy; **Antoni sam sprawdza temat numeru telefonu**
+
+**Stan wdrożenia (commity 4beaa4c…9d40c10, wszystko live na prod):** tabele `kom_*`
+(+pgvector), identity.js z 12 testami, panel wątki+rozmowa+notatki+scalanie, sugestie AI
+(llm.js: Anthropic/OpenAI env varem, lazy, korekty→kom_examples — pętla uczenia
+zweryfikowana), okno 24 h, obsługa komentarzy (placeholder). Klucze ANTHROPIC/OPENAI
+w env (lokalnie + Vercel prod).
+
+**Plan dla nowego czatu (migracja na Zernio):**
+1. Antoni wkleja **klucz API Zernio** (Instagram jest już podłączony w ich dashboardzie;
+   stronę FB podłączyć tak samo, gdy przyjdzie kolej).
+2. `ingest/zernio.js` zamiast `ingest/manychat.js`: endpoint `/api/webhooks/zernio`
+   (verifikacja X-Zernio-Signature), eventy message.received (→wątek jak dziś),
+   message.sent (→direction out, łapie odpowiedzi wysłane poza panelem), comment.received
+   (→wiadomość meta.kind=comment Z TREŚCIĄ, wątek waiting), conversation.started.
+   Rejestracja webhooka przez API przy setupie. Tożsamość: sender id per platforma
+   (typy fb/ig/wa bez zmian), `external_thread_id` = zernio conversationId.
+3. Wysyłka przez Zernio Inbox API; po 24 h automatycznie z tagiem HUMAN_AGENT (do 7 dni);
+   private reply na komentarze.
+4. WYPIERDOLIĆ ManyChat: ingest/manychat.js, MANYCHAT_* env vary (lokalnie+Vercel),
+   przycisk live_chat_url zastąpić linkiem Zernio (dashboard/inbox), odwołania w app.html.
+5. Test end-to-end na koncie IG Antoniego, potem sugestie działają bez zmian
+   (reszta stacku nietknięta — ingest był projektowany jako wymienny moduł).
+
+---
+
+Poniżej oryginalny plan (2026-07-11 rano) — architektura, model danych i fazy pozostają
+aktualne; sekcje ManyChat czytać jako "kanał social", implementacyjnie zastąpione Zernio.
 
 ---
 
