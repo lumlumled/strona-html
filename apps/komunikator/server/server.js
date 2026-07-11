@@ -12,6 +12,7 @@ const { createAuth, clientPayload, panelLinks, PANELS, CRM_SHEETS } = require('.
 const identity = require('./identity');
 const zernio = require('./ingest/zernio');
 const tiktok = require('./ingest/tiktok');
+const gmail = require('./ingest/gmail');
 const triage = require('./triage');
 const suggest = require('./suggest');
 
@@ -81,6 +82,12 @@ async function runWorker(req, res) {
   } catch (err) {
     console.error('Worker (tiktok):', err.message);
     result.tiktok = { ok: false, error: err.message };
+  }
+  try {
+    result.gmail = await gmail.syncGmail(db);
+  } catch (err) {
+    console.error('Worker (gmail):', err.message);
+    result.gmail = { ok: false, error: err.message };
   }
   try {
     result.triage = await triage.sweep(db);
@@ -555,6 +562,40 @@ app.post('/api/notes', async (req, res) => {
     if (msgErr) throw msgErr;
     await db.from('kom_threads').update({ last_message_at: new Date().toISOString() }).eq('id', thread.id);
     res.json({ ok: true, customer: customer.public_id, customerCreated: created, threadId: thread.id });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// ── Gmail OAuth ──────────────────────────────────────────────────────────────
+// Za bramką logowania (klika tylko zalogowany Antoni; Google wraca na
+// callback w tej samej przeglądarce, więc ciasteczko sesji jest obecne).
+
+app.get('/api/gmail/auth', (req, res) => {
+  try {
+    res.redirect(gmail.authUrl());
+  } catch (err) {
+    handleError(res, err, 500);
+  }
+});
+
+app.get('/api/gmail/callback', async (req, res) => {
+  try {
+    if (req.query.error) throw new Error(`Google odmówił: ${req.query.error}`);
+    if (!req.query.code) throw new Error('Brak kodu autoryzacji w odpowiedzi Google');
+    const { email } = await gmail.exchangeCode(getClient(), String(req.query.code));
+    res.type('html').send(`<meta charset="utf-8"><body style="font-family:sans-serif;padding:2rem">
+      <h2>✅ Gmail połączony: ${email}</h2>
+      <p>E-maile zaczną wpadać do panelu przy najbliższym cyklu (max 30 min).</p>
+      <p><a href="${req.baseUrl || ''}/">← Wróć do Wiadomości</a></p></body>`);
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+app.get('/api/gmail/status', async (req, res) => {
+  try {
+    res.json(await gmail.status(getClient()));
   } catch (err) {
     handleError(res, err, 502);
   }
