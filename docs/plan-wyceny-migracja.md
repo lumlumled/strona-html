@@ -198,6 +198,16 @@ ale link ma być jednorazowy:
   1/dzień muszą iść przez pg_cron + pg_net do naszego endpointu, jak
   w komunikatorze) - co 15-30 min: sprawdzanie trackingu przesyłek "Send",
   ponowienie nieudanych kroków pipeline, polling statusu async faktur.
+- **Tracking bez fałszywych "doręczono"**: znany bug obecnego systemu -
+  świeżo nadana paczka bywała od razu oznaczana jako dostarczona.
+  Prawdopodobna przyczyna: scenariusz Make traktował samą odpowiedź
+  trackingu (albo niewłaściwe pole) jako doręczenie. U nas: czytamy
+  JAWNĄ listę statusów z `GET /v1/tracking/{nr}` i mapujemy kody wprost
+  (np. dispatched_by_sender / adopted_at_source_branch = w drodze,
+  TYLKO `delivered` = doręczona); każdy odczyt zapisujemy w
+  wyceny_events, więc w panelu widać surową historię statusów i łatwo
+  zdiagnozować rozjazd. Scraping strony InPost niepotrzebny - to jest
+  to samo API, które zasila stronę śledzenia.
 - **Webhook inFakt "opłacona"** -> `POST /formularz/api/infakt-webhook`
   (przepięcie huka z Make na nasz URL) -> ustawia PAID -> worker/handler
   odpala wysyłkę + fakturę końcową (delete proformy, KSeF) jak dziś w #3.
@@ -248,13 +258,27 @@ gdy nasz pipeline przejdzie testy end-to-end.
 - Skrypt syncu re-runnable (upsert po id) - do odpalenia ponownie tuż
   przed cutoverem.
 
-### Etap 1 - Panel Wyceny (odczyt)
+### Etap 1 - Wyceny w CRM + osobny panel Sprzedaże (NOC 1, 2026-07-11)
 
-- apps/wyceny: lista + karta wyceny (produkty, kwoty, statusy pipeline,
-  linki: formularz/etykieta/faktura/tracking), wpis w hubie, uprawnienia
-  per user jak w pozostałych panelach, filtr ownera server-side.
-- Read-only; dane odświeżane importem z etapu 0 (cron 1x dziennie albo
-  ręcznie) - Make dalej rządzi.
+Doprecyzowanie Antoniego (2026-07-11): wyceny NIE są osobną apką - to
+zakładka/arkusz w istniejącym CRM (lumlum.dev/crm), na razie widoczna
+TYLKO dla Antoniego (uprawnienia per user już są w hubie). Sprzedaże
+natomiast to OSOBNY panel (nowa apka, np. lumlum.dev/sprzedaze):
+
+- **CRM / zakładka Wyceny**: arkusz wycen jak pozostałe arkusze CRM,
+  karta wyceny (produkty, kwoty, rabaty, kontakt, status formularza).
+- **Panel Sprzedaże**: ładny widok zamówień (porównywalny z kartą CRM):
+  imię i nazwisko, adres dostawy / punkt odbioru, produkty, kwoty,
+  płatność, link do faktury (inFakt PDF), link do etykiety, tracking.
+  Na górze proste statystyki jako placeholder (liczba sprzedaży, suma,
+  ten miesiąc vs poprzedni - do rozbudowy później).
+- **"Zamów kuriera ponownie"** na karcie sprzedaży: tworzy NOWĄ przesyłkę
+  ShipX na dokładnie te same dane (adres/paczkomat/odbiorca), BEZ faktury
+  i bez zmiany statusów zamówienia - na dosyłkę/reklamację. Zapis jako
+  kolejny wiersz wyceny_shipments (kind: 'reship') + etykieta do pobrania.
+- Owner: wszystko Antoni; Antoni wskaże później, które wyceny/sprzedaże
+  przepisać na Lorenzo.
+- Bez fulfillmentu (następny krok, etap 6).
 
 ### Etap 2 - Dodawanie i edycja (panel pisze)
 
@@ -293,7 +317,9 @@ gdy nasz pipeline przejdzie testy end-to-end.
   płatność + KSeF + delete proformy; mail do klienta przez Gmail API
   (kontakt@lumlum.co, szablony przeniesione z Make); maszyna stanów +
   worker pg_cron (tracking, retry); webhook inFakt na nasz endpoint.
-- Weryfikacja rabatu jako ujemnej pozycji na fakturze inFakt.
+- Rabat NA PEWNO jako ujemna pozycja kwotowa na fakturze (decyzja
+  Antoniego 2026-07-11: procenty odpadają - rozjazdy o grosze, "14,23%"
+  bez sensu; zawsze kwota).
 - Formularz jednorazowy: prawdziwy form_status w GET + ekran "zamówienie
   już złożone" + odrzucanie POST przy SUBMITTED + "Otwórz ponownie"
   w panelu.
