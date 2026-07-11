@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LumLum — Baza Wiedzy</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared/topbar.css">
+  <style>
+    /* Panel Wiedza — paleta/typografia 1:1 z hubem/CRM (monochrom, Inter). */
+    :root {
+      color-scheme: light dark;
+      --surface-1: #ffffff;
+      --page: #f5f5f4;
+      --text-primary: #111111;
+      --text-secondary: #52514e;
+      --text-muted: #8a8984;
+      --border: rgba(17, 17, 17, 0.12);
+      --accent: #111111;
+      --accent-contrast: #ffffff;
+      --accent-soft: #ececea;
+      --bad: #b5433f;
+      --ok: #3d7a44;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-1: #161616;
+        --page: #0a0a0a;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted: #8a8984;
+        --border: rgba(255, 255, 255, 0.14);
+        --accent: #ffffff;
+        --accent-contrast: #0a0a0a;
+        --accent-soft: #262626;
+        --bad: #e08585;
+        --ok: #8fc796;
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--page); color: var(--text-primary);
+      min-height: 100vh; display: flex; flex-direction: column;
+    }
+    main { flex: 1; width: 100%; max-width: 860px; margin: 0 auto; padding: 1.8rem 1.25rem 4rem; }
+    h1 { font-size: 1.55rem; font-weight: 700; letter-spacing: -0.4px; margin-bottom: 1.1rem; }
+
+    .tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 1.3rem; }
+    .tab {
+      border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+      font: inherit; font-size: 0.86rem; font-weight: 600; padding: 0.45rem 0.95rem;
+      border-radius: 999px; cursor: pointer;
+    }
+    .tab.active { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+    .tab .count {
+      display: inline-block; min-width: 1.35em; text-align: center; margin-left: 0.35em;
+      background: var(--accent-soft); color: var(--text-primary);
+      border-radius: 999px; font-size: 0.74rem; padding: 0.08em 0.35em;
+    }
+    .tab.active .count { background: rgba(127,127,127,0.35); color: var(--accent-contrast); }
+
+    .card {
+      background: var(--surface-1); border: 1px solid var(--border);
+      border-radius: 18px; padding: 1.1rem 1.2rem; margin-bottom: 0.85rem;
+    }
+    .muted { color: var(--text-muted); font-size: 0.82rem; }
+    .fact-title { font-weight: 600; font-size: 0.98rem; line-height: 1.35; }
+    .fact-content { margin-top: 0.55rem; font-size: 0.9rem; line-height: 1.55; color: var(--text-secondary); white-space: pre-wrap; }
+    .fact-meta { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-top: 0.7rem; }
+    .badge {
+      font-size: 0.72rem; font-weight: 600; padding: 0.18rem 0.6rem;
+      border-radius: 999px; background: var(--accent-soft); color: var(--text-secondary);
+    }
+    .badge.owner { background: #f3dede; color: #8c3a36; }
+    @media (prefers-color-scheme: dark) { .badge.owner { background: #3a2222; color: #e08585; } }
+
+    textarea, input[type="text"], select {
+      width: 100%; font: inherit; font-size: 0.9rem; color: var(--text-primary);
+      background: var(--page); border: 1px solid var(--border); border-radius: 12px;
+      padding: 0.6rem 0.75rem; outline: none;
+    }
+    textarea { resize: vertical; min-height: 2.9em; }
+    textarea:focus, input[type="text"]:focus { border-color: var(--text-muted); }
+    label.small { display: block; font-size: 0.76rem; font-weight: 600; color: var(--text-muted); margin: 0.75rem 0 0.3rem; }
+
+    .btn {
+      border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+      font: inherit; font-size: 0.85rem; font-weight: 600; padding: 0.5rem 1.05rem;
+      border-radius: 999px; cursor: pointer;
+    }
+    .btn.primary { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+    .btn.danger { color: var(--bad); }
+    .btn:disabled { opacity: 0.5; cursor: wait; }
+    .btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.8rem; align-items: center; }
+
+    .comment-row { display: flex; gap: 0.5rem; align-items: flex-start; margin-top: 0.75rem; }
+    .mic {
+      flex: 0 0 auto; width: 2.55rem; height: 2.55rem; border-radius: 50%;
+      border: 1px solid var(--border); background: var(--surface-1);
+      font-size: 1.05rem; cursor: pointer; line-height: 1;
+    }
+    .mic.rec { background: var(--bad); border-color: var(--bad); animation: puls 1.1s infinite; }
+    @keyframes puls { 50% { opacity: 0.55; } }
+
+    .answer { white-space: pre-wrap; font-size: 0.93rem; line-height: 1.6; }
+    .answer-facts { margin-top: 0.8rem; display: flex; gap: 0.4rem; flex-wrap: wrap; }
+    .empty { text-align: center; color: var(--text-muted); padding: 2.5rem 1rem; font-size: 0.9rem; }
+
+    #toast {
+      position: fixed; left: 50%; bottom: 1.6rem; transform: translateX(-50%);
+      background: var(--accent); color: var(--accent-contrast);
+      padding: 0.6rem 1.2rem; border-radius: 999px; font-size: 0.86rem; font-weight: 600;
+      opacity: 0; pointer-events: none; transition: opacity 0.25s; max-width: 90vw; z-index: 50;
+    }
+    #toast.show { opacity: 1; }
+    .revised-note {
+      margin-top: 0.7rem; padding: 0.7rem 0.85rem; border-radius: 12px;
+      background: var(--accent-soft); font-size: 0.85rem; line-height: 1.5; white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Baza Wiedzy</h1>
+    <div class="tabs" id="tabs"></div>
+    <section id="view"></section>
+  </main>
+  <div id="toast"></div>
+
+  <script src="shared/topbar.js"></script>
+  <script>
+    'use strict';
+    LumTopbar.mount({ active: 'wiedza' });
+
+    const API = window.API_BASE || '';
+    const USER = window.LUMLUM_USER || {};
+    const IS_ADMIN = Boolean(USER.isAdmin);
+
+    const VIS_LABEL = { owner: '🔒 tylko Antoni', team: '👥 zespół', public: '🌍 publiczny' };
+    const state = { tab: IS_ADMIN ? 'review' : 'ask', stats: {}, prefillLuka: null };
+
+    function esc(s) {
+      return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    function toast(msg) {
+      const el = document.getElementById('toast');
+      el.textContent = msg; el.classList.add('show');
+      clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 3200);
+    }
+    async function api(path, opts = {}) {
+      const res = await fetch(`${API}${path}`, {
+        headers: { 'Content-Type': 'application/json' },
+        ...opts,
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Błąd ${res.status}`);
+      return data;
+    }
+
+    // ── Dyktowanie (Web Speech API; na telefonie działa też mikrofon klawiatury) ──
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    function attachMic(btn, textarea) {
+      if (!SR) { btn.style.display = 'none'; return; }
+      let rec = null;
+      btn.addEventListener('click', () => {
+        if (rec) { rec.stop(); return; }
+        rec = new SR();
+        rec.lang = 'pl-PL'; rec.continuous = true; rec.interimResults = false;
+        btn.classList.add('rec'); btn.textContent = '⏹';
+        rec.onresult = (e) => {
+          for (let i = e.resultIndex; i < e.results.length; i += 1) {
+            if (e.results[i].isFinal) {
+              textarea.value = (textarea.value ? textarea.value.trimEnd() + ' ' : '') + e.results[i][0].transcript.trim();
+            }
+          }
+        };
+        rec.onend = () => { btn.classList.remove('rec'); btn.textContent = '🎙'; rec = null; };
+        rec.onerror = rec.onend;
+        rec.start();
+      });
+    }
+
+    // ── Zakładki ────────────────────────────────────────────────────────────
+    const TABS = [
+      { key: 'ask', label: 'Zapytaj', admin: false },
+      { key: 'review', label: 'Do zatwierdzenia', admin: true, countKey: 'proposed' },
+      { key: 'facts', label: 'Fakty', admin: false, countKey: 'active' },
+      { key: 'add', label: 'Dodaj fakt', admin: false },
+      { key: 'luki', label: 'Luki', admin: true, countKey: 'luki' },
+    ];
+
+    function renderTabs() {
+      const box = document.getElementById('tabs');
+      box.innerHTML = '';
+      TABS.forEach((t) => {
+        if (t.admin && !IS_ADMIN) return;
+        const b = document.createElement('button');
+        b.className = `tab${state.tab === t.key ? ' active' : ''}`;
+        const n = t.countKey ? state.stats[t.countKey] : null;
+        b.innerHTML = esc(t.label) + (n ? ` <span class="count">${n}</span>` : '');
+        b.onclick = () => { state.tab = t.key; render(); };
+        box.appendChild(b);
+      });
+    }
+
+    async function refreshStats() {
+      try { state.stats = await api('/api/stats'); renderTabs(); } catch (e) { /* liczniki to bonus */ }
+    }
+
+    function view() { return document.getElementById('view'); }
+
+    function factCard(f, { withReview }) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      const src = f.source_ref?.kind ? ` · źródło: ${esc(f.source_ref.kind)}` : '';
+      card.innerHTML = `
+        <div class="fact-title">${esc(f.title)}</div>
+        <div class="fact-content">${esc(f.content)}</div>
+        <div class="fact-meta">
+          <span class="badge ${esc(f.visibility)}">${VIS_LABEL[f.visibility] || esc(f.visibility)}</span>
+          ${(f.tags || []).map((t) => `<span class="badge">${esc(t)}</span>`).join('')}
+          <span class="muted">${esc((f.created_at || '').slice(0, 10))}${src}</span>
+        </div>`;
+      if (!withReview || !IS_ADMIN) return card;
+
+      const tools = document.createElement('div');
+      tools.innerHTML = `
+        <label class="small">Widoczność</label>
+        <select class="vis">
+          <option value="owner" ${f.visibility === 'owner' ? 'selected' : ''}>🔒 Tylko Antoni (marże, koszty, strategie)</option>
+          <option value="team" ${f.visibility === 'team' ? 'selected' : ''}>👥 Zespół — Lorenzo i narzędzia dla klientów</option>
+          <option value="public" ${f.visibility === 'public' ? 'selected' : ''}>🌍 Publiczny — można cytować klientowi</option>
+        </select>
+        <label class="small">Komentarz (poprawi treść przed zatwierdzeniem — napisz albo podyktuj)</label>
+        <div class="comment-row">
+          <textarea class="comment" placeholder="np. cena nieaktualna, ma być 85 zł; usuń część o..."></textarea>
+          <button class="mic" title="Dyktuj">🎙</button>
+        </div>
+        <div class="btn-row">
+          <button class="btn primary approve">Zatwierdź</button>
+          <button class="btn danger reject">Odrzuć</button>
+        </div>`;
+      card.appendChild(tools);
+      const comment = tools.querySelector('.comment');
+      attachMic(tools.querySelector('.mic'), comment);
+
+      const act = async (decision) => {
+        const btns = tools.querySelectorAll('.btn');
+        btns.forEach((b) => { b.disabled = true; });
+        try {
+          const res = await api(`/api/facts/${f.id}/review`, {
+            method: 'POST',
+            body: { decision, comment: comment.value, visibility: tools.querySelector('.vis').value },
+          });
+          if (decision === 'approve' && res.data?.revised) {
+            const note = document.createElement('div');
+            note.className = 'revised-note';
+            note.textContent = `✅ Zatwierdzono z poprawką:\n${res.data.revised.title}\n${res.data.revised.content}`;
+            card.innerHTML = ''; card.appendChild(note);
+            setTimeout(() => card.remove(), 6000);
+          } else {
+            card.remove();
+            toast(decision === 'approve' ? 'Zatwierdzono ✓' : 'Odrzucono');
+          }
+          refreshStats();
+        } catch (e) {
+          toast(e.message); btns.forEach((b) => { b.disabled = false; });
+        }
+      };
+      tools.querySelector('.approve').onclick = () => act('approve');
+      tools.querySelector('.reject').onclick = () => act('reject');
+      return card;
+    }
+
+    // ── Widoki ──────────────────────────────────────────────────────────────
+
+    function renderAsk() {
+      view().innerHTML = `
+        <div class="card">
+          <label class="small">Zadaj pytanie o biznes, produkty, ceny, procesy</label>
+          <div class="comment-row">
+            <textarea id="q" placeholder="np. Ile kosztuje zestaw na 14 stopni schodów?"></textarea>
+            <button class="mic" id="qmic" title="Dyktuj">🎙</button>
+          </div>
+          <div class="btn-row">
+            <button class="btn primary" id="askBtn">Zapytaj</button>
+            ${IS_ADMIN ? '<label style="font-size:0.82rem;color:var(--text-muted);display:flex;align-items:center;gap:0.35rem;"><input type="checkbox" id="jakoTeam"> pokaż, co zobaczy zespół (Lorenzo)</label>' : ''}
+          </div>
+        </div>
+        <div id="answerBox"></div>`;
+      attachMic(document.getElementById('qmic'), document.getElementById('q'));
+      const ask = async () => {
+        const q = document.getElementById('q').value.trim();
+        if (!q) return;
+        const btn = document.getElementById('askBtn');
+        btn.disabled = true; btn.textContent = 'Szukam…';
+        try {
+          const jako = document.getElementById('jakoTeam')?.checked ? 'team' : undefined;
+          const res = await api('/api/ask', { method: 'POST', body: { question: q, jako } });
+          document.getElementById('answerBox').innerHTML = `
+            <div class="card">
+              <div class="answer">${esc(res.answer)}</div>
+              ${res.facts?.length ? `<div class="answer-facts">${res.facts.map((f) => `<span class="badge">${esc(f.title)}</span>`).join('')}</div>` : ''}
+              ${!res.confident ? '<div class="muted" style="margin-top:0.6rem;">Zapisano jako lukę wiedzy — uzupełnisz ją w zakładce Luki.</div>' : ''}
+            </div>`;
+          refreshStats();
+        } catch (e) { toast(e.message); }
+        btn.disabled = false; btn.textContent = 'Zapytaj';
+      };
+      document.getElementById('askBtn').onclick = ask;
+      document.getElementById('q').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); }
+      });
+    }
+
+    async function renderReview() {
+      view().innerHTML = '<div class="empty">Wczytuję kolejkę…</div>';
+      try {
+        const res = await api('/api/facts?status=proposed');
+        view().innerHTML = '';
+        if (!res.data.length) { view().innerHTML = '<div class="empty">Nic do zatwierdzenia 🎉</div>'; return; }
+        res.data.forEach((f) => view().appendChild(factCard(f, { withReview: true })));
+      } catch (e) { view().innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+    }
+
+    async function renderFacts() {
+      view().innerHTML = `
+        <div class="card">
+          <input type="text" id="fq" placeholder="Szukaj w faktach (tytuł/treść)…">
+        </div>
+        <div id="factList"><div class="empty">Wczytuję…</div></div>`;
+      const load = async () => {
+        const q = document.getElementById('fq').value.trim();
+        try {
+          const res = await api(`/api/facts?status=active${q ? `&q=${encodeURIComponent(q)}` : ''}`);
+          const box = document.getElementById('factList');
+          box.innerHTML = '';
+          if (!res.data.length) { box.innerHTML = '<div class="empty">Brak faktów.</div>'; return; }
+          res.data.forEach((f) => box.appendChild(factCard(f, { withReview: IS_ADMIN })));
+        } catch (e) { document.getElementById('factList').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+      };
+      let t = null;
+      document.getElementById('fq').addEventListener('input', () => { clearTimeout(t); t = setTimeout(load, 350); });
+      load();
+    }
+
+    function renderAdd() {
+      const luka = state.prefillLuka;
+      state.prefillLuka = null;
+      view().innerHTML = `
+        <div class="card">
+          ${luka ? `<div class="muted" style="margin-bottom:0.6rem;">Uzupełniasz lukę: „${esc(luka.question)}"</div>` : ''}
+          <label class="small">Tytuł faktu</label>
+          <input type="text" id="ft" placeholder="np. Gwarancja na sterowniki" value="${luka ? esc(luka.question) : ''}">
+          <label class="small">Treść (napisz albo podyktuj)</label>
+          <div class="comment-row">
+            <textarea id="fc" style="min-height:6em;"></textarea>
+            <button class="mic" id="fmic" title="Dyktuj">🎙</button>
+          </div>
+          <label class="small">Tagi (po przecinku)</label>
+          <input type="text" id="ftags" placeholder="cennik, schody">
+          <label class="small">Widoczność</label>
+          <select id="fvis">
+            <option value="team" selected>👥 Zespół — Lorenzo i narzędzia dla klientów</option>
+            <option value="owner">🔒 Tylko Antoni (marże, koszty, strategie)</option>
+            <option value="public">🌍 Publiczny — można cytować klientowi</option>
+          </select>
+          <div class="btn-row"><button class="btn primary" id="saveFact">Zapisz fakt</button></div>
+        </div>`;
+      attachMic(document.getElementById('fmic'), document.getElementById('fc'));
+      document.getElementById('saveFact').onclick = async () => {
+        const btn = document.getElementById('saveFact');
+        btn.disabled = true;
+        try {
+          await api('/api/facts', { method: 'POST', body: {
+            title: document.getElementById('ft').value,
+            content: document.getElementById('fc').value,
+            tags: document.getElementById('ftags').value,
+            visibility: document.getElementById('fvis').value,
+            lukaId: luka?.id,
+          } });
+          toast(IS_ADMIN ? 'Fakt zapisany i aktywny ✓' : 'Fakt zgłoszony do zatwierdzenia ✓');
+          refreshStats();
+          state.tab = 'facts'; render();
+        } catch (e) { toast(e.message); btn.disabled = false; }
+      };
+    }
+
+    async function renderLuki() {
+      view().innerHTML = '<div class="empty">Wczytuję…</div>';
+      try {
+        const res = await api('/api/luki');
+        view().innerHTML = '';
+        if (!res.data.length) { view().innerHTML = '<div class="empty">Brak luk — system znał odpowiedź na wszystko 🎉</div>'; return; }
+        res.data.forEach((l) => {
+          const card = document.createElement('div');
+          card.className = 'card';
+          card.innerHTML = `
+            <div class="fact-title">${esc(l.question)}</div>
+            <div class="muted" style="margin-top:0.4rem;">pytał: ${esc(l.asked_by || '?')} · ${esc((l.created_at || '').slice(0, 16).replace('T', ' '))}</div>
+            <div class="btn-row">
+              <button class="btn primary fill">Uzupełnij wiedzę</button>
+              <button class="btn close">Zamknij bez odpowiedzi</button>
+            </div>`;
+          card.querySelector('.fill').onclick = () => { state.prefillLuka = l; state.tab = 'add'; render(); };
+          card.querySelector('.close').onclick = async () => {
+            try { await api(`/api/luki/${l.id}/zamknij`, { method: 'POST' }); card.remove(); refreshStats(); }
+            catch (e) { toast(e.message); }
+          };
+          view().appendChild(card);
+        });
+      } catch (e) { view().innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+    }
+
+    function render() {
+      renderTabs();
+      ({ ask: renderAsk, review: renderReview, facts: renderFacts, add: renderAdd, luki: renderLuki }[state.tab])();
+    }
+
+    render();
+    refreshStats();
+  </script>
+</body>
+</html>

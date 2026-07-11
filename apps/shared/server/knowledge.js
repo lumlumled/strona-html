@@ -197,6 +197,24 @@ async function reviewFact(db, id, { decision, title, content, tags, visibility }
   return { id, status: patch.status };
 }
 
+// Poprawka faktu na podstawie komentarza (panel Wiedza: „komentarz poprawia
+// wiedzę, potem zatwierdzam"). LLM przepisuje fakt zgodnie z uwagą Antoniego
+// i zwraca { title, content } — wywołujący zapisuje przez reviewFact.
+async function reviseWithComment({ fact, comment }) {
+  const system = `Redagujesz fakty w bazie wiedzy firmy LumLum (oświetlenie LED). Dostajesz
+istniejący fakt i komentarz właściciela firmy (często dyktowany głosowo — bywa potoczny).
+Przepisz fakt tak, żeby uwzględniał komentarz: popraw błędy, doprecyzuj, usuń co każe usunąć.
+Zachowaj wszystko, czego komentarz nie podważa. Pisz po polsku, zwięźle i konkretnie.
+Usuń z treści dopiski typu "do potwierdzenia"/"⚠️ KONFLIKT", jeśli komentarz je rozstrzyga.
+Odpowiedz WYŁĄCZNIE JSON-em: {"title": "...", "content": "..."}`;
+  const user = `FAKT — tytuł: ${fact.title}\nFAKT — treść: ${fact.content}\n\nKOMENTARZ: ${comment}`;
+  const text = await completeAsk({ system, user, maxTokens: 900 });
+  const raw = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  const parsed = JSON.parse(raw);
+  if (!parsed.title || !parsed.content) throw new Error('Poprawka LLM bez title/content');
+  return { title: String(parsed.title), content: String(parsed.content) };
+}
+
 // Nowa wersja faktu (np. zmiana ceny): stary → archived + superseded_by.
 async function supersedeFact(db, oldId, newFactInput) {
   const created = await proposeFact(db, newFactInput);
@@ -214,6 +232,7 @@ module.exports = {
   retrieveForPrompt,
   proposeFact,
   reviewFact,
+  reviseWithComment,
   supersedeFact,
   embed,
   allowedVisibility,

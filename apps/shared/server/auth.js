@@ -37,6 +37,7 @@ const PANELS = [
   { key: 'crm', label: 'CRM', desc: 'Leady B2C: arkusz, karta leada, pytania do AI', status: 'live' },
   { key: 'wyceny', label: 'Wyceny', desc: 'Panel wycen: tworzenie, edycja kwot i statusów', status: 'soon' },
   { key: 'wiadomosci', label: 'Wiadomości', desc: 'Komunikator: Messenger, IG, telefon i notatki w jednym wątku klienta', status: 'live' },
+  { key: 'wiedza', label: 'Baza Wiedzy', desc: 'Mózg biznesu: zapytaj o wszystko, zatwierdzaj nową wiedzę, uzupełniaj luki', status: 'live' },
   { key: 'statystyki', label: 'Statystyki', desc: 'Lejek, telefony, skuteczność — dane z całego systemu', status: 'soon' },
   { key: 'pozwolenia', label: 'Pozwolenia', desc: 'Użytkownicy i dostępy do paneli oraz arkuszy', status: 'live', adminOnly: true },
 ];
@@ -123,6 +124,7 @@ function panelLinks() {
       crm: '/crm/',
       wyceny: '/wyceny',
       wiadomosci: '/wiadomosci/',
+      wiedza: '/wiedza/',
       statystyki: '/statystyki',
       pozwolenia: '/pozwolenia',
     };
@@ -134,6 +136,7 @@ function panelLinks() {
     crm: 'http://localhost:3002/',
     wyceny: `${hub}/wyceny`,
     wiadomosci: 'http://localhost:3004/',
+    wiedza: 'http://localhost:3005/',
     statystyki: `${hub}/statystyki`,
     pozwolenia: `${hub}/pozwolenia`,
   };

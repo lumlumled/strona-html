@@ -16,6 +16,10 @@
     "api/komunikator.js": {
       "includeFiles": "{apps/komunikator/app.html,apps/komunikator/assets/**,apps/shared/**}",
       "maxDuration": 180
+    },
+    "api/wiedza.js": {
+      "includeFiles": "{apps/wiedza/app.html,apps/hub/assets/**,apps/shared/**}",
+      "maxDuration": 60
     }
   },
   "crons": [
@@ -27,7 +31,8 @@
   "redirects": [
     { "source": "/backlog-b2c", "destination": "/backlog-b2c/", "permanent": false },
     { "source": "/crm", "destination": "/crm/", "permanent": false },
-    { "source": "/wiadomosci", "destination": "/wiadomosci/", "permanent": false }
+    { "source": "/wiadomosci", "destination": "/wiadomosci/", "permanent": false },
+    { "source": "/wiedza", "destination": "/wiedza/", "permanent": false }
   ],
   "rewrites": [
     { "source": "/backlog-b2c/", "destination": "/api/backlog-b2c" },
@@ -36,6 +41,8 @@
     { "source": "/crm/:path*", "destination": "/api/crm" },
     { "source": "/wiadomosci/", "destination": "/api/komunikator" },
     { "source": "/wiadomosci/:path*", "destination": "/api/komunikator" },
+    { "source": "/wiedza/", "destination": "/api/wiedza" },
+    { "source": "/wiedza/:path*", "destination": "/api/wiedza" },
     { "source": "/", "destination": "/api/index" },
     { "source": "/login", "destination": "/api/index" },
     { "source": "/logout", "destination": "/api/index" },
