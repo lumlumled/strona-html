@@ -22,7 +22,7 @@
     { "path": "/backlog-b2c/api/cron/umowa-draft", "schedule": "0 5 * * 1-5" },
     { "path": "/backlog-b2c/api/cron/log-polaczen-closeout", "schedule": "0 20 * * 1-5" },
     { "path": "/backlog-b2c/api/cron/podsumowanie-dnia", "schedule": "0 21 * * 1-5" },
-    { "path": "/wiadomosci/api/cron/tiktok-comments", "schedule": "*/30 5-21 * * *" }
+    { "path": "/wiadomosci/api/cron/tiktok-comments", "schedule": "15 7 * * *" }
   ],
   "redirects": [
     { "source": "/backlog-b2c", "destination": "/backlog-b2c/", "permanent": false },
