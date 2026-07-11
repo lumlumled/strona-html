@@ -255,4 +255,31 @@ async function status(db) {
   return { configured: Boolean(clientConfig()), connected: Boolean(tokens?.refresh_token), email: tokens?.email || null };
 }
 
-module.exports = { authUrl, exchangeCode, syncGmail, status };
+// ── Push w czasie rzeczywistym (users.watch → Pub/Sub → nasz webhook) ───────
+// Gmail publikuje powiadomienie na topic Pub/Sub przy każdej zmianie w INBOX;
+// subskrypcja push woła /api/webhooks/gmail, a ten odpala syncGmail() —
+// dedup po ID wiadomości robi resztę, więc powiadomienie jest tylko
+// "dzwonkiem", nie źródłem danych. watch wygasa po ~7 dniach → worker
+// odnawia go, gdy zostało <24 h.
+
+async function ensureWatch(db) {
+  const topic = process.env.GMAIL_PUBSUB_TOPIC; // projects/<projekt>/topics/<topic>
+  if (!topic) return { skipped: 'brak GMAIL_PUBSUB_TOPIC — push wyłączony, działa polling' };
+  const auth = await ensureAccessToken(db);
+  if (!auth) return { skipped: 'Gmail niepołączony' };
+
+  const stored = await loadTokens(db);
+  const expiresAt = stored?.watch?.expiration ? Number(stored.watch.expiration) : 0;
+  if (expiresAt - Date.now() > 24 * 60 * 60 * 1000 && stored?.watch?.topic === topic) {
+    return { active: true, expiresAt: new Date(expiresAt).toISOString() };
+  }
+
+  const watch = await gmailFetch(auth.token, '/watch', {
+    method: 'POST',
+    body: JSON.stringify({ topicName: topic, labelIds: ['INBOX'], labelFilterBehavior: 'INCLUDE' }),
+  });
+  await saveTokens(db, { ...(await loadTokens(db)), watch: { topic, expiration: watch.expiration, historyId: watch.historyId } });
+  return { renewed: true, expiresAt: new Date(Number(watch.expiration)).toISOString() };
+}
+
+module.exports = { authUrl, exchangeCode, syncGmail, ensureWatch, status };

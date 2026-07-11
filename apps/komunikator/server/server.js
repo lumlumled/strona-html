@@ -90,6 +90,12 @@ async function runWorker(req, res) {
     result.gmail = { ok: false, error: err.message };
   }
   try {
+    result.gmailWatch = await gmail.ensureWatch(db);
+  } catch (err) {
+    console.error('Worker (gmail watch):', err.message);
+    result.gmailWatch = { error: err.message };
+  }
+  try {
     result.triage = await triage.sweep(db);
   } catch (err) {
     console.error('Worker (triage):', err.message);
@@ -101,6 +107,37 @@ async function runWorker(req, res) {
 
 app.all('/api/cron/worker', runWorker);
 app.all('/api/cron/tiktok-comments', runWorker);
+
+// Push z Gmaila (Pub/Sub push subscription). Powiadomienie to tylko dzwonek —
+// treść i tak bierzemy z Gmail API (syncGmail, idempotentny). Token w query
+// stringu weryfikuje, że to nasza subskrypcja. 200 zawsze szybko, żeby
+// Pub/Sub nie retry'ował w nieskończoność.
+app.post('/api/webhooks/gmail', async (req, res) => {
+  const expected = process.env.GMAIL_PUSH_TOKEN;
+  if (!expected || req.query.token !== expected) {
+    return res.status(401).json({ error: 'Nieprawidłowy token' });
+  }
+  try {
+    const result = await gmail.syncGmail(getClient());
+    res.json({ ok: true, added: result.added || 0 });
+  } catch (err) {
+    console.error('Webhook Gmail push:', err.message);
+    res.json({ ok: false, error: err.message });
+  }
+});
+
+// Lekki cron TYLKO dla Gmaila (pg_cron co 1 min w godzinach pracy) — mail
+// pojawia się w panelu w ≤60 s nawet zanim push przez Pub/Sub jest skonfigurowany
+// (a po konfiguracji zostaje jako siatka bezpieczeństwa, gdyby push przepadł).
+app.all('/api/cron/gmail', async (req, res) => {
+  if (!isCronAuthorized(req)) return res.status(401).json({ error: 'Brak autoryzacji' });
+  try {
+    res.json(await gmail.syncGmail(getClient()));
+  } catch (err) {
+    console.error('Cron gmail:', err.message);
+    res.status(502).json({ ok: false, error: err.message });
+  }
+});
 
 // ── Auth: to samo indywidualne logowanie co hub/CRM, panel 'wiadomosci' ─────
 
