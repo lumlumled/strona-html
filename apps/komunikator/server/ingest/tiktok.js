@@ -1,36 +1,48 @@
 // ── Ingestia komentarzy TikTok (scraper publicznych danych, read-only) ──────
 // TikTok nie daje firmom z EOG żadnego API do DM-ów ani komentarzy (blokada
 // platformy, nie narzędzi — stan 2026-07). Komentarze pod filmikami są jednak
-// publiczne, więc zbieramy je scraperem Apify i wpuszczamy do Komunikatora
+// publiczne, więc zbieramy je scraperami Apify i wpuszczamy do Komunikatora
 // jako wątki read-only: sugestia AI się generuje, Antoni odpowiada ręcznie
 // w aplikacji TikToka i klika "Wysłane ręcznie".
 //
-// Przebieg (cron /api/cron/tiktok-comments co 30 min):
-//   1. Jeśli wisi niedokończony run Apify → sprawdź status; SUCCEEDED →
-//      pobierz dataset i zapisz komentarze; w trakcie → nic nie rób.
-//   2. Bez wiszącego runa → kandydaci z Zernio (natywne posty TikToka,
-//      GET /v1/posts?source=external): filmiki z ostatnich 30 dni, w których
-//      licznik komentarzy > liczba komentarzy już zapisanych u nas →
-//      start nowego runa Apify (stan w kom_inbox_raw, source='tiktok_apify').
-// Komentarze lądują więc z opóźnieniem max ~1 cyklu crona (≤1 h) — dla
-// komentarzy pod postami w zupełności wystarcza, a scraping kosztuje tylko
-// wtedy, gdy realnie coś przybyło.
+// Po odłączeniu konta TikTok od Zernio (decyzja Antoniego 2026-07-11, ~$6/mies
+// oszczędności) także LISTA filmików idzie ze scrapera — łańcuch dwustopniowy,
+// stan między cyklami crona w kom_inbox_raw (source='tiktok_apify'):
+//   stage 'profile'  → aktor listuje filmiki profilu (id, commentCount, url);
+//                      po sukcesie liczymy kandydatów (licznik > zapisane
+//                      i > stan z ostatniego scrapu) i startujemy stage 2
+//   stage 'comments' → aktor zbiera komentarze wskazanych filmików;
+//                      po sukcesie ingest do kom_* + triage
+// Lista profilu odświeża się co APIFY_TIKTOK_LIST_MINUTES (domyślnie 180) —
+// częstsze listowanie to realny koszt Apify, a komentarzowy ruch na TikToku
+// LumLum jest niewielki. Nowy komentarz pojawia się więc w panelu do ~3,5 h.
 //
-// Komentarze WŁASNE (autor = podpięte konto lumlum.led) zapisują się jako
-// direction 'out' — odpowiedzi udzielone w aplikacji domykają wątek same.
+// Komentarze WŁASNE (autor = TIKTOK_PROFILE) zapisują się jako direction 'out'
+// w wątku klienta-rodzica — odpowiedzi z aplikacji domykają wątek same.
 const identity = require('../identity');
 const triage = require('../triage');
 
 const APIFY_API = 'https://api.apify.com';
-// Aktor "TikTok Comments Scraper" od Clockworks (oficjalny w Apify Store,
-// rozliczany per wynik). Podmiana aktora = env var, zero zmian w kodzie.
-const DEFAULT_ACTOR = 'clockworks~tiktok-comments-scraper';
+// Aktory Clockworks (oficjalne w Apify Store, rozliczane per wynik).
+// Podmiana = env var, zero zmian w kodzie.
+const DEFAULT_COMMENTS_ACTOR = 'clockworks~tiktok-comments-scraper';
+const DEFAULT_LIST_ACTOR = 'clockworks~tiktok-scraper';
+const DEFAULT_PROFILE = 'lumlum.led';
 const MAX_VIDEOS_PER_RUN = 8;
 const VIDEO_MAX_AGE_DAYS = 30;
 const COMMENTS_PER_POST = 100;
+const LIST_VIDEOS_COUNT = 25;
 
 function apifyToken() {
   return process.env.APIFY_TOKEN || '';
+}
+
+function profileHandle() {
+  return (process.env.TIKTOK_PROFILE || DEFAULT_PROFILE).replace(/^@/, '');
+}
+
+function listIntervalMs() {
+  return Number(process.env.APIFY_TIKTOK_LIST_MINUTES || 180) * 60 * 1000;
 }
 
 async function apifyRequest(method, pathname, body) {
@@ -45,15 +57,6 @@ async function apifyRequest(method, pathname, body) {
   return raw ? JSON.parse(raw) : {};
 }
 
-async function zernioGet(pathname) {
-  const res = await fetch(`https://zernio.com/api${pathname}`, {
-    headers: { Authorization: `Bearer ${process.env.ZERNIO_API_KEY}` },
-  });
-  const raw = await res.text();
-  if (!res.ok) throw new Error(`Zernio GET ${pathname} → ${res.status}: ${raw.slice(0, 300)}`);
-  return raw ? JSON.parse(raw) : {};
-}
-
 function pick(obj, ...keys) {
   for (const key of keys) {
     const v = obj?.[key];
@@ -62,7 +65,7 @@ function pick(obj, ...keys) {
   return '';
 }
 
-// ── Stan runa Apify w kom_inbox_raw (source='tiktok_apify') ─────────────────
+// ── Stan łańcucha w kom_inbox_raw (source='tiktok_apify') ───────────────────
 
 async function getPendingRun(db) {
   const { data, error } = await db
@@ -72,25 +75,19 @@ async function getPendingRun(db) {
   return (data && data[0]) || null;
 }
 
-// ── Kandydaci: filmiki, w których przybyło komentarzy ───────────────────────
-
-async function tiktokAccount() {
-  const { accounts = [] } = await zernioGet('/v1/accounts');
-  return accounts.find((a) => a.platform === 'tiktok' && a.isActive) || null;
-}
-
-async function ingestedCount(db, videoId) {
-  const { count, error } = await db
-    .from('kom_messages').select('id', { count: 'exact', head: true })
-    .filter('meta->tiktok->>videoId', 'eq', String(videoId));
+async function lastProfileRunAt(db) {
+  const { data, error } = await db
+    .from('kom_inbox_raw').select('created_at,payload').eq('source', 'tiktok_apify')
+    .order('created_at', { ascending: false }).limit(10);
   if (error) throw error;
-  return count || 0;
+  const row = (data || []).find((r) => r.payload?.stage === 'profile');
+  return row ? new Date(row.created_at).getTime() : 0;
 }
 
 // Licznik komentarzy z ostatniego scrapu per filmik (payload.videos w rekordach
-// runów). Filmik wraca do scrapowania TYLKO gdy licznik TikToka urośnie ponad
-// stan z ostatniego runa — licznik bywa trwale wyższy niż realnie dostępne
-// komentarze (skasowane/filtrowane), bez tego scrapowalibyśmy go co cykl.
+// runów komentarzy). Filmik wraca do scrapowania TYLKO gdy licznik TikToka
+// urośnie ponad stan z ostatniego runa — licznik bywa trwale wyższy niż realnie
+// dostępne komentarze (skasowane/filtrowane), bez tego scrapowalibyśmy go w kółko.
 async function lastScrapedCounts(db) {
   const { data, error } = await db
     .from('kom_inbox_raw').select('payload').eq('source', 'tiktok_apify')
@@ -106,25 +103,30 @@ async function lastScrapedCounts(db) {
   return map;
 }
 
-// Liczniki komentarzy daje endpoint analytics (GET /v1/posts?source=external
-// zwraca posty BEZ analytics — sprawdzone na żywo 2026-07-11, wbrew ich
-// dokumentacji ExternalPostSummary).
-async function candidateVideos(db, accountId) {
-  const { posts = [] } = await zernioGet(`/v1/analytics?source=external&accountId=${encodeURIComponent(accountId)}&limit=30`);
+async function ingestedCount(db, videoId) {
+  const { count, error } = await db
+    .from('kom_messages').select('id', { count: 'exact', head: true })
+    .filter('meta->tiktok->>videoId', 'eq', String(videoId));
+  if (error) throw error;
+  return count || 0;
+}
+
+// ── Kandydaci z listy profilu (dataset aktora clockworks~tiktok-scraper) ────
+
+async function candidatesFromItems(db, items) {
   const cutoff = Date.now() - VIDEO_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
   const scraped = await lastScrapedCounts(db);
 
   const candidates = [];
-  for (const post of posts) {
-    if (post.platform && post.platform !== 'tiktok') continue;
-    const comments = post.analytics?.comments || 0;
-    if (!comments) continue;
-    if (post.publishedAt && new Date(post.publishedAt).getTime() < cutoff) continue;
-    const plat = (post.platforms || []).find((p) => p.platform === 'tiktok') || {};
-    const url = post.platformPostUrl || plat.platformPostUrl;
-    const videoId = plat.platformPostId || (String(url || '').match(/video\/(\d+)/) || [])[1];
-    if (!url || !videoId) continue;
-    if (scraped.has(String(videoId)) && comments <= scraped.get(String(videoId))) continue;
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+    const videoId = pick(item, 'id', 'videoId');
+    const url = pick(item, 'webVideoUrl', 'videoUrl');
+    const comments = Number(item.commentCount ?? item.stats?.commentCount ?? 0);
+    const publishedAt = pick(item, 'createTimeISO');
+    if (!videoId || !url || !comments) continue;
+    if (publishedAt && new Date(publishedAt).getTime() < cutoff) continue;
+    if (scraped.has(videoId) && comments <= scraped.get(videoId)) continue;
 
     const have = await ingestedCount(db, videoId);
     if (have < comments) {
@@ -133,6 +135,36 @@ async function candidateVideos(db, accountId) {
     }
   }
   return candidates;
+}
+
+async function startProfileRun(db) {
+  const actor = process.env.APIFY_TIKTOK_LIST_ACTOR || DEFAULT_LIST_ACTOR;
+  const { data: run } = await apifyRequest('POST', `/v2/acts/${actor}/runs`, {
+    profiles: [profileHandle()],
+    resultsPerPage: LIST_VIDEOS_COUNT,
+    shouldDownloadVideos: false,
+    shouldDownloadCovers: false,
+    shouldDownloadSubtitles: false,
+    shouldDownloadSlideshowImages: false,
+  });
+  await db.from('kom_inbox_raw').insert({
+    source: 'tiktok_apify',
+    payload: { stage: 'profile', runId: run.id, actor, profile: profileHandle() },
+  });
+  return run.id;
+}
+
+async function startCommentsRun(db, videos) {
+  const actor = process.env.APIFY_TIKTOK_ACTOR || DEFAULT_COMMENTS_ACTOR;
+  const { data: run } = await apifyRequest('POST', `/v2/acts/${actor}/runs`, {
+    postURLs: videos.map((v) => v.url),
+    commentsPerPost: COMMENTS_PER_POST,
+  });
+  await db.from('kom_inbox_raw').insert({
+    source: 'tiktok_apify',
+    payload: { stage: 'comments', runId: run.id, actor, videos, ownUsername: profileHandle() },
+  });
+  return run.id;
 }
 
 // ── Zapis komentarzy do wspólnego modelu ────────────────────────────────────
@@ -222,7 +254,7 @@ async function ingestComments(db, items, { ownUsername }) {
           parentCommentId: c.parentCommentId,
         },
       },
-    });
+    }).select('id');
     if (msgErr) {
       if (/duplicate|unique/i.test(msgErr.message)) { duplicates += 1; continue; }
       throw msgErr;
@@ -264,48 +296,51 @@ async function ingestComments(db, items, { ownUsername }) {
 
 async function syncTikTokComments(db) {
   if (!apifyToken()) return { ok: true, skipped: 'brak APIFY_TOKEN — komentarze TikTok czekają na konto Apify' };
-  if (!process.env.ZERNIO_API_KEY) return { ok: false, error: 'brak ZERNIO_API_KEY' };
-
-  const actor = process.env.APIFY_TIKTOK_ACTOR || DEFAULT_ACTOR;
   const result = { ok: true };
 
-  // Faza 1: dokończ wiszący run.
+  // Faza 1: dokończ wiszący run (profil albo komentarze).
   const pending = await getPendingRun(db);
   if (pending) {
+    const stage = pending.payload?.stage || 'comments';
     const runId = pending.payload?.runId;
     const { data: run } = await apifyRequest('GET', `/v2/actor-runs/${runId}`);
     if (run.status === 'SUCCEEDED') {
       const items = await apifyRequest('GET', `/v2/datasets/${run.defaultDatasetId}/items?clean=true&limit=5000`);
-      const account = await tiktokAccount();
-      const ingest = await ingestComments(db, Array.isArray(items) ? items : [], {
-        ownUsername: account?.username || pending.payload?.ownUsername || '',
-      });
-      await db.from('kom_inbox_raw').update({ processed: true }).eq('id', pending.id);
-      Object.assign(result, ingest, { finishedRun: runId });
+      if (stage === 'profile') {
+        const candidates = await candidatesFromItems(db, Array.isArray(items) ? items : []);
+        await db.from('kom_inbox_raw').update({ processed: true }).eq('id', pending.id);
+        if (candidates.length) {
+          result.commentsRun = await startCommentsRun(db, candidates);
+          result.candidates = candidates.length;
+        } else {
+          result.candidates = 0;
+        }
+      } else {
+        const ingest = await ingestComments(db, Array.isArray(items) ? items : [], {
+          ownUsername: pending.payload?.ownUsername || profileHandle(),
+        });
+        await db.from('kom_inbox_raw').update({ processed: true }).eq('id', pending.id);
+        Object.assign(result, ingest, { finishedRun: runId });
+      }
     } else if (['FAILED', 'ABORTED', 'TIMED-OUT'].includes(run.status)) {
-      await db.from('kom_inbox_raw').update({ processed: true, error: `run ${run.status}` }).eq('id', pending.id);
+      await db.from('kom_inbox_raw').update({ processed: true, error: `run ${stage} ${run.status}` }).eq('id', pending.id);
       result.failedRun = `${runId}: ${run.status}`;
     } else {
       // RUNNING/READY — poczekaj do następnego cyklu, nie odpalaj drugiego.
-      return { ok: true, waitingForRun: runId };
+      return { ok: true, waitingForRun: `${stage}:${runId}` };
     }
   }
 
-  // Faza 2: nowy run, jeśli gdzieś przybyło komentarzy.
-  const account = await tiktokAccount();
-  if (!account) return { ...result, started: false, error: 'brak aktywnego konta TikTok w Zernio' };
-  const videos = await candidateVideos(db, account._id);
-  if (!videos.length) return { ...result, started: false, candidates: 0 };
-
-  const { data: run } = await apifyRequest('POST', `/v2/acts/${actor}/runs`, {
-    postURLs: videos.map((v) => v.url),
-    commentsPerPost: COMMENTS_PER_POST,
-  });
-  await db.from('kom_inbox_raw').insert({
-    source: 'tiktok_apify',
-    payload: { runId: run.id, actor, videos, ownUsername: account.username || '' },
-  });
-  return { ...result, started: run.id, candidates: videos.length };
+  // Faza 2: świeża lista filmików, jeśli poprzednia jest starsza niż interwał.
+  const { data: stillPending } = await db
+    .from('kom_inbox_raw').select('id').eq('source', 'tiktok_apify').eq('processed', false).limit(1);
+  if (!stillPending || !stillPending.length) {
+    const lastList = await lastProfileRunAt(db);
+    if (Date.now() - lastList >= listIntervalMs()) {
+      result.profileRun = await startProfileRun(db);
+    }
+  }
+  return result;
 }
 
 module.exports = { syncTikTokComments, ingestComments, mapItem };
