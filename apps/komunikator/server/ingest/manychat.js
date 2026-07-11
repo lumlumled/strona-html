@@ -75,15 +75,22 @@ async function markRaw(db, rawId, patch) {
 
 // Główne wejście: przetwarza jeden webhook. Zwraca opis tego, co się stało —
 // endpoint odsyła to ManyChatowi (i logom) wprost.
-async function handleWebhook(db, payload, channelHint) {
+// kind='comment': trigger komentarza pod postem FB/IG — ManyChat NIE
+// udostępnia treści komentarza jako zmiennej, więc zapisujemy sam fakt
+// ("skomentował post") i wątek ląduje w 'waiting', nie 'attention' —
+// właściwa rozmowa zacznie się, gdy klient odpowie na DM od ManyChata.
+// Komentarz NIE otwiera okna 24 h DM (Meta), stąd meta.kind na wiadomości.
+async function handleWebhook(db, payload, channelHint, kindHint) {
   const rawId = await storeRaw(db, payload);
   try {
     const mapped = CHANNEL_MAP[String(channelHint || payload?.channel || 'messenger').toLowerCase()];
     if (!mapped) throw new Error(`Nieznany kanał: ${channelHint || payload?.channel}`);
+    const isComment = String(kindHint || payload?.kind || '').toLowerCase() === 'comment';
 
     const subscriberId = pick(payload, 'subscriber_id', 'subscriberId', 'user_id', 'id');
     if (!subscriberId) throw new Error('Brak subscriber_id w payloadzie');
-    const text = pick(payload, 'text', 'last_input_text', 'message');
+    let text = pick(payload, 'text', 'last_input_text', 'message');
+    if (!text && isComment) text = 'Skomentował(a) post — treść komentarza niedostępna z ManyChat.';
     if (!text) throw new Error('Brak treści wiadomości (text)');
 
     // Profil: co przyszło w payloadzie + dociągnięte z ManyChat API (getInfo
@@ -109,7 +116,7 @@ async function handleWebhook(db, payload, channelHint) {
       customer.display_name = displayName;
     }
 
-    const { thread } = await identity.attachThread(db, customer, mapped.channel, subscriberId);
+    const { thread, created: threadCreated } = await identity.attachThread(db, customer, mapped.channel, subscriberId);
 
     // live_chat_url = link "otwórz tę rozmowę w ManyChat" — fallback ręczny
     // po zamknięciu okna 24 h (jeden klik zamiast szukania w Business Suite).
@@ -136,14 +143,17 @@ async function handleWebhook(db, payload, channelHint) {
       }
     }
 
-    const extId = externalMessageId(payload, subscriberId, text);
+    const extId = externalMessageId(payload, subscriberId, `${isComment ? 'c:' : ''}${text}`);
     const { error: msgErr } = await db.from('kom_messages').insert({
       thread_id: thread.id,
       direction: 'in',
       body: text,
       sent_by: 'customer',
       external_message_id: extId,
-      meta: { manychat: { subscriber_id: subscriberId, channel: mapped.channel } },
+      meta: {
+        manychat: { subscriber_id: subscriberId, channel: mapped.channel },
+        ...(isComment ? { kind: 'comment' } : {}),
+      },
     });
     if (msgErr) {
       if (/duplicate|unique/i.test(msgErr.message)) {
@@ -153,10 +163,13 @@ async function handleWebhook(db, payload, channelHint) {
       throw msgErr;
     }
 
-    await db
-      .from('kom_threads')
-      .update({ status: 'attention', last_message_at: new Date().toISOString() })
-      .eq('id', thread.id);
+    // Komentarz nie wymaga natychmiastowej akcji (ManyChat odpisał DM-em):
+    // świeży wątek → 'waiting'; istniejący zostaje przy swoim statusie.
+    // Prawdziwa wiadomość DM zawsze podbija na 'attention'.
+    const statusPatch = { last_message_at: new Date().toISOString() };
+    if (!isComment) statusPatch.status = 'attention';
+    else if (threadCreated) statusPatch.status = 'waiting';
+    await db.from('kom_threads').update(statusPatch).eq('id', thread.id);
 
     await markRaw(db, rawId, { processed: true });
     return {

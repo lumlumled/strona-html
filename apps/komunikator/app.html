@@ -333,6 +333,7 @@
       const windowOpen = !d.window_expires_at || new Date(d.window_expires_at) > new Date();
       const last = d.messages[d.messages.length - 1];
       if (!windowed || !windowOpen || !last || last.direction !== 'in') return;
+      if (last.meta?.kind === 'comment') return; // komentarz ≠ DM, nie ma na co odpowiadać
 
       const note = $('suggestion-note');
       note.hidden = false;
@@ -404,7 +405,7 @@
       d.messages.forEach((m) => {
         const div = document.createElement('div');
         div.className = `msg ${m.direction}`;
-        const label = m.direction === 'internal' ? '📝 ' : '';
+        const label = m.direction === 'internal' ? '📝 ' : (m.meta?.kind === 'comment' ? '💬 [komentarz pod postem] ' : '');
         div.innerHTML = `${label}${escapeHtml(m.body)}<span class="msg-time">${fmtTime(m.created_at)}${m.meta?.manual_business_suite ? ' · ręcznie (BS)' : ''}</span>`;
         wrap.appendChild(div);
       });

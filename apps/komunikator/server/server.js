@@ -46,7 +46,7 @@ function requireWebhookToken(req, res, next) {
 
 app.post('/api/webhooks/manychat', requireWebhookToken, async (req, res) => {
   try {
-    const result = await manychat.handleWebhook(getClient(), req.body || {}, req.query.channel);
+    const result = await manychat.handleWebhook(getClient(), req.body || {}, req.query.channel, req.query.kind);
     res.json(result);
   } catch (err) {
     console.error('Webhook ManyChat:', err.message);
@@ -93,7 +93,12 @@ function handleError(res, err, fallbackStatus = 400) {
 // ── Okno 24 h Meta ───────────────────────────────────────────────────────────
 // Standardową wiadomość na Messengerze/IG/WhatsAppie wolno wysłać do 24 h od
 // ostatniej wiadomości klienta (polityka platformy, nie ManyChata).
+// UWAGA: komentarz pod postem (meta.kind='comment') NIE otwiera okna DM.
 const WINDOWED_CHANNELS = new Set(['messenger', 'instagram', 'whatsapp']);
+
+function opensWindow(message) {
+  return message.direction === 'in' && message.meta?.kind !== 'comment';
+}
 
 function windowExpiresAt(thread, lastInboundAt) {
   if (!WINDOWED_CHANNELS.has(thread.channel) || !lastInboundAt) return null;
@@ -120,7 +125,7 @@ app.get('/api/threads', async (req, res) => {
         ? db.from('kom_customers').select('*').in('id', customerIds)
         : { data: [] },
       threadIds.length
-        ? db.from('kom_messages').select('thread_id,direction,body,created_at')
+        ? db.from('kom_messages').select('thread_id,direction,body,created_at,meta')
             .in('thread_id', threadIds).order('created_at', { ascending: false }).limit(600)
         : { data: [] },
       threadIds.length
@@ -135,7 +140,7 @@ app.get('/api/threads', async (req, res) => {
     const lastInbound = new Map();
     (messagesRes.data || []).forEach((m) => {
       if (!lastMsg.has(m.thread_id)) lastMsg.set(m.thread_id, m);
-      if (m.direction === 'in' && !lastInbound.has(m.thread_id)) lastInbound.set(m.thread_id, m.created_at);
+      if (opensWindow(m) && !lastInbound.has(m.thread_id)) lastInbound.set(m.thread_id, m.created_at);
     });
     const pendingMerge = new Set((proposalsRes.data || []).map((p) => p.thread_id));
 
@@ -191,7 +196,7 @@ app.get('/api/threads/:id', async (req, res) => {
       candidates = new Map((cands || []).map((c) => [c.id, c]));
     }
 
-    const lastInbound = [...(messagesRes.data || [])].reverse().find((m) => m.direction === 'in');
+    const lastInbound = [...(messagesRes.data || [])].reverse().find(opensWindow);
 
     res.json({
       thread,
@@ -306,12 +311,20 @@ app.post('/api/threads/:id/messages', async (req, res) => {
     }
 
     // Okno 24 h: po zamknięciu Meta odrzuci wysyłkę — zamiast strzelać,
-    // od razu kierujemy na fallback (Business Suite / telefon).
+    // od razu kierujemy na fallback (Business Suite / telefon). Komentarze
+    // pod postem nie liczą się jako otwarcie okna DM.
     const { data: lastIn, error: inErr } = await db
-      .from('kom_messages').select('created_at').eq('thread_id', thread.id)
-      .eq('direction', 'in').order('created_at', { ascending: false }).limit(1);
+      .from('kom_messages').select('created_at,direction,meta').eq('thread_id', thread.id)
+      .eq('direction', 'in').order('created_at', { ascending: false }).limit(10);
     if (inErr) throw inErr;
-    const expires = windowExpiresAt(thread, lastIn?.[0]?.created_at);
+    const lastWindowOpener = (lastIn || []).find(opensWindow);
+    const expires = windowExpiresAt(thread, lastWindowOpener?.created_at);
+    if (!lastWindowOpener) {
+      return res.status(409).json({
+        error: 'Klient nie napisał jeszcze DM (tylko komentarz) — nie można wysłać wiadomości. Odpowiedz pod postem albo poczekaj na jego DM.',
+        window_closed: true,
+      });
+    }
     if (expires && new Date(expires) < new Date()) {
       return res.status(409).json({
         error: 'Okno 24 h Meta zamknięte — wyślij ręcznie przez ManyChat/Business Suite albo zadzwoń',
