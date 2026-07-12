@@ -215,3 +215,36 @@ na realnej bazie przed commitem; prod sprawdzać na lumlum.dev (nie tylko lokaln
    do `wyceny_z_feedbackiem`) - OK?
 4. Cadence dispatchera: co 30 min, 8-20 Warsaw - OK?
 5. Widełki cichego terminu AI: 2-21 dni (typowo 3/7/14) - OK?
+
+## 11. Decyzje Antoniego 2026-07-12 (wdrożone w osobnym czacie — NIE cofać)
+
+Kontekst: przypadek Czesława Prostak (wycena 1695 / lead 97) — termin z
+komentarza wyceny nie był widoczny na leadzie, a wycena wisiała na karcie
+leada tylko po dopasowaniu telefonu (lead_id=null).
+
+1. **Feedback wyceny wchodzi na leada.** Kontaktujemy się z człowiekiem, nie
+   z wyceną: `applyFeedbackDue` po `setWatch` woła `propagateFeedbackToLead`
+   (wyceny-endpoints.js) — zapis "Data Feedbacku" leada, gdy wycena ma
+   lead_id. Reguła: wygrywa najbliższy AKTUALNY termin (pustą, przeterminowaną
+   lub późniejszą datę leada nadpisujemy; wcześniejszej dzisiejszej/przyszłej
+   nie ruszamy). Nadpisanie czyści "Godzina Feedbacku". Kierunek TYLKO
+   wycena->lead — watch leada dalej robi trigger mirrorujący z etapu (e).
+   Wyłączenie watcha wyceny NIE czyści daty leada.
+2. **Wycena przypięta do leada przejmuje ownera leada** (jeden właściciel
+   tematu; jawna zmiana ownera przez admina w tym samym zapisie wygrywa).
+   POST/PUT /api/wyceny; przy przypięciu bez nowego feedback_due
+   `adoptWatchAfterAssign` przepisuje ownera otwartego watcha i propaguje
+   jego termin na leada.
+3. **Kanoniczny format `wyceny.lead_id`**: liczba całkowita jako tekst
+   ("314", nigdy "314.0" — "ID Leada" to numeric i potrafi tak przyjść).
+   Znormalizowane w /api/wyceny/szukaj-leada.
+4. **Backfill wykonany** (scripts/backfill-wyceny-lead-id.js): 41 wycen
+   spiętych (28 z legacy "Leady B2C"."ID" = '#<id>', 13 po tel/mailu
+   jednoznacznie), 20 otwartych WYCEN przejęło ownera leada (zamówienia /
+   zamknięte celowo nietknięte — owner sprzedaży zasila statystyki),
+   ownery już otwartych watchy wyrównane do ownerów wycen (18 szt.).
+   KONFLIKT do ręcznej decyzji Antoniego: wycena 1868 — legacy "ID" i kwota
+   wskazują leada 314 (Krzysztof Mróz), telefon wyceny należy do leada 373
+   (Grzegorz Kurzacz); nie przypisano.
+5. Prostak naprawiony ręcznie: lead_id=97, owner Lorenzo, jawny watch human
+   10.07 (superseduje cichy AI 19.07), "Data Feedbacku" leada = 10.07.2026.

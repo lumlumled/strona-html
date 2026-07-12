@@ -151,6 +151,45 @@ async function categorizeWyceny(supabase, wyceny) {
   return cat;
 }
 
+// Właściciel leada B2C po "ID Leada" (numeric w bazie, wyceny.lead_id to text).
+async function fetchLeadOwner(supabase, leadId) {
+  const id = Number(leadId);
+  if (!Number.isFinite(id)) return null;
+  const { data, error } = await supabase
+    .from('Leady B2C').select('"ID Leada", Owner').eq('ID Leada', id).limit(1);
+  if (error) throw error;
+  return data && data[0] ? String(data[0].Owner || '').trim() || null : null;
+}
+
+// Propagacja terminu feedbacku wyceny na leada (decyzja Antoniego 2026-07-12):
+// nie dzwonimy "do wyceny", tylko do człowieka — termin wyceny podpiętej pod
+// leada wchodzi też w "Data Feedbacku" leada. Wygrywa najbliższy AKTUALNY
+// termin: datę leada zostawiamy tylko, gdy jest dzisiejsza/przyszła i nie
+// późniejsza od nowej; pustą, przeterminowaną albo późniejszą nadpisujemy.
+// Nadpisanie czyści "Godzina Feedbacku" (godzina dotyczyła starej daty).
+// Kierunek TYLKO wycena->lead; watch leada z "Data Feedbacku" robi trigger
+// mirrorujący (etap e planu watchdoga) — tu go celowo nie tworzymy.
+async function propagateFeedbackToLead(supabase, wycena, dueYmd) {
+  if (!wycena.lead_id) return;
+  const leadId = Number(wycena.lead_id);
+  if (!Number.isFinite(leadId)) return;
+  const { data, error } = await supabase
+    .from('Leady B2C').select('"ID Leada", "Data Feedbacku"').eq('ID Leada', leadId).limit(1);
+  if (error) throw error;
+  const lead = data && data[0];
+  if (!lead) return;
+  const cur = /^(\d{1,2})\.(\d{1,2})\.(\d{4})/.exec(String(lead['Data Feedbacku'] || '').trim());
+  const curYmd = cur ? `${cur[3]}-${cur[2].padStart(2, '0')}-${cur[1].padStart(2, '0')}` : null;
+  const today = watchdog.warsawDatePlusDays(0);
+  if (curYmd && curYmd >= today && curYmd <= dueYmd) return;
+  const [y, m, d] = dueYmd.split('-');
+  const { error: upErr } = await supabase
+    .from('Leady B2C')
+    .update({ 'Data Feedbacku': `${d}.${m}.${y}`, 'Godzina Feedbacku': null })
+    .eq('ID Leada', leadId);
+  if (upErr) throw upErr;
+}
+
 // Zapis terminu feedbacku z edytora (body.feedback_due = "YYYY-MM-DD" albo
 // ""/null = wyłącz watchdoga dla wyceny). Jawny termin: visible=true, human.
 // Błąd watcha nie może wywalić zapisu wyceny — watchdog to warstwa dodatkowa.
@@ -158,6 +197,8 @@ async function applyFeedbackDue(supabase, wycena, feedbackDue, user) {
   try {
     const raw = String(feedbackDue ?? '').trim();
     if (!raw) {
+      // Wyłączenie watcha wyceny NIE czyści daty na leadzie — lead może mieć
+      // własny termin z innego źródła (rozmowa, notatka, inna wycena).
       await watchdog.resolveWatch(supabase, { objectType: 'wycena', objectId: wycena.id, resolution: 'cancelled' });
       return;
     }
@@ -174,8 +215,32 @@ async function applyFeedbackDue(supabase, wycena, feedbackDue, user) {
       source: 'edytor',
       backlogTarget: 'b2c',
     });
+    await propagateFeedbackToLead(supabase, wycena, raw);
   } catch (err) {
     console.error(`Watchdog: błąd zapisu terminu wyceny ${wycena.id}:`, err.message);
+  }
+}
+
+// Po przypisaniu wyceny do leada (lead_id ustawione bez nowego feedback_due):
+// istniejący otwarty watch wyceny przejmuje ownera (= ownera leada, patrz
+// wyżej) i jego termin wchodzi na leada tą samą zasadą najbliższej daty.
+// Dzięki temu kolejność "najpierw termin, potem przypięcie" działa tak samo
+// jak "najpierw przypięcie, potem termin".
+async function adoptWatchAfterAssign(supabase, wycena) {
+  try {
+    const map = await watchdog.getOpenWatches(supabase, 'wycena', [wycena.id]);
+    const watch = map.get(String(wycena.id));
+    if (!watch) return;
+    if ((watch.owner || null) !== (wycena.owner || null)) {
+      const { error } = await supabase.from(watchdog.FEEDBACK_WATCH_TABLE)
+        .update({ owner: wycena.owner || null }).eq('id', watch.id);
+      if (error) throw error;
+    }
+    const p = watchdog.warsawParts(new Date(watch.due_at));
+    const dueYmd = `${p.y}-${String(p.m).padStart(2, '0')}-${String(p.d).padStart(2, '0')}`;
+    await propagateFeedbackToLead(supabase, wycena, dueYmd);
+  } catch (err) {
+    console.error(`Watchdog: błąd adopcji watcha po przypisaniu wyceny ${wycena.id}:`, err.message);
   }
 }
 
@@ -363,8 +428,10 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       const cols = '"ID Leada", Name, "Phone number", Email';
       const out = new Map();
       const add = (rows) => (rows || []).forEach((l) => {
-        const id = l['ID Leada'];
-        if (id != null && !out.has(String(id))) {
+        // "ID Leada" to numeric — potrafi przyjść jako "314.0"; kanoniczny
+        // format lead_id w wycenach to liczba całkowita jako tekst ("314").
+        const id = Number(l['ID Leada']);
+        if (Number.isFinite(id) && !out.has(String(id))) {
           out.set(String(id), {
             id: String(id),
             name: l.Name || '',
@@ -510,13 +577,21 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       }
       if (patch.telefon_e164) patch.telefon_digits = String(patch.telefon_e164).replace(/\D/g, '').replace(/^48/, '');
       if (patch.items) await syncItemsToCennik(supabase, patch.items);
+      // Wycena podpięta pod leada przejmuje jego ownera (decyzja Antoniego
+      // 2026-07-12: jeden właściciel tematu — kontaktujemy się z leadem, nie
+      // z wyceną). Lead bez ownera / nieznaleziony -> owner z sesji jak dotąd.
+      let ownerFromLead = null;
+      if (patch.lead_id) {
+        ownerFromLead = await fetchLeadOwner(supabase, patch.lead_id)
+          .catch((err) => { console.error('Owner leada (POST wyceny):', err.message); return null; });
+      }
       const { data: idData, error: idErr } = await supabase.rpc('wyceny_next_id');
       if (idErr) throw idErr;
       const id = idData;
       const crypto = require('crypto');
       const row = {
         id,
-        owner: String(req.user.name || 'Antoni'),
+        owner: ownerFromLead || String(req.user.name || 'Antoni'),
         source: body.source === 'quick-add' ? 'quick-add' : 'panel',
         form_token: crypto.randomBytes(12).toString('base64url'),
         ...patch,
@@ -553,6 +628,14 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
         return res.status(400).json({ error: 'Brak zmian do zapisania' });
       }
       if (patch.items) await syncItemsToCennik(supabase, patch.items);
+      // Przypisanie do leada = przejęcie jego ownera (jeden właściciel tematu;
+      // decyzja Antoniego 2026-07-12). Jawna zmiana ownera przez admina w tym
+      // samym zapisie wygrywa z automatem. Odpięcie (lead_id=null) nie rusza.
+      if (patch.lead_id && patch.owner === undefined) {
+        const ownerFromLead = await fetchLeadOwner(supabase, patch.lead_id)
+          .catch((err) => { console.error('Owner leada (PUT wyceny):', err.message); return null; });
+        if (ownerFromLead) patch.owner = ownerFromLead;
+      }
       patch.updated_at = new Date().toISOString();
 
       const { data, error } = await scoped(supabase.from('wyceny').update(patch), req)
@@ -566,6 +649,8 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
         // Temat zamknięty (sprzedane/stracone) — watchdog nie ma czego pilnować.
         await watchdog.resolveWatch(supabase, { objectType: 'wycena', objectId: id, resolution: 'done' })
           .catch((err) => console.error(`Watchdog: błąd gaszenia watcha wyceny ${id}:`, err.message));
+      } else if (patch.lead_id) {
+        await adoptWatchAfterAssign(supabase, data[0]);
       }
       res.json({ data: decorate(data[0]) });
     } catch (err) {
