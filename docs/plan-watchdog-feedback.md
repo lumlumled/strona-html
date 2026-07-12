@@ -8,7 +8,13 @@ cichy watch AI dla leadów Z TRANSKRYPCJĄ rozmowy bez żadnej daty feedbacku
 (armLead w watchdog.js + faza armLeady w sweepLeady; zakres zawężony decyzją
 Antoniego do leadów z niepustą "Treść rozmowy" - maile/inne kanały pominięte;
 na realnej bazie 5 kandydatów, zero ryzyka fali; push cichych leadów wyłączony
-na start - tylko panele hub+Backlog). ŚWIADOMIE ODŁOŻONE: cichy watch AI dla
+na start - tylko panele hub+Backlog; w Backlogu OSOBNA kategoria planu dnia
+`leady_do_odswiezenia` "🌡️ Leady do odświeżenia (cisza po rozmowie)", nie
+mieszana z twardą `alerty_watchdoga` - commit cdc123e; due_at od now() =
+backfill nie alertuje od razu, kategoria wypełnia się przez 3-21 dni).
+DO ZROBIENIA W PRZYSZŁOŚCI (prośba Antoniego): ten sam wzorzec cichego watcha
+AI dla panelu WIADOMOŚCI (komunikator, kom_commitments) do osobnej kategorii.
+ŚWIADOMIE ODŁOŻONE: cichy watch AI dla
 leadów BEZ transkrypcji (inne kanały - odłożone), eskalacja po N dniach od
 alertu (v2), Backlog B2B (backlog_target='b2b' tylko logowany), push cichych
 alertów leadów (dołożyć po tygodniu, jak zobaczymy wolumen).
