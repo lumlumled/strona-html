@@ -30,6 +30,55 @@ function num(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
+// Godzina lokalna Warszawy (0–23) — okna sprawdzania trackingu (decyzja
+// Antoniego 2026-07-13): nadanie sprawdzamy 17–18, doręczenie 10–16. Dzięki
+// temu odpytujemy ShipX tylko wtedy, gdy realnie coś się dzieje, i nie
+// wpisujemy "doręczono" tego samego dnia, co nadanie (stary bug z Make).
+function warsawHour() {
+  return Number(new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Warsaw', hour: '2-digit', hour12: false,
+  }).format(new Date()));
+}
+// Okno „czy nadana" (created/confirmed -> sent): raz dziennie, 17:00–17:59.
+function wOknieNadania() {
+  const h = warsawHour();
+  return h >= 17 && h < 18;
+}
+// Okno „czy dostarczona" (sent -> delivered): 10:00–15:59.
+function wOknieDoreczenia() {
+  const h = warsawHour();
+  return h >= 10 && h < 16;
+}
+
+// Push „Nowe do spakowania" — do adminów (Antoni) + env FULFILLMENT_NOTIFY /
+// WYCENY_EXTRA_NOTIFY. Nigdy nie wywala pipeline'u (błędy tylko logujemy).
+// Odpala się przy PRZEJŚCIU zamówienia w stan gotowy do pakowania (opłacony
+// przelew / ręczne opłacenie); pobranie ma już push „Formularz wypełniony".
+async function notifyFulfillment(db, wycena) {
+  try {
+    const push = require('./push');
+    if (!push || !push.notifyUser) return;
+    const wanted = new Set(
+      String(process.env.FULFILLMENT_NOTIFY || process.env.WYCENY_EXTRA_NOTIFY || 'Antoni')
+        .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+    );
+    const { data } = await db.from('app_users').select('id,name,role').eq('active', true);
+    const targets = (data || []).filter((u) => u.role === 'admin' || wanted.has(String(u.name || '').trim().toLowerCase()));
+    const nazwa = wycena.imie_nazwisko || [wycena.first_name, wycena.last_name].filter(Boolean).join(' ').trim();
+    const kwota = wycena.kwota_sprzedazy_brutto ?? wycena.kwota_proponowana_brutto;
+    for (const u of targets) {
+      await push.notifyUser(() => db, u.id, {
+        title: 'Nowe do spakowania',
+        body: `#${wycena.id}${nazwa ? ` · ${nazwa}` : ''}${kwota != null ? ` · ${num(kwota)} zł` : ''}`,
+        url: '/fulfillment/',
+        tag: `fulfillment-${wycena.id}`,
+      });
+    }
+  } catch (err) {
+    console.warn(`Push fulfillment ${wycena?.id} nie wyszedł:`, err.message);
+  }
+}
+
 // Wyliczenia 1:1 z Make (moduły 301/302/307):
 //   rabat_aktywny  — rabat 24h z przyszłym terminem
 //   kwota_finalna  — kwota_proponowana − aktywny rabat 24h
@@ -357,9 +406,55 @@ async function onInvoicePaid(db, uuid) {
       status: 'Fulfilled',
       worker_last_error: null,
     });
+    if (shipment) await notifyFulfillment(db, wycena); // gotowe do spakowania
     return { ok: true };
   } catch (err) {
     await zapiszBlad(db, wycenaId, 'onInvoicePaid', err);
+    await releaseLock(db, wycenaId, token);
+    throw err;
+  }
+}
+
+// Ręczne „Oznacz opłacone" z panelu Fulfillment (przelew opłacony poza inFakt,
+// albo domknięcie telefoniczne). Decyzja Antoniego 2026-07-13: ma zadziałać
+// dokładnie jak automatyczna płatność — utworzyć przesyłkę + etykietę od razu.
+// Jeśli jest proforma z uuid -> pełna ścieżka onInvoicePaid (paid + przesyłka +
+// FV VAT + KSeF + mail). Bez proformy (np. wycena bez faktury) -> lekki tryb:
+// oznacz opłacone i utwórz przesyłkę, żeby zamówienie trafiło do „do spakowania".
+async function markPaidAndShip(db, wycenaId) {
+  const wycena = await loadWycena(db, wycenaId);
+  if (!wycena) throw new Error('Nie znaleziono wyceny');
+  if (wycena.paid) return { skipped: 'already-paid' };
+  const { data: inv } = await db.from('wyceny_invoices')
+    .select('*').eq('wycena_id', wycenaId).eq('kind', 'proforma').not('infakt_uuid', 'is', null).limit(1);
+  if (inv && inv[0]) return onInvoicePaid(db, inv[0].infakt_uuid);
+
+  const token = await acquireLock(db, wycenaId);
+  if (!token) return { skipped: 'locked' };
+  try {
+    const { kwotaFinalna } = policzKwoty(wycena);
+    const zagranica = jestZagranica(wycena);
+    let shipment = null;
+    if (!zagranica) {
+      const { data: existing } = await db.from('wyceny_shipments')
+        .select('*').eq('wycena_id', wycenaId).eq('kind', 'order');
+      shipment = (existing || [])[0]
+        || await krokPrzesylka(db, wycena, { codAmount: null, insuranceAmount: kwotaFinalna });
+    } else {
+      await logEvent(db, wycenaId, 'pipeline.manual_shipping_needed', { kraj: wycena.ship_country });
+    }
+    await logEvent(db, wycenaId, 'invoice.paid', { manual: true });
+    await releaseLock(db, wycenaId, token, {
+      paid: true,
+      paid_at: new Date().toISOString(),
+      process_stage: zagranica ? 'PAID' : 'SHIPPED',
+      status: 'Fulfilled',
+      worker_last_error: null,
+    });
+    if (shipment) await notifyFulfillment(db, wycena);
+    return { ok: true, path: 'manual-paid' };
+  } catch (err) {
+    await zapiszBlad(db, wycenaId, 'markPaidAndShip', err);
     await releaseLock(db, wycenaId, token);
     throw err;
   }
@@ -424,9 +519,14 @@ async function reship(db, wycenaId) {
 
 // ── Worker (pg_cron -> POST /formularz/api/cron/worker) ─────────────────────
 async function runWorker(db) {
-  const raport = { tracking: 0, delivered: 0, uzupelnione: 0, retry: 0, bledy: [] };
+  const oknoNadania = wOknieNadania();
+  const oknoDoreczenia = wOknieDoreczenia();
+  const raport = { tracking: 0, delivered: 0, uzupelnione: 0, retry: 0, oknoNadania, oknoDoreczenia, bledy: [] };
 
-  // 1) przesyłki bez trackingu / świeże — dociągnij dane z ShipX
+  // 1) przesyłki bez trackingu / świeże — dociągnij dane z ShipX.
+  // Dociąganie numeru śledzenia leci ZAWSZE (etykieta/tracking muszą być
+  // widoczne od razu po utworzeniu). Odczyt STATUSU „czy nadana" tylko w oknie
+  // 17–18 — nie zgadujemy nadania w losowych porach.
   const { data: created } = await db.from('wyceny_shipments')
     .select('*').in('status', ['created', 'confirmed']).is('delivered_at', null);
   for (const s of created || []) {
@@ -444,6 +544,7 @@ async function runWorker(db) {
         }
         continue;
       }
+      if (!oknoNadania) continue; // poza oknem 17–18 nie sprawdzamy nadania
       // 2) tracking z JAWNYM mapowaniem (tylko "delivered" = doręczona)
       const tracking = await shipx.getTracking(s.tracking_number);
       const raw = tracking.tracking_status || tracking.status || '';
@@ -478,9 +579,11 @@ async function runWorker(db) {
     }
   }
 
-  // przesyłki nadane — sprawdzaj do doręczenia
-  const { data: sent } = await db.from('wyceny_shipments')
-    .select('*').eq('status', 'sent').is('delivered_at', null).not('tracking_number', 'is', null);
+  // przesyłki nadane — sprawdzaj do doręczenia, tylko w oknie 10–16.
+  const { data: sent } = oknoDoreczenia
+    ? await db.from('wyceny_shipments')
+        .select('*').eq('status', 'sent').is('delivered_at', null).not('tracking_number', 'is', null)
+    : { data: [] };
   for (const s of sent || []) {
     try {
       const tracking = await shipx.getTracking(s.tracking_number);
@@ -564,4 +667,4 @@ async function runWorker(db) {
   return raport;
 }
 
-module.exports = { startPipeline, onInvoicePaid, onDelivered, reship, runWorker, policzKwoty };
+module.exports = { startPipeline, onInvoicePaid, onDelivered, reship, runWorker, policzKwoty, markPaidAndShip };

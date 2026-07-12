@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+  <title>Fulfillment</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared/topbar.css">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --surface-1: #ffffff;
+      --page: #f5f5f4;
+      --text-primary: #111111;
+      --text-secondary: #52514e;
+      --text-muted: #8a8984;
+      --border: rgba(17, 17, 17, 0.12);
+      --accent: #111111;
+      --accent-contrast: #ffffff;
+      --accent-soft: #ececea;
+      --good: #0ca30c;
+      --bad: #b5433f;
+      --warn: #b5820f;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-1: #161616;
+        --page: #0a0a0a;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted: #8a8984;
+        --border: rgba(255, 255, 255, 0.14);
+        --accent: #ffffff;
+        --accent-contrast: #0a0a0a;
+        --accent-soft: #262626;
+        --good: #16c116;
+        --bad: #e08585;
+        --warn: #e0b85f;
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--page);
+      color: var(--text-primary);
+      min-height: 100vh;
+    }
+    .content {
+      width: 100%; max-width: 1100px; margin: 0 auto; min-width: 0;
+      padding: 1.6rem 1.5rem 4rem;
+      display: flex; flex-direction: column; gap: 1.25rem;
+    }
+    .content-header h2 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.3px; margin-bottom: 0.9rem; }
+    .toolbar { display: flex; align-items: center; gap: 0.65rem; flex-wrap: wrap; }
+    .toolbar input[type="text"] {
+      font: inherit; padding: 0.5rem 0.75rem; border-radius: 10px;
+      border: 1px solid var(--border); background: var(--surface-1);
+      color: var(--text-primary); min-width: 240px;
+    }
+    .toolbar button {
+      font: inherit; font-weight: 600; padding: 0.5rem 0.9rem; border-radius: 10px;
+      border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); cursor: pointer;
+    }
+    .toolbar button:hover { background: var(--accent-soft); }
+    .count-badge { font-size: 0.85rem; color: var(--text-secondary); margin-left: auto; }
+
+    #list { display: flex; flex-direction: column; gap: 1.75rem; }
+    .segment { display: flex; flex-direction: column; gap: 0.75rem; }
+    .segment-head {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0 0.15rem 0.2rem; border-bottom: 1px solid var(--border);
+    }
+    .segment-title { font-size: 0.85rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); }
+    .segment-count {
+      font-size: 0.72rem; font-weight: 700; color: var(--text-muted);
+      background: var(--accent-soft); border-radius: 999px; padding: 0.05rem 0.5rem; font-variant-numeric: tabular-nums;
+    }
+    .empty-note { color: var(--text-muted); font-style: italic; font-size: 0.85rem; padding: 0.2rem 0.15rem; }
+
+    .card {
+      background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px;
+      padding: 0.95rem 1.05rem; display: flex; flex-direction: column; gap: 0.8rem;
+    }
+    .card-top { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+    .card-id { font-size: 0.78rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+    .card-name { font-weight: 700; font-size: 1rem; }
+    .card-kwota { font-weight: 700; font-variant-numeric: tabular-nums; margin-left: auto; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 0.25rem;
+      font-size: 0.72rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 999px;
+      background: var(--accent-soft); color: var(--text-secondary);
+    }
+    .chip.good { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+    .chip.warn { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+    .chip.bad  { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+
+    .card-meta { display: flex; flex-wrap: wrap; gap: 0.35rem 1.1rem; font-size: 0.85rem; color: var(--text-secondary); }
+    .card-meta a { color: inherit; }
+    .card-meta .lbl { color: var(--text-muted); }
+
+    .items { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+    .item {
+      display: flex; align-items: center; gap: 0.5rem;
+      border: 1px solid var(--border); border-radius: 10px; padding: 0.35rem 0.55rem 0.35rem 0.35rem;
+      background: var(--page); min-width: 0;
+    }
+    .item img {
+      width: 46px; height: 46px; object-fit: cover; border-radius: 7px; flex: 0 0 auto;
+      background: var(--accent-soft);
+    }
+    .item .ph { width: 46px; height: 46px; border-radius: 7px; background: var(--accent-soft); flex: 0 0 auto;
+      display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 1.1rem; }
+    .item-txt { display: flex; flex-direction: column; min-width: 0; }
+    .item-name { font-size: 0.85rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 16rem; }
+    .item-qty { font-size: 0.78rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+    .card-foot { display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap; }
+    .track { font-size: 0.82rem; color: var(--text-secondary); }
+    .track a { color: inherit; font-weight: 600; }
+    .spacer { flex: 1; }
+    .btn {
+      font: inherit; font-weight: 600; font-size: 0.85rem; padding: 0.45rem 0.85rem; border-radius: 9px;
+      border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); cursor: pointer;
+    }
+    .btn:hover { background: var(--accent-soft); }
+    .btn.primary { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+    .btn.primary:hover { opacity: 0.9; }
+    .btn:disabled { opacity: 0.5; cursor: default; }
+
+    @media (max-width: 720px) {
+      .content { padding: 1.25rem 1rem 3rem; }
+      .item-name { max-width: 11rem; }
+    }
+  </style>
+</head>
+<body>
+  <header id="site-header"></header>
+  <main class="content">
+    <header class="content-header">
+      <h2>Fulfillment</h2>
+      <div class="toolbar">
+        <input type="text" id="search" placeholder="Szukaj: imię, telefon, numer, miasto, tracking…">
+        <button id="refresh">Odśwież</button>
+        <span class="count-badge" id="count"></span>
+      </div>
+    </header>
+    <div id="list"><p class="empty-note">Wczytywanie…</p></div>
+  </main>
+
+  <script src="shared/topbar.js"></script>
+  <script>
+    const API_BASE = window.API_BASE || '';
+    LumTopbar.mount({ active: 'fulfillment', into: document.getElementById('site-header') });
+
+    let data = { do_spakowania: [], czeka_na_platnosc: [], wyslane: [] };
+
+    const PAYMENT_LABELS = {
+      cod: 'Pobranie', COD: 'Pobranie', transfer: 'Przelew',
+      FREE: 'Gratis', shopify_payments: 'Sklep',
+    };
+    const money = (n) => `${Number(n || 0).toLocaleString('pl-PL', { maximumFractionDigits: 0 })} zł`;
+
+    function h(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function itemNode(it) {
+      const wrap = h('div', 'item');
+      if (it.image_url) {
+        const img = document.createElement('img');
+        img.src = it.image_url; img.alt = ''; img.loading = 'lazy';
+        img.onerror = () => { img.replaceWith(Object.assign(h('div', 'ph'), { textContent: '📦' })); };
+        wrap.appendChild(img);
+      } else {
+        wrap.appendChild(Object.assign(h('div', 'ph'), { textContent: '📦' }));
+      }
+      const txt = h('div', 'item-txt');
+      txt.append(h('span', 'item-name', it.name), h('span', 'item-qty', `× ${it.quantity} ${it.unit || ''}`.trim()));
+      wrap.appendChild(txt);
+      return wrap;
+    }
+
+    function placeText(m) {
+      if (!m) return '';
+      if (m.typ === 'paczkomat') return `Paczkomat ${m.kod}${m.adres ? ` · ${m.adres}` : ''}`;
+      return m.adres || '';
+    }
+
+    async function action(url, btn, okLabel) {
+      const prev = btn.textContent;
+      btn.disabled = true; btn.textContent = '…';
+      try {
+        const res = await fetch(`${API_BASE}${url}`, { method: 'POST' });
+        const body = await res.json().catch(() => ({}));
+        if (res.status === 401) { window.location.href = `${API_BASE}/login`; return; }
+        if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+        await load();
+      } catch (err) {
+        alert(err.message);
+        btn.disabled = false; btn.textContent = prev;
+      }
+    }
+
+    function card(o) {
+      const c = h('div', 'card');
+      c.dataset.wid = String(o.id);
+
+      const top = h('div', 'card-top');
+      top.append(h('span', 'card-id', `#${o.id}`), h('span', 'card-name', o.imie_nazwisko || '(bez danych)'));
+      const payL = PAYMENT_LABELS[o.payment_method] || o.payment_method || '';
+      if (payL) top.appendChild(h('span', o.paid ? 'chip good' : 'chip', o.paid ? `${payL} · opłacone` : payL));
+      if (o.brak_etykiety) top.appendChild(h('span', 'chip warn', 'brak etykiety'));
+      top.appendChild(h('span', 'card-kwota', money(o.kwota)));
+      c.appendChild(top);
+
+      const meta = h('div', 'card-meta');
+      if (o.telefon) { const a = h('a'); a.href = `tel:${o.telefon}`; a.textContent = o.telefon; const w = h('span'); w.append(Object.assign(h('span','lbl'),{textContent:'Tel: '}), a); meta.appendChild(w); }
+      const place = placeText(o.miejsce);
+      if (place) meta.appendChild(Object.assign(h('span'), { innerHTML: `<span class="lbl">Dostawa: </span>${place.replace(/</g,'&lt;')}` }));
+      c.appendChild(meta);
+
+      if (o.items && o.items.length) {
+        const items = h('div', 'items');
+        o.items.forEach((it) => items.appendChild(itemNode(it)));
+        c.appendChild(items);
+      }
+
+      const foot = h('div', 'card-foot');
+      const ship = o.shipment;
+      if (ship && ship.tracking_number) {
+        const t = h('span', 'track');
+        t.innerHTML = 'Tracking: ';
+        const a = h('a', null, ship.tracking_number);
+        a.href = `https://inpost.pl/sledzenie-przesylek?number=${encodeURIComponent(ship.tracking_number)}`;
+        a.target = '_blank'; a.rel = 'noopener';
+        t.appendChild(a);
+        foot.appendChild(t);
+      }
+      foot.appendChild(h('span', 'spacer'));
+
+      if (o.bucket === 'czeka_na_platnosc') {
+        const b = h('button', 'btn primary', 'Oznacz opłacone');
+        b.onclick = () => action(`/api/fulfillment/${o.id}/oznacz-oplacone`, b);
+        foot.appendChild(b);
+      } else if (o.bucket === 'do_spakowania') {
+        if (ship && ship.id) {
+          const lbl = h('button', 'btn', 'Drukuj etykietę');
+          lbl.onclick = () => window.open(`${API_BASE}/api/wyceny/label/${ship.id}`, '_blank', 'noopener');
+          foot.appendChild(lbl);
+        }
+        const b = h('button', 'btn primary', 'Oznacz nadane');
+        b.onclick = () => action(`/api/fulfillment/${o.id}/oznacz-nadane`, b);
+        foot.appendChild(b);
+      } else if (o.bucket === 'wyslane') {
+        if (ship && ship.id) {
+          const lbl = h('button', 'btn', 'Etykieta');
+          lbl.onclick = () => window.open(`${API_BASE}/api/wyceny/label/${ship.id}`, '_blank', 'noopener');
+          foot.appendChild(lbl);
+        }
+        if (ship && ship.delivered_at) {
+          foot.appendChild(h('span', 'chip good', 'Doręczono'));
+        } else {
+          const b = h('button', 'btn', 'Oznacz dostarczone');
+          b.onclick = () => action(`/api/fulfillment/${o.id}/oznacz-dostarczone`, b);
+          foot.appendChild(b);
+        }
+      }
+      c.appendChild(foot);
+      return c;
+    }
+
+    const SEGMENTS = [
+      ['do_spakowania', 'Do spakowania'],
+      ['czeka_na_platnosc', 'Czeka na płatność'],
+      ['wyslane', 'Wysłane · ostatnie 5 dni'],
+    ];
+
+    function matches(o, q) {
+      if (!q) return true;
+      const hay = `#${o.id} ${o.imie_nazwisko} ${o.telefon} ${o.email} ${o.miejsce && o.miejsce.city || ''} ${o.miejsce && o.miejsce.adres || ''} ${o.miejsce && o.miejsce.kod || ''} ${o.shipment && o.shipment.tracking_number || ''}`.toLowerCase();
+      return hay.includes(q);
+    }
+
+    function render() {
+      const q = document.getElementById('search').value.trim().toLowerCase();
+      const list = document.getElementById('list');
+      list.innerHTML = '';
+      let total = 0, shown = 0;
+      SEGMENTS.forEach(([key, label]) => {
+        const rows = (data[key] || []).filter((o) => matches(o, q));
+        total += (data[key] || []).length;
+        shown += rows.length;
+        const section = h('section', 'segment');
+        const head = h('div', 'segment-head');
+        head.append(h('span', 'segment-title', label), h('span', 'segment-count', String(rows.length)));
+        section.appendChild(head);
+        if (!rows.length) section.appendChild(h('p', 'empty-note', 'Nic tutaj.'));
+        else rows.forEach((o) => section.appendChild(card(o)));
+        list.appendChild(section);
+      });
+      document.getElementById('count').textContent = `${shown} / ${total}`;
+    }
+
+    async function load() {
+      try {
+        const res = await fetch(`${API_BASE}/api/fulfillment/queue`);
+        if (res.status === 401) { window.location.href = `${API_BASE}/login`; return; }
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || 'Błąd wczytywania');
+        data = body.data || { do_spakowania: [], czeka_na_platnosc: [], wyslane: [] };
+        render();
+      } catch (err) {
+        document.getElementById('list').innerHTML = `<p class="empty-note">Błąd wczytywania: ${err.message}</p>`;
+      }
+    }
+
+    document.getElementById('search').addEventListener('input', render);
+    document.getElementById('refresh').addEventListener('click', load);
+    load();
+  </script>
+</body>
+</html>

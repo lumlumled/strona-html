@@ -98,6 +98,7 @@ window.LumTopbar = (() => {
     { key: 'crm', label: 'CRM' },
     { key: 'wyceny', label: 'Wyceny' },
     { key: 'sprzedaze', label: 'Sprzedaże' },
+    { key: 'fulfillment', label: 'Fulfillment', adminOnly: true },
     { key: 'wiadomosci', label: 'Wiadomości' },
     { key: 'wiedza', label: 'Wiedza' },
     { key: 'pozwolenia', label: 'Pozwolenia', adminOnly: true },

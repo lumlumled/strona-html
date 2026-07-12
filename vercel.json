@@ -25,6 +25,10 @@
       "includeFiles": "{apps/sprzedaze/app.html,apps/sprzedaze/assets/**,apps/shared/**}",
       "maxDuration": 180
     },
+    "api/fulfillment.js": {
+      "includeFiles": "{apps/fulfillment/app.html,apps/fulfillment/assets/**,apps/shared/**}",
+      "maxDuration": 180
+    },
     "api/wyceny.js": {
       "includeFiles": "{apps/wyceny/app.html,apps/wyceny/szybka.html,apps/wyceny/assets/**,apps/shared/**}",
       "maxDuration": 180
@@ -44,6 +48,7 @@
     { "source": "/backlog-b2c", "destination": "/backlog-b2c/", "permanent": false },
     { "source": "/crm", "destination": "/crm/", "permanent": false },
     { "source": "/sprzedaze", "destination": "/sprzedaze/", "permanent": false },
+    { "source": "/fulfillment", "destination": "/fulfillment/", "permanent": false },
     { "source": "/wyceny", "destination": "/wyceny/", "permanent": false },
     { "source": "/szybka-wycena", "destination": "/wyceny/szybka-wycena", "permanent": false },
     { "source": "/szybka", "destination": "/wyceny/szybka-wycena", "permanent": false },
@@ -57,6 +62,8 @@
     { "source": "/crm/:path*", "destination": "/api/crm" },
     { "source": "/sprzedaze/", "destination": "/api/sprzedaze" },
     { "source": "/sprzedaze/:path*", "destination": "/api/sprzedaze" },
+    { "source": "/fulfillment/", "destination": "/api/fulfillment" },
+    { "source": "/fulfillment/:path*", "destination": "/api/fulfillment" },
     { "source": "/wyceny/", "destination": "/api/wyceny" },
     { "source": "/wyceny/:path*", "destination": "/api/wyceny" },
     { "source": "/formularz/:path*", "destination": "/api/formularz" },

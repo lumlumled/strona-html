@@ -503,14 +503,17 @@
       return hay.includes(q);
     }
 
-    // Segmenty sprzedaży: Do wysłania (jeszcze nienadane) → Wysłane (nadane /
-    // dostarczone) → Zamknięte (status Closed). Docelowo "wysłane→dostarczone"
-    // ma sprawdzać się samo z trackingu; póki co dostarczone = wysłane.
+    // Segmenty sprzedaży: Do wysłania → Wysłane → Zamknięte (status Closed).
+    // "Wysłane" = przesyłka FIZYCZNIE nadana (tracking sent/delivered, nadana_at
+    // albo ręczne oznaczenie w panelu Fulfillment) — NIE samo utworzenie
+    // etykiety. Dzięki temu pobranie z etykietą, ale jeszcze niespakowane,
+    // zostaje w "Do wysłania" (decyzja Antoniego 2026-07-13; pakowanie żyje w
+    // panelu Fulfillment). process_stage=SHIPPED (ustawiany przy etykiecie) tu
+    // celowo NIE decyduje.
     function bucketOf(w) {
       if (String(w.status || '').toLowerCase() === 'closed') return 'zamkniete';
-      const shipped = ['SHIPPED', 'DELIVERED', 'INVOICED'].includes(w.process_stage)
-        || (w._shipments || []).some((s) => ['sent', 'delivered'].includes(String(s.status)) || s.delivered_at || s.nadana_at);
-      return shipped ? 'wyslane' : 'dowyslania';
+      const nadane = (w._shipments || []).some((s) => ['sent', 'delivered'].includes(String(s.status)) || s.delivered_at || s.nadana_at);
+      return nadane ? 'wyslane' : 'dowyslania';
     }
 
     const SEGMENTS = [
