@@ -77,11 +77,12 @@ app.get('/pozwolenia', auth.requireAdmin, (req, res) => {
   res.type('html').send(injectContext(POZWOLENIA_HTML, req));
 });
 
-// Wyceny żyją jako zakładka CRM (decyzja 2026-07-11) — kafelek/link huba
-// przekierowuje prosto do niej.
+// Wyceny mają własny panel (apps/wyceny/, wyjęty z CRM 2026-07-12) — na
+// Vercelu /wyceny łapie rewrite do /api/wyceny, więc ten route to tylko
+// fallback dla wejścia wprost na hub (kieruje do samodzielnego panelu).
 app.get('/wyceny', (req, res) => {
   if (!userHasPanel(req.user, 'wyceny')) return res.redirect(`${req.baseUrl}/`);
-  res.redirect(`${panelLinks().crm}?arkusz=wyceny`);
+  res.redirect(panelLinks().wyceny);
 });
 
 // Strony-atrapy przyszłych paneli: jeden szablon, treść z rejestru PANELS.

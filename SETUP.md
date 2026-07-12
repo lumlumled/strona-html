@@ -20,11 +20,17 @@ apps/
     assets/
     server/
       server.js, package.json, scripts/*.js, .env (lokalnie)
-  crm/                    — CRM wewnętrzny, wieloczęściowy (sekcje jako
-    app.html                 pigułki: "Leady B2C" + "Wyceny B2C" — zakładka
-    assets/                  wycen pokazuje TYLKO wyceny/notatki, sprzedaże
-    server/                  (typ ZAMÓWIENIE) są w osobnym panelu /sprzedaze;
-      server.js, package.json, .env (lokalnie)   edytor: wycena-editor.js
+  crm/                    — CRM wewnętrzny do LEADÓW (sekcja "Leady B2C";
+    app.html                 wyceny wyprowadzone do osobnego panelu /wyceny
+    assets/                  2026-07-12). Karta leada dociąga dopasowaną
+    server/                  wycenę (/api/leady/:tel/wycena), ale sam arkusz
+      server.js, package.json, .env (lokalnie)   wycen tu już nie żyje
+  wyceny/                 — panel Wyceny (lumlum.dev/wyceny): lista wycen/
+    app.html                 notatek (typ ≠ ZAMÓWIENIE), szybkie dodanie
+    assets/                  tekstem (AI), pełny edytor, link do formularza.
+      wyceny-tab.js            Karta i endpointy wspólne ze Sprzedażami
+      wycena-editor.js         (shared/wycena-card.js + wyceny-endpoints.js)
+    server/                  server.js, package.json, .env (lokalnie)
   sprzedaze/              — panel Sprzedaże (lumlum.dev/sprzedaze): zamówienia
     app.html                 (wyceny typ ZAMÓWIENIE + Shopify jako S1,S2…),
     assets/                  3 sekcje Do wysłania/Wysłane/Zamknięte, sort po
@@ -39,7 +45,7 @@ apps/
                              liquid/ = sekcja do wklejenia na Shopify (cutover)
   shared/                 — kod wspólny WSZYSTKICH appek:
     lead-card.js/.css        wspólna karta leada (CRM + Backlog)
-    wycena-card.js/.css      wspólna karta wyceny (CRM zakładka Wyceny +
+    wycena-card.js/.css      wspólna karta wyceny (panel Wyceny +
                              Sprzedaże) — produkty ze zdjęciami, pipeline
     topbar.js/.css           wspólny górny pasek nawigacji (wszystkie appki)
     migrations/              migracje SQL (run.js + NNN_*.sql)
@@ -47,7 +53,7 @@ apps/
       auth.js                logowanie + uprawnienia (konta app_users)
       login.html             wspólna strona logowania (email + hasło)
       leady-endpoints.js     wspólne endpointy karty leada
-      wyceny-endpoints.js    wspólne endpointy wycen (CRM + Sprzedaże):
+      wyceny-endpoints.js    wspólne endpointy wycen (Wyceny + Sprzedaże):
                              lista/karta/edycja, szybkie dodanie, linki,
                              reship, realizuj, proxy PDF faktur i etykiet
       wyceny-parser.js       parser GPT szybkiego dodania (+ prompt w
@@ -67,6 +73,7 @@ api/
   backlog-b2c.js          — cienki wrapper: montuje apps/backlog-b2c/server
                             pod /backlog-b2c (Express app.use)
   crm.js                  — analogiczny wrapper dla apps/crm/server pod /crm
+  wyceny.js               — wrapper apps/wyceny/server pod /wyceny
   sprzedaze.js            — wrapper apps/sprzedaze/server pod /sprzedaze
   formularz.js            — wrapper apps/formularz/server pod /formularz
                             (publiczny — bez bramki auth, CORS na lumlum.co)
@@ -209,7 +216,7 @@ Repo jest już przygotowane pod Vercel (zero dodatkowej konfiguracji poza zmienn
 ### Jak to jest zbudowane (żeby nikt tego przez pomyłkę nie cofnął)
 
 - `api/backlog-b2c.js` — cienki wrapper: montuje `apps/backlog-b2c/server/server.js` (Express app) pod `/backlog-b2c` (`express().use('/backlog-b2c', app)`). Cała logika zostaje w `server.js`, więc lokalny `cd apps/backlog-b2c/server && npm start` działa identycznie jak wcześniej (bez prefiksu — patrz sekcja 0/4).
-- `vercel.json` — `rewrites` kieruje `/backlog-b2c/:path*` do tej funkcji, `redirects` dopina bare `/backlog-b2c` (bez slasha) → `/backlog-b2c/` (patrz sekcja 0 pkt 4 czemu to musi być redirect, nie rewrite), `includeFiles` dołącza `apps/backlog-b2c/{app.html,assets/**}` i `apps/shared/**` (wspólna karta leada, topbar, strona logowania) do paczki funkcji, żeby `res.sendFile`/wczytanie szablonu miało co wysłać. Hub (api/index.js) dostaje dodatkowo rewrites na `/pozwolenia`, `/wyceny`, `/wiadomosci`, `/statystyki`, `/logout`, `/shared/:path*` i `/api/:path*` (funkcje `/api/crm` i `/api/backlog-b2c` mają pierwszeństwo przed tym ostatnim, bo istnieją w filesystemie).
+- `vercel.json` — `rewrites` kieruje `/backlog-b2c/:path*` do tej funkcji, `redirects` dopina bare `/backlog-b2c` (bez slasha) → `/backlog-b2c/` (patrz sekcja 0 pkt 4 czemu to musi być redirect, nie rewrite), `includeFiles` dołącza `apps/backlog-b2c/{app.html,assets/**}` i `apps/shared/**` (wspólna karta leada, topbar, strona logowania) do paczki funkcji, żeby `res.sendFile`/wczytanie szablonu miało co wysłać. Hub (api/index.js) dostaje dodatkowo rewrites na `/pozwolenia`, `/wiadomosci`, `/statystyki`, `/logout`, `/shared/:path*` i `/api/:path*` (funkcje `/api/crm` i `/api/backlog-b2c` mają pierwszeństwo przed tym ostatnim, bo istnieją w filesystemie).
 - **Strona nazywa się `app.html`, nie `index.html`.** To nieoczywiste, ale kluczowe: Vercel sprawdza filesystem *przed* `rewrites` (ich własna dokumentacja: "precedence is given to the filesystem prior to rewrites being applied"). Plik `index.html` w katalogu głównym repo kolidowałby z domyślnym mapowaniem `/` → `index.html`, więc Vercel serwowałby go bezpośrednio z CDN jako statyk — z pominięciem funkcji, a więc i całej bramki logowania. Tak się właśnie stało przy pierwszym wdrożeniu, zanim plik przemianowano. **Nie twórz `index.html` w katalogu głównym repo.**
 - Root-level `package.json`/`package-lock.json` — Vercel instaluje zależności z katalogu głównego repo, a nie z `apps/*/server/`, stąd te pliki mimo że każde narzędzie ma własne (dla lokalnego dev).
 - Serwer wymusza `Cache-Control: no-store` na wszystkim poza `/assets/**` (patrz `apps/backlog-b2c/server/server.js`) — bez tego CDN Vercela cache'owałby odpowiedzi (w tym dane z Supabase) i serwował je kolejnym odwiedzającym bez sprawdzania ciasteczka sesji. Nie usuwaj tego middleware'u.

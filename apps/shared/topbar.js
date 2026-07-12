@@ -90,12 +90,13 @@ window.LumTopbar = (() => {
   }
 
   // Pozycje nawigacji w pasku: ekran główny + działające panele. Atrapy
-  // (Wyceny/Wiadomości/Statystyki) celowo tylko na kafelkach ekranu głównego,
+  // ("wkrótce", np. Statystyki) celowo tylko na kafelkach ekranu głównego,
   // żeby pasek nie zamulał się linkami "wkrótce".
   const NAV_ITEMS = [
     { key: 'hub', label: 'Start' },
     { key: 'backlog-b2c', label: 'Backlog B2C' },
     { key: 'crm', label: 'CRM' },
+    { key: 'wyceny', label: 'Wyceny' },
     { key: 'sprzedaze', label: 'Sprzedaże' },
     { key: 'wiadomosci', label: 'Wiadomości' },
     { key: 'wiedza', label: 'Wiedza' },

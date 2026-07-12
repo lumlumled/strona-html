@@ -13,7 +13,6 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="shared/lead-card.css">
-  <link rel="stylesheet" href="shared/wycena-card.css">
   <link rel="stylesheet" href="shared/topbar.css">
   <style>
     :root {
@@ -533,11 +532,8 @@
           <button id="ai-clear" class="ai-chip" type="button" hidden></button>
           <span id="ai-status"></span>
         </div>
-        <!-- Zakładka Wyceny: własny toolbar (renderuje assets/wyceny-tab.js) -->
-        <div id="wyceny-toolbar" data-sec="wyceny" hidden></div>
     </header>
     <div id="list" data-sec="leady-b2c"></div>
-    <div id="wyceny-list" data-sec="wyceny" hidden></div>
   </main>
 
   <div class="ai-card" id="ai-card" hidden>
@@ -552,9 +548,6 @@
 
   <script src="shared/topbar.js"></script>
   <script src="shared/lead-card.js"></script>
-  <script src="shared/wycena-card.js"></script>
-  <script src="assets/wycena-editor.js"></script>
-  <script src="assets/wyceny-tab.js"></script>
   <script>
     const API_BASE = window.API_BASE || '';
 
@@ -564,17 +557,18 @@
     // edycja, 'view' = sam podgląd, brak wpisu = arkusz niewidoczny. Serwer
     // i tak egzekwuje to na endpointach — tu tylko chowamy UI.
     const CRM_SHEET_LEVELS = (window.LUMLUM_USER && window.LUMLUM_USER.crmSheets)
-      || { 'leady-b2c': 'edit', wyceny: 'edit' }; // fallback: lokalny dev bez wstrzykniętego usera
+      || { 'leady-b2c': 'edit' }; // fallback: lokalny dev bez wstrzykniętego usera
     const SHEET_LEVEL = CRM_SHEET_LEVELS['leady-b2c'] || null;
     const READ_ONLY = SHEET_LEVEL !== 'edit';
     if (READ_ONLY) {
       document.body.classList.add('crm-readonly');
     }
 
+    // Wyceny B2C wyprowadzone do własnego panelu (apps/wyceny/, 2026-07-12) —
+    // CRM zostaje do leadów. Kolejne sekcje CRM (np. B2B) dochodzą tu jako
+    // kolejne wpisy.
     const NAV_SECTIONS = [
       { key: 'leady-b2c', label: 'Leady B2C' },
-      { key: 'wyceny', label: 'Wyceny B2C' },
-      // Kolejne sekcje CRM (np. B2B) dochodzą tu jako kolejne wpisy.
     ].filter((s) => CRM_SHEET_LEVELS[s.key]);
 
     // ── Przełączanie sekcji (arkuszy) ────────────────────────────────────────
@@ -602,7 +596,6 @@
       if (!NAV_SECTIONS.some((s) => s.key === key)) return;
       currentSection = key;
       applySectionVisibility();
-      if (key === 'wyceny' && window.WycenyTab) WycenyTab.ensureLoaded();
     }
 
     const STATUS_OPTIONS = [
@@ -1101,19 +1094,7 @@
     renderStatusFilterOptions();
     loadLeady();
 
-    // Zakładka Wyceny (assets/wyceny-tab.js) + deep-link ?arkusz=wyceny
-    // (m.in. przekierowanie z kafelka Wyceny na ekranie głównym).
-    if (window.WycenyTab && NAV_SECTIONS.some((s) => s.key === 'wyceny')) {
-      WycenyTab.init({
-        apiBase: API_BASE,
-        toolbarEl: document.getElementById('wyceny-toolbar'),
-        listEl: document.getElementById('wyceny-list'),
-        readOnly: CRM_SHEET_LEVELS.wyceny !== 'edit',
-      });
-    }
-    const wantedSection = new URLSearchParams(window.location.search).get('arkusz');
-    if (wantedSection) setSection(wantedSection);
-    else applySectionVisibility();
+    applySectionVisibility();
   </script>
 </body>
 </html>

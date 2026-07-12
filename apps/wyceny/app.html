@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+  <title>Wyceny</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared/wycena-card.css">
+  <link rel="stylesheet" href="shared/topbar.css">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --surface-1: #ffffff;
+      --page: #f5f5f4;
+      --text-primary: #111111;
+      --text-secondary: #52514e;
+      --text-muted: #8a8984;
+      --border: rgba(17, 17, 17, 0.12);
+      --accent: #111111;
+      --accent-contrast: #ffffff;
+      --accent-soft: #ececea;
+      --good: #0ca30c;
+      --bad: #b5433f;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-1: #161616;
+        --page: #0a0a0a;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted: #8a8984;
+        --border: rgba(255, 255, 255, 0.14);
+        --accent: #ffffff;
+        --accent-contrast: #0a0a0a;
+        --accent-soft: #262626;
+        --good: #16c116;
+        --bad: #e08585;
+      }
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--page);
+      color: var(--text-primary);
+      min-height: 100vh;
+    }
+
+    .content {
+      width: 100%;
+      max-width: 1100px;
+      margin: 0 auto;
+      min-width: 0;
+      padding: 1.6rem 1.5rem 4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .content-header h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      margin-bottom: 0.9rem;
+    }
+
+    /* ── Toolbar (renderuje assets/wyceny-tab.js) ── */
+    .toolbar { display: flex; align-items: center; gap: 0.65rem; flex-wrap: wrap; }
+
+    .toolbar input[type="text"],
+    .toolbar select {
+      font: inherit;
+      padding: 0.5rem 0.75rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface-1);
+      color: var(--text-primary);
+    }
+
+    .toolbar input[type="text"] { min-width: 220px; }
+
+    .toolbar button {
+      font: inherit;
+      font-weight: 600;
+      padding: 0.5rem 0.9rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface-1);
+      color: var(--text-primary);
+      cursor: pointer;
+    }
+
+    .toolbar button:hover { background: var(--accent-soft); }
+    .count-badge { font-size: 0.85rem; color: var(--text-secondary); margin-left: auto; }
+
+    /* ── Lista wycen (zwinięty wiersz → rozwinięta karta) ── */
+    #wyceny-list { display: flex; flex-direction: column; gap: 0.4rem; }
+
+    .lead {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      transition: border-color 0.15s ease;
+    }
+
+    .lead[open] { border-color: var(--text-muted); }
+    .lead.status-menu-open { overflow: visible; z-index: 30; }
+
+    .lead summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      padding: 0.5rem 0.9rem;
+      min-height: 2.4rem;
+    }
+
+    .lead summary::-webkit-details-marker { display: none; }
+    .lead summary:hover { background: var(--accent-soft); }
+
+    .chevron {
+      flex: 0 0 auto;
+      width: 1.1rem;
+      height: 1.1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .chevron::before {
+      content: '▸';
+      display: inline-block;
+      transition: transform 0.15s ease;
+      color: var(--text-secondary);
+    }
+
+    .lead[open] summary .chevron::before { transform: rotate(90deg); }
+
+    .lp {
+      flex: 0 0 auto;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      min-width: 1.4rem;
+      text-align: right;
+    }
+
+    .summary-name {
+      flex: 0 0 auto;
+      max-width: 13rem;
+      font-weight: 600;
+      font-size: 0.88rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .summary-dash { color: var(--text-muted); flex: 0 0 auto; }
+
+    .summary-phone {
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      font-variant-numeric: tabular-nums;
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
+
+    .right-anchor { margin-left: auto; display: flex; align-items: center; gap: 0.6rem; }
+
+    .summary-feedback {
+      font-size: 0.76rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+
+    .wyceny-dates {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex: 0 0 auto;
+      font-size: 0.74rem;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .status-wrap { position: relative; flex: 0 0 auto; }
+
+    .status-tag {
+      position: relative;
+      display: inline-block;
+      padding: 0.2rem 1.25rem 0.2rem 0.65rem;
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 600;
+      background: var(--accent-soft);
+      color: var(--text-primary);
+      white-space: nowrap;
+    }
+
+    .status-tag::after {
+      content: '';
+      position: absolute;
+      right: 0.6rem;
+      top: 50%;
+      width: 0.35rem;
+      height: 0.35rem;
+      border-right: 1.5px solid currentColor;
+      border-bottom: 1.5px solid currentColor;
+      transform: translateY(-75%) rotate(45deg);
+      opacity: 0.7;
+      pointer-events: none;
+    }
+
+    .status-menu {
+      display: none;
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: 0.35rem;
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+      padding: 0.35rem;
+      z-index: 40;
+      min-width: 180px;
+    }
+
+    .status-menu.open { display: block; }
+
+    .status-option {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: 0.4rem 0.6rem;
+      border-radius: 8px;
+      border: none;
+      background: transparent;
+      font: inherit;
+      font-size: 0.85rem;
+      cursor: pointer;
+      color: var(--text-primary);
+    }
+
+    .status-option:hover { background: var(--accent-soft); }
+
+    .empty-note { color: var(--text-muted); font-style: italic; font-size: 0.85rem; }
+
+    @media (max-width: 720px) {
+      .content { padding: 1.25rem 1rem 3rem; }
+      .summary-dash, .summary-feedback, .wyceny-dates { display: none; }
+      .summary-name { max-width: 9rem; }
+    }
+  </style>
+</head>
+<body>
+  <header id="site-header"></header>
+  <main class="content">
+    <header class="content-header">
+      <h2>Wyceny B2C</h2>
+      <div class="toolbar" id="wyceny-toolbar"></div>
+    </header>
+    <div id="wyceny-list"></div>
+  </main>
+
+  <script src="shared/topbar.js"></script>
+  <script src="shared/wycena-card.js"></script>
+  <script src="assets/wycena-editor.js"></script>
+  <script src="assets/wyceny-tab.js"></script>
+  <script>
+    const API_BASE = window.API_BASE || '';
+    LumTopbar.mount({ active: 'wyceny', into: document.getElementById('site-header') });
+
+    // Dostęp do panelu = pełna praca z wyceną (dodanie, edycja, link).
+    // Filtr per owner robi serwer; podgląd-only nie jest tu potrzebny.
+    WycenyTab.init({
+      apiBase: API_BASE,
+      toolbarEl: document.getElementById('wyceny-toolbar'),
+      listEl: document.getElementById('wyceny-list'),
+      readOnly: false,
+    });
+    WycenyTab.ensureLoaded();
+  </script>
+</body>
+</html>
