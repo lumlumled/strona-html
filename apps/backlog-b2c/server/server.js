@@ -1819,6 +1819,7 @@ async function fetchAlertyWatchdoga(supabase) {
   if (error) throw error;
   const rows = data || [];
   const wycenaIds = rows.filter((r) => r.object_type === 'wycena').map((r) => Number(r.object_id));
+  const leadIds = rows.filter((r) => r.object_type === 'lead').map((r) => Number(r.object_id)).filter(Number.isFinite);
   const wycenaById = new Map();
   if (wycenaIds.length) {
     const { data: wyceny, error: wErr } = await supabase
@@ -1828,8 +1829,31 @@ async function fetchAlertyWatchdoga(supabase) {
     if (wErr) throw wErr;
     (wyceny || []).forEach((w) => wycenaById.set(String(w.id), w));
   }
+  const leadById = new Map();
+  if (leadIds.length) {
+    const { data: leady, error: lErr } = await supabase
+      .from(LEADY_B2C_TABLE)
+      .select('"ID Leada",Name,"Phone number","Deal stage"')
+      .in('ID Leada', leadIds);
+    if (lErr) throw lErr;
+    (leady || []).forEach((l) => leadById.set(String(l['ID Leada']), l));
+  }
   return rows.map((r) => {
-    const w = r.object_type === 'wycena' ? wycenaById.get(r.object_id) : null;
+    if (r.object_type === 'lead') {
+      const l = leadById.get(r.object_id);
+      const digits = l ? String(l['Phone number'] ?? '').replace(/\D/g, '').replace(/^48/, '') : '';
+      return {
+        imie: (l && l.Name) || `Lead #${r.object_id}`,
+        telefon: digits ? `+48${digits}` : '',
+        status: (l && l['Deal stage']) || '',
+        opis: r.alert_text || '',
+        kwota: null,
+        owner: r.owner || '',
+        watch_id: r.id,
+        typ_obiektu: r.object_type,
+      };
+    }
+    const w = wycenaById.get(r.object_id);
     const digits = w
       ? String(w.telefon_digits || String(w.telefon_e164 || '').replace(/\D/g, '').replace(/^48/, '')).trim()
       : '';

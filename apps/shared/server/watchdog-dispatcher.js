@@ -66,6 +66,37 @@ async function alertText(wycena, watch, now) {
   }
 }
 
+// Jedno zdanie alertu dla LEADA (termin z Data Feedbacku minął, cisza).
+async function alertTextLead(lead, watch, now) {
+  const kto = String(lead.Name || '').trim() || 'lead bez nazwy';
+  const dniPoTerminie = Math.max(0, Math.floor((now - new Date(watch.due_at).getTime()) / 86400000));
+  const fallback = `Lead ${kto}: termin kontaktu minął ${dniPoTerminie ? `${dniPoTerminie} dni temu` : 'dziś'}, brak nowej rozmowy - warto zadzwonić.`;
+  const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+  if (!OPENAI_API_KEY) return fallback;
+  try {
+    const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_API_KEY}` },
+      body: JSON.stringify({
+        model: process.env.WATCHDOG_MODEL || 'gpt-5-mini',
+        response_format: { type: 'json_object' },
+        reasoning_effort: 'minimal',
+        messages: [
+          { role: 'system', content: 'Jesteś asystentem CRM. Napisz JEDNO krótkie zdanie po polsku dla handlowca: umówiony termin kontaktu z leadem minął i nie było żadnej rozmowy - warto zadzwonić. Podaj imię i ile dni po terminie. Bez wykrzykników, bez emoji, bez półpauzy "—" (używaj "-"). Zwróć JSON {"alert": "..."}.' },
+          { role: 'user', content: `Lead: ${kto}, status: ${lead['Deal stage'] || 'brak'}, termin kontaktu minął ${dniPoTerminie ? `${dniPoTerminie} dni temu` : 'dzisiaj'}.` },
+        ],
+      }),
+    });
+    if (!aiRes.ok) return fallback;
+    const body = await aiRes.json();
+    const parsed = JSON.parse(body.choices?.[0]?.message?.content || '');
+    return String(parsed.alert || '').trim() || fallback;
+  } catch (err) {
+    console.warn(`Watchdog: alert AI leada ${lead['ID Leada']} nie powiódł się:`, err.message);
+    return fallback;
+  }
+}
+
 // Aktywność na wycenie od baseline: event pipeline'u, edycja wiersza albo —
 // gdy podpięty lead — wpis w "Log zmian" (rozmowa/notatka/edycja leada).
 function buildActivityChecker({ eventsByWycena, logByPhone, leadPhoneByLeadId }) {
@@ -120,10 +151,16 @@ async function runWatchdogSweep(supabase, { notifyOwner } = {}) {
     } catch (err) { raport.errors.push(`arm ${w.id}: ${err.message}`); }
   }
 
+  // Leady pokryte otwartą wyceną — ich watche (mirror) nie alertują osobno.
+  const coveredLeadIds = new Set(wyceny.filter((w) => w.lead_id).map((w) => String(w.lead_id)));
+
   // 3. Przeterminowane watche: aktywność vs alert.
   const now = Date.now();
   const overdue = watches.filter((w) => wycenaById.has(w.object_id) && new Date(w.due_at).getTime() <= now);
-  if (!overdue.length) return raport;
+  if (!overdue.length) {
+    await sweepLeady(supabase, raport, { notifyOwner, coveredLeadIds });
+    return raport;
+  }
 
   // Kontekst aktywności jednym rzutem: eventy wycen, telefony leadów, Log zmian.
   const overdueIds = overdue.map((w) => Number(w.object_id));
@@ -167,8 +204,9 @@ async function runWatchdogSweep(supabase, { notifyOwner } = {}) {
     }
   } catch (err) {
     // Kontekst aktywności to optymalizacja — bez niego lepiej NIE alertować
-    // na ślepo; przerywamy przebieg alertów, uzbrajanie już się odbyło.
+    // na ślepo; przerywamy przebieg alertów wycen, uzbrajanie już się odbyło.
     raport.errors.push(`activity-context: ${err.message}`);
+    await sweepLeady(supabase, raport, { notifyOwner, coveredLeadIds });
     return raport;
   }
 
@@ -198,7 +236,80 @@ async function runWatchdogSweep(supabase, { notifyOwner } = {}) {
       raport.errors.push(`alert ${watch.object_id}: ${err.message}`);
     }
   }
+  await sweepLeady(supabase, raport, { notifyOwner, coveredLeadIds });
   return raport;
+}
+
+// ── Leady: watche z mirrora "Data Feedbacku" (trigger, migracja 004) ────────
+// Alertujemy TYLKO przeterminowane bez aktywności w "Log zmian" od baseline.
+// Lead pokryty otwartą wyceną (wycena.lead_id) NIE alertuje — watch wyceny
+// pilnuje tego samego kontaktu i alertuje konkretniej (bez dubli po
+// propagacji terminu wycena->lead).
+async function sweepLeady(supabase, raport, { notifyOwner, coveredLeadIds }) {
+  const now = Date.now();
+  const { data: watches, error } = await supabase.from(watchdog.FEEDBACK_WATCH_TABLE)
+    .select('*').eq('object_type', 'lead').is('resolved_at', null);
+  if (error) { raport.errors.push(`leady-watches: ${error.message}`); return; }
+  const overdue = (watches || []).filter((w) => new Date(w.due_at).getTime() <= now);
+  if (!overdue.length) return;
+
+  const leadIds = [...new Set(overdue.map((w) => Number(w.object_id)).filter(Number.isFinite))];
+  const { data: leady, error: lErr } = await supabase.from('Leady B2C')
+    .select('"ID Leada",Name,"Phone number","Deal stage",Owner').in('ID Leada', leadIds);
+  if (lErr) { raport.errors.push(`leady-fetch: ${lErr.message}`); return; }
+  const leadById = new Map((leady || []).map((l) => [String(l['ID Leada']), l]));
+
+  const phoneOf = (l) => String(l?.['Phone number'] ?? '').replace(/\D/g, '').replace(/^48/, '');
+  const minBaseline = overdue.reduce((min, w) => Math.min(min, new Date(w.baseline_at).getTime()), Infinity);
+  const logByPhone = new Map();
+  const phones = [...new Set(overdue.map((w) => phoneOf(leadById.get(w.object_id))).filter(Boolean))];
+  if (phones.length) {
+    const { data: logs, error: logErr } = await supabase.from('Log zmian')
+      .select('telefon,data_zmiany').in('telefon', phones)
+      .gte('data_zmiany', new Date(minBaseline).toISOString());
+    if (logErr) { raport.errors.push(`leady-log: ${logErr.message}`); return; }
+    (logs || []).forEach((r) => {
+      const key = String(r.telefon);
+      const arr = logByPhone.get(key) || [];
+      arr.push(new Date(r.data_zmiany).getTime());
+      logByPhone.set(key, arr);
+    });
+  }
+
+  let alertsLeft = ALERT_LIMIT_PER_RUN;
+  for (const watch of overdue) {
+    const lead = leadById.get(watch.object_id);
+    try {
+      if (!lead || ['Sprzedane', 'Stracony'].includes(String(lead['Deal stage'] || ''))) {
+        await watchdog.resolveWatch(supabase, { objectType: 'lead', objectId: watch.object_id, resolution: 'done' });
+        raport.resolved_closed += 1;
+        continue;
+      }
+      const baseline = new Date(watch.baseline_at).getTime();
+      const logs = logByPhone.get(phoneOf(lead)) || [];
+      if (logs.some((t) => t > baseline)) {
+        await watchdog.resolveWatch(supabase, { objectType: 'lead', objectId: watch.object_id, resolution: 'activity' });
+        raport.resolved_activity += 1;
+        continue;
+      }
+      if (coveredLeadIds.has(watch.object_id)) continue; // pilnuje watch wyceny
+      if (watch.alerted_at || alertsLeft <= 0) continue;
+      const text = await alertTextLead(lead, watch, now);
+      const { error: upErr } = await supabase.from(watchdog.FEEDBACK_WATCH_TABLE)
+        .update({ alert_text: text, alerted_at: new Date().toISOString() })
+        .eq('id', watch.id).is('resolved_at', null);
+      if (upErr) throw upErr;
+      alertsLeft -= 1;
+      raport.alerted += 1;
+      const ownerName = watch.owner || String(lead.Owner || '').trim();
+      if (notifyOwner) {
+        await notifyOwner({ owner: ownerName, title: 'Watchdog: temat ucieka', body: text, url: '/crm', tag: `watchdog-${watch.id}` })
+          .catch((err) => raport.errors.push(`push lead ${watch.id}: ${err.message}`));
+      }
+    } catch (err) {
+      raport.errors.push(`alert lead ${watch.object_id}: ${err.message}`);
+    }
+  }
 }
 
 // GET /api/watchdog/alerty — otwarte, zaalertowane watche dla hubu/Backlogu.
@@ -218,11 +329,22 @@ function registerWatchdogEndpoints(app, { getClient, isAdmin }) {
       const { data: alerty, error } = await q;
       if (error) throw error;
       const wycenaIds = (alerty || []).filter((a) => a.object_type === 'wycena').map((a) => Number(a.object_id));
+      const leadIds = (alerty || []).filter((a) => a.object_type === 'lead').map((a) => Number(a.object_id)).filter(Number.isFinite);
       const objById = new Map();
       if (wycenaIds.length) {
         const { data: wyceny } = await supabase.from('wyceny')
           .select('id,imie_nazwisko,kwota_proponowana_brutto,status,typ').in('id', wycenaIds);
         (wyceny || []).forEach((w) => objById.set(`wycena:${w.id}`, w));
+      }
+      if (leadIds.length) {
+        const { data: leady } = await supabase.from('Leady B2C')
+          .select('"ID Leada",Name,"Phone number","Deal stage"').in('ID Leada', leadIds);
+        (leady || []).forEach((l) => objById.set(`lead:${l['ID Leada']}`, {
+          id: l['ID Leada'],
+          imie_nazwisko: l.Name || '',
+          telefon: l['Phone number'] != null ? String(l['Phone number']) : '',
+          status: l['Deal stage'] || '',
+        }));
       }
       res.json({
         data: (alerty || []).map((a) => ({
