@@ -49,6 +49,11 @@ servePushWorker(app);
 auth.register(app);
 registerPushEndpoints(app, { getClient });
 
+// Watchdog "temat ucieka" (docs/plan-watchdog-feedback.md): alerty na ekran
+// startowy "Do zrobienia dziś" — wspólny moduł, te same reguły per owner.
+const { registerWatchdogEndpoints } = require('../../shared/server/watchdog-dispatcher');
+registerWatchdogEndpoints(app, { getClient, isAdmin });
+
 // Wstrzyknięcie kontekstu do każdej strony huba: kto jest zalogowany, jakie
 // ma panele i dokąd prowadzą linki (ścieżki na Vercelu, porty lokalnie).
 function injectContext(html, req) {

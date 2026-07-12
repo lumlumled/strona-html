@@ -458,12 +458,21 @@
         const body = await res.json();
         if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
 
+        // Alerty watchdoga (temat ucieka) — osobny endpoint, miękka degradacja:
+        // błąd nie może położyć całego ekranu startowego.
+        let alerty = [];
+        try {
+          const aRes = await fetch(`${API_BASE}/api/watchdog/alerty`);
+          if (aRes.ok) alerty = (await aRes.json()).data || [];
+        } catch (_) { /* cisza — sekcja po prostu się nie pokaże */ }
+
         card.innerHTML = '';
 
         const chips = document.createElement('div');
         chips.className = 'stat-chips';
         const stats = body.stats || {};
         [
+          ...(alerty.length ? [['Alerty — temat ucieka', alerty.length, true]] : []),
           // stats.wiadomosci przychodzi tylko dla kont z panelem Wiadomości
           ...(stats.wiadomosci !== undefined ? [['Wiadomości do odpisania', stats.wiadomosci, stats.wiadomosci > 0]] : []),
           ['Akcje do zrobienia', stats.akcje, stats.zalegleAkcje > 0],
@@ -484,7 +493,56 @@
         const feedbacki = body.feedbacki || [];
         const wiadomosci = body.wiadomosci || [];
 
-        if (!akcje.length && !feedbacki.length && !wiadomosci.length) {
+        const LIMIT_ALERTY = 8;
+
+        // ── 🚨 Alerty watchdoga — na samej górze: to tematy, które właśnie
+        // uciekają (termin minął + zero aktywności). ──
+        if (alerty.length) {
+          const group = document.createElement('div');
+          group.className = 'today-group';
+          const h = document.createElement('h3');
+          h.textContent = '🚨 Alerty — temat ucieka';
+          const list = document.createElement('div');
+          list.className = 'today-list';
+          alerty.slice(0, LIMIT_ALERTY).forEach((a) => {
+            const kto = (a._obiekt && a._obiekt.imie_nazwisko)
+              || (a.object_type === 'wycena' ? `Wycena #${a.object_id}` : a.object_type === 'lead' ? `Lead #${a.object_id}` : 'Wiadomości');
+            const target = a.object_type === 'wycena' ? LINKS.wyceny
+              : a.object_type === 'lead' ? LINKS.crm
+              : LINKS.wiadomosci;
+            const item = document.createElement(target ? 'a' : 'div');
+            item.className = 'today-item';
+            if (target) item.href = target;
+            const who = document.createElement('span');
+            who.className = 'who';
+            who.textContent = kto;
+            const what = document.createElement('span');
+            what.className = 'what';
+            what.textContent = a.alert_text || '';
+            const when = document.createElement('span');
+            when.className = 'when overdue';
+            const d = new Date(a.due_at);
+            when.textContent = `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}`;
+            item.append(who, what, when);
+            if (target) {
+              const go = document.createElement('span');
+              go.className = 'go';
+              go.textContent = '→';
+              item.appendChild(go);
+            }
+            list.appendChild(item);
+          });
+          group.append(h, list);
+          if (alerty.length > LIMIT_ALERTY) {
+            const more = document.createElement('div');
+            more.className = 'today-more';
+            more.textContent = `…i ${alerty.length - LIMIT_ALERTY} kolejnych alertów — pełna lista w Backlogu.`;
+            group.appendChild(more);
+          }
+          card.appendChild(group);
+        }
+
+        if (!akcje.length && !feedbacki.length && !wiadomosci.length && !alerty.length) {
           const empty = document.createElement('p');
           empty.className = 'today-empty';
           empty.textContent = 'Nic pilnego — wszystkie akcje, feedbacki i wiadomości są ogarnięte. 🎉';
