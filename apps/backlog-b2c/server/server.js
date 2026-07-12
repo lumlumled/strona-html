@@ -1838,7 +1838,27 @@ async function fetchAlertyWatchdoga(supabase) {
     if (lErr) throw lErr;
     (leady || []).forEach((l) => leadById.set(String(l['ID Leada']), l));
   }
-  return rows.map((r) => {
+  // Obietnice z wiadomości (kom_commitments) — miękka degradacja jak wyżej.
+  let obietnice = [];
+  try {
+    const { data: kom } = await supabase.from('kom_commitments')
+      .select('id,description,due_at,alert_text,kom_customers(display_name,public_id)')
+      .eq('status', 'open').not('alerted_at', 'is', null)
+      .order('due_at', { ascending: true });
+    obietnice = (kom || []).map((c) => ({
+      imie: c.kom_customers?.display_name || c.kom_customers?.public_id || '(wiadomości)',
+      telefon: '',
+      status: '',
+      opis: c.alert_text || c.description,
+      kwota: null,
+      owner: 'Antoni',
+      commitment_id: c.id,
+      typ_obiektu: 'wiadomosc',
+    }));
+  } catch (err) {
+    console.error('Alerty watchdoga (obietnice):', err.message);
+  }
+  return obietnice.concat(rows.map((r) => {
     if (r.object_type === 'lead') {
       const l = leadById.get(r.object_id);
       const digits = l ? String(l['Phone number'] ?? '').replace(/\D/g, '').replace(/^48/, '') : '';
@@ -1867,7 +1887,7 @@ async function fetchAlertyWatchdoga(supabase) {
       watch_id: r.id,
       typ_obiektu: r.object_type,
     };
-  });
+  }));
 }
 
 // Alert może dotyczyć case'a, który już jest w planie (np. wycena z

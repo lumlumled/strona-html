@@ -9,6 +9,7 @@ const TASK_DEFAULTS = {
   extract: 'anthropic:claude-sonnet-4-6',
   classify: 'anthropic:claude-sonnet-4-6',
   summarize_call: 'openai:gpt-5.1',
+  commitments: 'openai:gpt-5-mini',
 };
 
 function taskConfig(task) {
@@ -39,7 +40,7 @@ async function completeAnthropic({ model, system, messages, maxTokens }) {
   return { text: text.trim(), provider: 'anthropic', model };
 }
 
-async function completeOpenAI({ model, system, messages, maxTokens }) {
+async function completeOpenAI({ model, system, messages, maxTokens, json, reasoningEffort }) {
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new Error('Brak OPENAI_API_KEY w konfiguracji serwera');
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -48,6 +49,11 @@ async function completeOpenAI({ model, system, messages, maxTokens }) {
     body: JSON.stringify({
       model,
       max_completion_tokens: maxTokens,
+      // Modele reasoningowe (gpt-5-mini) bez ograniczenia wysiłku potrafią
+      // zjeść cały budżet tokenów na myślenie i zwrócić pusty content —
+      // taski ekstrakcyjne przekazują reasoningEffort: 'minimal'.
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+      ...(json ? { response_format: { type: 'json_object' } } : {}),
       messages: [{ role: 'system', content: system }, ...messages],
     }),
   });
@@ -58,10 +64,12 @@ async function completeOpenAI({ model, system, messages, maxTokens }) {
 }
 
 // messages: [{role: 'user'|'assistant', content: string}]
-async function complete({ task, system, messages, maxTokens = 1024 }) {
+// json/reasoningEffort: tylko OpenAI (Anthropic je ignoruje — prompt i tak
+// wymusza czysty JSON, a parse jest defensywny po stronie wołającego).
+async function complete({ task, system, messages, maxTokens = 1024, json, reasoningEffort }) {
   const { provider, model } = taskConfig(task);
   if (provider === 'anthropic') return completeAnthropic({ model, system, messages, maxTokens });
-  if (provider === 'openai') return completeOpenAI({ model, system, messages, maxTokens });
+  if (provider === 'openai') return completeOpenAI({ model, system, messages, maxTokens, json, reasoningEffort });
   throw new Error(`Nieznany dostawca LLM: ${provider}`);
 }
 

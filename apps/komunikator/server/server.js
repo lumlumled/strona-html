@@ -16,6 +16,7 @@ const zernio = require('./ingest/zernio');
 const tiktok = require('./ingest/tiktok');
 const gmail = require('./ingest/gmail');
 const triage = require('./triage');
+const commitments = require('./commitments');
 const suggest = require('./suggest');
 
 const app = express();
@@ -102,6 +103,14 @@ async function runWorker(req, res) {
   } catch (err) {
     console.error('Worker (triage):', err.message);
     result.triage = { error: err.message };
+  }
+  try {
+    // Obietnice z wiadomości (kom_commitments) — ekstrakcja + auto-zamykanie
+    // (docs/plan-watchdog-feedback.md; alertuje dispatcher watchdoga).
+    result.commitments = await commitments.sweep(db);
+  } catch (err) {
+    console.error('Worker (commitments):', err.message);
+    result.commitments = { error: err.message };
   }
   console.log('Cron worker:', JSON.stringify(result));
   res.json(result);

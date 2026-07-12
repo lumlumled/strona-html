@@ -237,7 +237,42 @@ async function runWatchdogSweep(supabase, { notifyOwner } = {}) {
     }
   }
   await sweepLeady(supabase, raport, { notifyOwner, coveredLeadIds });
+  await sweepObietnice(supabase, raport, { notifyOwner });
   return raport;
+}
+
+// ── Wiadomości: unia z kom_commitments (docs/plan-watchdog-feedback.md §4) ──
+// Ekstrakcję i auto-zamykanie robi worker komunikatora (commitments.js);
+// tu tylko alertujemy przeterminowane otwarte obietnice. Owner wiadomości =
+// dziś Antoni (wątki nieprzypisane per user).
+async function sweepObietnice(supabase, raport, { notifyOwner }) {
+  try {
+    const { data, error } = await supabase.from('kom_commitments')
+      .select('id,description,owner,due_at,created_at,alerted_at,kom_customers(display_name,public_id)')
+      .eq('status', 'open')
+      .lte('due_at', new Date().toISOString())
+      .is('alerted_at', null)
+      .order('due_at', { ascending: true })
+      .limit(ALERT_LIMIT_PER_RUN);
+    if (error) throw error;
+    for (const c of data || []) {
+      const kto = c.kom_customers?.display_name || c.kom_customers?.public_id || 'klient';
+      const dni = Math.max(0, Math.floor((Date.now() - new Date(c.due_at).getTime()) / 86400000));
+      const kierunek = c.owner === 'klient' ? `${kto} miał(a) się odezwać` : `obiecaliśmy ${kto}`;
+      const text = `Obietnica: "${c.description}" - ${kierunek}, termin minął ${dni ? `${dni} dni temu` : 'dziś'}.`;
+      const { error: upErr } = await supabase.from('kom_commitments')
+        .update({ alert_text: text, alerted_at: new Date().toISOString() })
+        .eq('id', c.id).eq('status', 'open');
+      if (upErr) { raport.errors.push(`obietnica ${c.id}: ${upErr.message}`); continue; }
+      raport.alerted += 1;
+      if (notifyOwner) {
+        await notifyOwner({ owner: 'Antoni', title: 'Watchdog: obietnica bez odzewu', body: text, url: '/wiadomosci', tag: `watchdog-kom-${c.id}` })
+          .catch((err) => raport.errors.push(`push obietnica ${c.id}: ${err.message}`));
+      }
+    }
+  } catch (err) {
+    raport.errors.push(`obietnice: ${err.message}`);
+  }
 }
 
 // ── Leady: watche z mirrora "Data Feedbacku" (trigger, migracja 004) ────────
@@ -346,14 +381,57 @@ function registerWatchdogEndpoints(app, { getClient, isAdmin }) {
           status: l['Deal stage'] || '',
         }));
       }
+      // Obietnice z wiadomości (kom_commitments) — owner dziś zawsze Antoni,
+      // więc nie-adminowi bez tego imienia ich nie pokazujemy. Miękka
+      // degradacja: błąd kom_* nie może położyć listy alertów.
+      let obietnice = [];
+      const userName = String(req.user?.name || '').trim().toLowerCase();
+      if ((isAdmin && isAdmin(req.user)) || userName === 'antoni') {
+        try {
+          const { data: kom } = await supabase.from('kom_commitments')
+            .select('id,description,owner,due_at,alert_text,alerted_at,kom_customers(display_name,public_id)')
+            .eq('status', 'open').not('alerted_at', 'is', null)
+            .order('due_at', { ascending: true });
+          obietnice = (kom || []).map((c) => ({
+            id: c.id,
+            object_type: 'wiadomosc',
+            object_id: c.id,
+            owner: 'Antoni',
+            due_at: c.due_at,
+            alert_text: c.alert_text,
+            alerted_at: c.alerted_at,
+            visible: true,
+            _obiekt: { imie_nazwisko: c.kom_customers?.display_name || c.kom_customers?.public_id || '' },
+          }));
+        } catch (err) {
+          console.error('Watchdog alerty (obietnice):', err.message);
+        }
+      }
       res.json({
-        data: (alerty || []).map((a) => ({
-          ...a,
-          _obiekt: objById.get(`${a.object_type}:${a.object_id}`) || null,
-        })),
+        data: [
+          ...(alerty || []).map((a) => ({
+            ...a,
+            _obiekt: objById.get(`${a.object_type}:${a.object_id}`) || null,
+          })),
+          ...obietnice,
+        ],
       });
     } catch (err) {
       console.error('Watchdog alerty:', err.message);
+      res.status(502).json({ error: err.message });
+    }
+  });
+
+  // POST /api/watchdog/obietnice/:id/zamknij — ręczne "zrobione" obietnicy.
+  app.post('/api/watchdog/obietnice/:id/zamknij', async (req, res) => {
+    try {
+      const { data, error } = await getClient().from('kom_commitments')
+        .update({ status: 'done', resolved_at: new Date().toISOString() })
+        .eq('id', String(req.params.id)).eq('status', 'open').select('id');
+      if (error) throw error;
+      if (!data || !data.length) return res.status(404).json({ error: 'Nie znaleziono obietnicy' });
+      res.json({ ok: true });
+    } catch (err) {
       res.status(502).json({ error: err.message });
     }
   });
