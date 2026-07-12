@@ -21,15 +21,16 @@ apps/
     server/
       server.js, package.json, scripts/*.js, .env (lokalnie)
   crm/                    — CRM wewnętrzny, wieloczęściowy (sekcje jako
-    app.html                 pigułki; dziś: "Leady B2C" — pełna, edytowalna
-    assets/                  lista WSZYSTKICH leadów z tej samej tabeli
-    server/                  Supabase co backlog-b2c, styl arkusza kalkulacyjnego)
-      server.js, package.json, .env (lokalnie)
+    app.html                 pigułki: "Leady B2C" + "Wyceny B2C" — zakładka
+    assets/                  wycen pokazuje TYLKO wyceny/notatki, sprzedaże
+    server/                  (typ ZAMÓWIENIE) są w osobnym panelu /sprzedaze;
+      server.js, package.json, .env (lokalnie)   edytor: wycena-editor.js
   sprzedaze/              — panel Sprzedaże (lumlum.dev/sprzedaze): zamówienia
-    app.html                 (wyceny typ ZAMÓWIENIE + zamówienia ze sklepu
-    assets/                  Shopify), statystyki miesiąc/miesiąc, karta z
-    server/                  fakturą/etykietą/trackingiem, "Zamów kuriera
-      server.js, .env          ponownie"
+    app.html                 (wyceny typ ZAMÓWIENIE + Shopify jako S1,S2…),
+    assets/                  3 sekcje Do wysłania/Wysłane/Zamknięte, sort po
+    server/                  dacie, statystyki zwinięte (porównanie do tempa
+      server.js, .env          zeszłego mies.), karta z fakturą/etykietą/
+                             trackingiem, "Zamów kuriera ponownie"
   formularz/              — PUBLICZNE endpointy formularza zamówienia
     liquid/formularz.liquid  (lumlum.dev/formularz/api/dane|zapis — kontrakt
     server/                  1:1 z dawnym webhookiem Make, formularz

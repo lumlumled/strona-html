@@ -14,6 +14,66 @@ Antoni wklei sam przy cutoverze); MERGE wyceny liczony deterministycznie
 w JS zamiast drugiego wywołania GPT (reguły promptu MERGE są czysto
 mechaniczne, a w panelu i tak jest podgląd przed zapisem).
 
+## STAN 2026-07-12 (dzień 2 — doszlifowanie paneli + dane historyczne)
+
+Wszystko poniżej wdrożone na prod (lumlum.dev, projekt Vercel `lumlum/crm_ll`,
+auto-deploy z pusha na `main`).
+
+**Rozdzielenie wycen od sprzedaży:**
+- Zakładka CRM „Wyceny" → **„Wyceny B2C"**; pokazuje tylko wyceny/notatki
+  (`GET /api/wyceny?bez_typ=ZAMÓWIENIE`). Sprzedaże = typ ZAMÓWIENIE mają
+  własny panel `/sprzedaze`. „Data wyceny" (`created_at`) na wierszu; data
+  złożenia zamówienia tylko w panelu Sprzedaże (`opts.mode==='sprzedaze'`).
+
+**Edytor wyceny (`apps/crm/assets/wycena-editor.js`):**
+- Usunięte pole **Typ** (dopóki niezrealizowana = wycena).
+- Dodany **Komentarz** (kolumna `komentarz`) — wyświetla się WYRÓŻNIONY w
+  sekcji Realizacja karty (`apps/shared/wycena-card.js`), dla pakującego.
+- Własna pozycja ma **SKU + link do zdjęcia** (miniatura na żywo); pozycja z
+  linkiem dopisuje się do `sku_cennik` przy zapisie — `syncItemsToCennik`
+  w `wyceny-endpoints.js` (idempotentne, NIE nadpisuje ceny istniejącego SKU).
+- Rabat czasowy z polem **„ważny przez (godziny)"**; faktury już stosują
+  rabat24h dynamicznie (`wyceny-pipeline.js` `policzKwoty`) — logiki kwot
+  nie ruszano.
+
+**Panel Sprzedaże (`apps/sprzedaze/app.html`):**
+- Trzy sekcje: **Do wysłania / Wysłane / Zamknięte** (`bucketOf`: status
+  Closed→zamknięte; SHIPPED/DELIVERED/INVOICED lub przesyłka
+  sent/delivered/nadana→wysłane; reszta→do wysłania).
+- **Statystyki domyślnie zwinięte** (`<details>`); porównanie „ten miesiąc"
+  liczone do **ŚREDNIEGO TEMPA** zeszłego miesiąca do dziś (suma zeszłego /
+  dni miesiąca × dni które minęły), nie do całej kwoty — endpoint
+  `/api/sprzedaze/stats` zwraca `tempo{daysElapsed,daysInPrevMonth,poprzedniDoTempa}`.
+- Zamówienia Shopify mają **własną numerację S1, S2…** (po dacie, najstarsze
+  = S1), osobną od `#ID` systemu — liczoną deterministycznie w froncie
+  (`assignShopifySeq`), NIE persystowaną (PK integer ma pod sobą FK, nie
+  ruszamy). Lista sortowana **chronologicznie** (`created_at` malejąco), nie
+  po `#ID` (backfill Shopify nadał ID poza kolejnością dat).
+
+**Dane historyczne (skrypty w `scripts/`, domyślnie dry-run, zapis `--apply`):**
+- `wyceny-mark-delivered.js` — 145 historycznych ZAMÓWIEŃ → `DELIVERED` + 51
+  przesyłek doręczonych (pominięte testowe #1875/#1876). URUCHOMIONE.
+- `wyceny-fix-import-dates.js` — 58 importów miało `created_at` = dzień
+  importu (pusta „Data stworzenia" → DB default now()), co zawyżało
+  statystyki; data odtworzona z początku `history_log` (fallback `paid_at`).
+  URUCHOMIONE (lipiec 2026: 62→17 szt).
+- `wyceny-import-hist-2025.js` — 64 historyczne sprzedaże 2025 z
+  `~/Downloads/"Sprzedaż LumLum - Arkusz1.csv"`. **Twarde odcięcie
+  numeracji**: ID **1000–1063** (system startuje ~1503), status Closed →
+  sekcja Zamknięte. Mapowane tylko: kwota („Po zniżce" || brutto), imię/
+  nazwisko, adres (parsowany na `ship_*`), telefon, e-mail; `items=[]`,
+  `source='import'`. URUCHOMIONE. Po tym w bazie **329 ZAMÓWIEŃ** (265+64).
+
+**Wciąż czeka (bez zmian z nocy 1):** cutover formularza wg
+docs/cutover-noc2-checklista.md, `SHOPIFY_ADMIN_TOKEN` w env Vercela, test
+pełnego opłacenia (tworzy realną FV), kasacja wycen testowych #1875/#1876 +
+ich proform w inFakt, rotacja sekretów inFakt/InPost.
+
+**Docelowo (TODO „na później"):** auto-wykrywanie dostarczenia z trackingu
+(dziś wymuszone ręcznie skryptem); ewentualna persystencja numeru S
+(kolumna `shopify_seq` nadawana w workerze) jeśli będzie potrzebny numer
+„twardy" np. na fakturze.
+
 Oryginalny brief poniżej (bez zmian):
 Źródło audytu: folder `~/Downloads/Wyceny - mechanizm` (10 blueprintów Make,
 formularz.liquid, CSV arkuszy) + LOGIKA_WYCEN.txt + 02_CENNIK_I_LOGIKA_WYCEN.txt.
