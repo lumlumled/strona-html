@@ -276,6 +276,58 @@ window.WycenaEditor = (() => {
     grid.appendChild(komWrap);
     modal.appendChild(grid);
 
+    // Powiązany lead (B2C) — spina wycenę z leadem (zapis lead_id). Szukanie po
+    // telefonie, e-mailu albo nazwie w "Leady B2C". Steruje też kategorią źródła.
+    let leadId = (src.lead_id != null ? String(src.lead_id) : '')
+      || (prefill && prefill.lead_id != null ? String(prefill.lead_id) : '');
+    const leadStatus = h('div', 'wk-lead-status');
+    const leadSearch = input('', 'Szukaj leada: telefon, e-mail albo nazwa…');
+    const leadResults = h('div', 'wk-lead-results');
+    leadResults.hidden = true;
+
+    function renderLeadStatus() {
+      leadStatus.innerHTML = '';
+      if (leadId) {
+        leadStatus.appendChild(h('span', 'wk-lead-chip', `🔗 Powiązany lead #${leadId}`));
+        const un = h('button', 'wk-btn wk-btn--slim', 'Odepnij');
+        un.type = 'button';
+        un.addEventListener('click', () => { leadId = ''; renderLeadStatus(); });
+        leadStatus.appendChild(un);
+      } else {
+        leadStatus.appendChild(h('span', 'wk-muted-note', 'Brak powiązanego leada.'));
+      }
+    }
+
+    let leadSearchTimer = null;
+    leadSearch.addEventListener('input', () => {
+      clearTimeout(leadSearchTimer);
+      const q = leadSearch.value.trim();
+      if (q.length < 2) { leadResults.hidden = true; leadResults.innerHTML = ''; return; }
+      leadSearchTimer = setTimeout(async () => {
+        try {
+          const res = await fetch(`${apiBase}/api/wyceny/szukaj-leada?q=${encodeURIComponent(q)}`);
+          const body = await res.json().catch(() => ({}));
+          const list = body.data || [];
+          leadResults.innerHTML = '';
+          if (!list.length) { leadResults.hidden = false; leadResults.appendChild(h('div', 'wk-lead-empty', 'Brak dopasowań.')); return; }
+          list.forEach((l) => {
+            const opt = h('button', 'wk-lead-opt');
+            opt.type = 'button';
+            opt.textContent = `#${l.id} · ${l.name || '—'}${l.phone ? ` · ${l.phone}` : ''}${l.email ? ` · ${l.email}` : ''}`;
+            opt.addEventListener('click', () => { leadId = String(l.id); leadResults.hidden = true; leadSearch.value = ''; renderLeadStatus(); });
+            leadResults.appendChild(opt);
+          });
+          leadResults.hidden = false;
+        } catch (_) { /* wyszukiwarka to wygoda — cisza przy błędzie */ }
+      }, 250);
+    });
+    renderLeadStatus();
+
+    const leadSection = h('div');
+    leadSection.appendChild(h('div', 'wk-section-title', 'Powiązany lead (B2C)'));
+    leadSection.append(leadStatus, leadSearch, leadResults);
+    modal.appendChild(leadSection);
+
     // Pozycje
     modal.appendChild(h('div', 'wk-section-title', 'Pozycje'));
     let kwotaTouched = Boolean(!isNew || (prefill && prefill.kwota_proponowana_brutto != null));
@@ -385,7 +437,7 @@ window.WycenaEditor = (() => {
         rabat24h_kwota: rabat24hKwota.value ? money(rabat24hKwota.value) : null,
         rabat24h_wazny_do: rabat24hDo.value ? new Date(rabat24hDo.value).toISOString() : null,
       };
-      if (prefill && prefill.lead_id) body.lead_id = prefill.lead_id;
+      body.lead_id = leadId || null;
       if (!body.telefon_e164 && !body.email && !body.lead_id) {
         errEl.textContent = 'Podaj telefon albo e-mail.';
         return;

@@ -300,6 +300,45 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
     }
   });
 
+  // GET /api/wyceny/szukaj-leada?q= — wyszukiwarka leadów "Leady B2C" do
+  // spięcia wyceny z leadem (ustawia lead_id). Szuka po nazwie, e-mailu i
+  // telefonie (3 zapytania scalone po "ID Leada"). Wygoda — błąd nie krytyczny.
+  app.get('/api/wyceny/szukaj-leada', requireView, async (req, res) => {
+    try {
+      const q = String(req.query.q || '').trim();
+      if (q.length < 2) return res.json({ data: [] });
+      const supabase = getClient();
+      const cols = '"ID Leada", Name, "Phone number", Email';
+      const out = new Map();
+      const add = (rows) => (rows || []).forEach((l) => {
+        const id = l['ID Leada'];
+        if (id != null && !out.has(String(id))) {
+          out.set(String(id), {
+            id: String(id),
+            name: l.Name || '',
+            phone: l['Phone number'] != null ? String(l['Phone number']) : '',
+            email: l.Email || '',
+          });
+        }
+      });
+      const jobs = [
+        supabase.from('Leady B2C').select(cols).ilike('Name', `%${q}%`).limit(10).then(({ data }) => add(data)),
+        supabase.from('Leady B2C').select(cols).ilike('Email', `%${q}%`).limit(10).then(({ data }) => add(data)),
+      ];
+      const digits = q.replace(/\D/g, '');
+      if (digits.length >= 6) {
+        const p9 = Number(digits.replace(/^48/, '').slice(-9));
+        if (Number.isFinite(p9)) {
+          jobs.push(supabase.from('Leady B2C').select(cols).eq('Phone number', p9).limit(10).then(({ data }) => add(data)));
+        }
+      }
+      await Promise.allSettled(jobs);
+      res.json({ data: [...out.values()].slice(0, 12) });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
   // GET /api/sprzedaze/stats[?owner=Lorenzo] — nagłówek panelu Sprzedaże.
   // "Sprzedaż" = typ ZAMÓWIENIE; kwota = kwota_sprzedazy_brutto, fallback
   // proponowana. Param `owner` (TYLKO admin) zawęża statystyki do jednego

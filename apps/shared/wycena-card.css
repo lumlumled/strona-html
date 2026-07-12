@@ -566,6 +566,43 @@
   color: #fff;
 }
 
+/* ── Powiązany lead (edytor) ── */
+.wk-lead-status { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; flex-wrap: wrap; }
+.wk-lead-chip {
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.2rem 0.55rem;
+  border-radius: 7px;
+  background: rgba(34, 139, 230, 0.14);
+  color: #1c6fc0;
+}
+.wk-muted-note { font-size: 0.82rem; color: var(--text-muted); }
+.wk-lead-results {
+  margin-top: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  overflow: hidden;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.wk-lead-opt {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 0.84rem;
+  padding: 0.5rem 0.65rem;
+  background: var(--surface-1);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.wk-lead-opt:last-child { border-bottom: none; }
+.wk-lead-opt:hover { background: var(--accent-soft); }
+.wk-lead-empty { padding: 0.5rem 0.65rem; font-size: 0.82rem; color: var(--text-muted); }
+@media (prefers-color-scheme: dark) { .wk-lead-chip { color: #7db8f0; } }
+
 /* ── Chip źródła wyceny (lista) ── */
 .zrodlo-chip { font-weight: 600; }
 .zrodlo-b2c { background: rgba(34, 139, 230, 0.14); color: #1c6fc0; }
