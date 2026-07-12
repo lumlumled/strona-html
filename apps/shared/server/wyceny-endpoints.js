@@ -20,10 +20,12 @@ const watchdog = require('./watchdog');
 const WYCENA_CLOSING_STATUSY = new Set(['Fulfilled', 'Closed', 'Stracone']);
 
 // Publiczny link formularza dla klienta (podmieniany na formularz-test w testach).
+// Czysty ?id= bez tokenu — decyzja Antoniego: link ma być krótki. Endpoint GET
+// i tak przyjmuje linki bez tokenu (tokenOk zwraca true przy braku t); form_token
+// dalej żyje w bazie i chroni publiczne linki PDF etykiety/faktury.
 function formularzLink(wycena) {
   const base = process.env.FORMULARZ_URL || 'https://lumlum.co/pages/formularz';
-  const token = wycena.form_token ? `&t=${wycena.form_token}` : '';
-  return `${base}?id=${wycena.id}${token}`;
+  return `${base}?id=${wycena.id}`;
 }
 
 function num(v) {

@@ -829,6 +829,44 @@ window.WycenaEditor = (() => {
   function closeSavedBar() {
     if (savedBarEl) { savedBarEl.remove(); savedBarEl = null; }
   }
+  // Kopiowanie odporne na iOS/Safari — synchronicznie w geście (patrz
+  // wycena-card.js copyToClipboard). execCommand na ukrytym textarea, API fallback.
+  function copyToClipboard(text) {
+    const str = String(text || '');
+    if (!str) return false;
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = str;
+      ta.contentEditable = 'true';
+      ta.readOnly = false;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      ta.style.top = '0';
+      document.body.appendChild(ta);
+      if (/ipad|iphone|ipod/i.test(navigator.userAgent)) {
+        const range = document.createRange();
+        range.selectNodeContents(ta);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        ta.setSelectionRange(0, str.length);
+      } else {
+        ta.select();
+      }
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+      document.body.removeChild(ta);
+      if (ok) return true;
+    } catch (_) { /* przejdź do API */ }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(str);
+        return true;
+      }
+    } catch (_) { /* nic */ }
+    return false;
+  }
+
   function showSavedBar(saved, { apiBase, onSaved }) {
     if (!saved || !saved.id) return;
     const link = saved._link || '';
@@ -849,26 +887,16 @@ window.WycenaEditor = (() => {
     const copy = h('button', 'wk-btn primary', '📋 Kopiuj link');
     copy.type = 'button';
     copy.addEventListener('click', async () => {
-      // Kopiowanie = wysłanie: oznaczamy wycenę "Link wysłany" (jak w karcie).
-      // POST zwraca aktualny link; gdy się nie uda (offline/sesja), i tak
-      // kopiujemy znany link, żeby akcja nigdy nie zniknęła bez efektu.
-      let toCopy = link;
+      // Kopiuj NAJPIERW (synchronicznie w geście — iOS), potem oznacz
+      // "link wysłany" w tle. Link jest deterministyczny (?id=), więc lokalny
+      // = serwerowy; nie czekamy na POST przed kopiowaniem.
+      const copied = copyToClipboard(link);
+      copy.textContent = copied ? 'Skopiowano ✓' : 'Zaznacz i skopiuj';
+      setTimeout(() => { copy.textContent = '📋 Kopiuj link'; }, 1500);
       try {
         const res = await fetch(`${apiBase}/api/wyceny/${saved.id}/wyslij-link`, { method: 'POST' });
-        const b = await res.json().catch(() => ({}));
-        if (res.ok) {
-          if (b.link) toCopy = b.link;
-          titleEl.textContent = `✓ Wycena #${saved.id} · link wysłany`;
-        }
-      } catch (_) { /* brak sieci/sesji — kopiujemy lokalny link */ }
-      try {
-        await navigator.clipboard.writeText(toCopy);
-      } catch (_) {
-        input.select();
-        try { document.execCommand('copy'); } catch (_e) { /* brak clipboard — nic nie psujemy */ }
-      }
-      copy.textContent = 'Skopiowano ✓';
-      setTimeout(() => { copy.textContent = '📋 Kopiuj link'; }, 1500);
+        if (res.ok) titleEl.textContent = `✓ Wycena #${saved.id} · link wysłany`;
+      } catch (_) { /* oznaczenie nieobowiązkowe — link już w schowku */ }
     });
     bar.appendChild(copy);
 

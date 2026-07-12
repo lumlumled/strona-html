@@ -100,6 +100,46 @@ window.WycenaKarta = (() => {
     return node;
   }
 
+  // Kopiowanie do schowka odporne na iOS/Safari: musi się wydarzyć
+  // SYNCHRONICZNIE w geście kliknięcia (żaden await przed). navigator.clipboard
+  // bywa blokowany po await i na nie-HTTPS, więc najpierw execCommand na
+  // ukrytym textarea (działa też na iPhonie), potem API jako fallback.
+  function copyToClipboard(text) {
+    const str = String(text || '');
+    if (!str) return false;
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = str;
+      ta.contentEditable = 'true';
+      ta.readOnly = false;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      ta.style.top = '0';
+      document.body.appendChild(ta);
+      if (/ipad|iphone|ipod/i.test(navigator.userAgent)) {
+        const range = document.createRange();
+        range.selectNodeContents(ta);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        ta.setSelectionRange(0, str.length);
+      } else {
+        ta.select();
+      }
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+      document.body.removeChild(ta);
+      if (ok) return true;
+    } catch (_) { /* przejdź do API */ }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(str);
+        return true;
+      }
+    } catch (_) { /* nic */ }
+    return false;
+  }
+
   function copyBtn(getValue, label = 'Kopiuj') {
     const btn = el('button', 'wk-btn', label);
     btn.type = 'button';
@@ -294,17 +334,15 @@ window.WycenaKarta = (() => {
       send.type = 'button';
       send.title = 'Kopiuje link i oznacza wycenę jako "Link wysłany"';
       send.addEventListener('click', async () => {
+        // Kopiuj NAJPIERW (synchronicznie w geście — inaczej iOS odmawia),
+        // dopiero potem oznacz "link wysłany" w tle.
+        const copied = copyToClipboard(wycena._link || input.value);
+        send.textContent = copied ? 'Skopiowano ✓' : 'Zaznacz i skopiuj';
+        setTimeout(() => { send.textContent = 'Kopiuj link'; }, 1500);
         try {
           const res = await fetch(`${opts.apiBase}/api/wyceny/${wycena.id}/wyslij-link`, { method: 'POST' });
-          const body = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
-          await navigator.clipboard.writeText(body.link || input.value);
-          send.textContent = 'Skopiowano ✓';
-          setTimeout(() => { send.textContent = 'Kopiuj link'; }, 1500);
-          if (opts.onChanged) opts.onChanged();
-        } catch (err) {
-          alert(`Nie udało się: ${err.message}`);
-        }
+          if (res.ok && opts.onChanged) opts.onChanged();
+        } catch (_) { /* oznaczenie nieobowiązkowe — link już w schowku */ }
       });
       bar.appendChild(send);
 
