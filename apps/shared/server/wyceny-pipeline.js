@@ -546,6 +546,14 @@ async function runWorker(db) {
     }
   }
 
+  // 5) zamówienia ze sklepu Shopify (skip bez SHOPIFY_ADMIN_TOKEN)
+  try {
+    const { syncShopifyOrders } = require('./wyceny-shopify');
+    raport.shopify = await syncShopifyOrders(db);
+  } catch (err) {
+    raport.bledy.push(`shopify: ${err.message.slice(0, 120)}`);
+  }
+
   return raport;
 }
 
