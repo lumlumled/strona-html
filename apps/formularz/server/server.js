@@ -276,6 +276,60 @@ app.get('/test', (req, res) => {
   res.type('html').send(testPageCache);
 });
 
+// ── Publiczne linki do PDF etykiety i faktury (BEZ logowania) ────────────────
+// Zastępują dawne udostępniane linki z Google Drive: klik = PDF inline, gotowy
+// do druku (AirPrint z telefonu). Zabezpieczone tokenem wyceny (form_token)
+// w linku — model "anyone with the link", chroni przed zgadywaniem numerów.
+// Karta wyceny buduje te linki z form_token; endpoint sprawdza, że przesyłka/
+// faktura należy do wyceny o tym tokenie.
+async function wycenaForToken(wycenaId, t) {
+  const wycena = await findWycena(wycenaId);
+  if (!wycena) return null;
+  const token = String(wycena.form_token || '');
+  if (!token || String(t || '') !== token) return null;
+  return wycena;
+}
+
+// GET /formularz/api/etykieta/:shipmentId?t=token — etykieta ShipX (PDF inline).
+app.get('/api/etykieta/:shipmentId', async (req, res) => {
+  try {
+    const shipmentId = String(req.params.shipmentId || '');
+    if (!/^[A-Za-z0-9-]+$/.test(shipmentId)) return res.status(400).send('Zły identyfikator');
+    const { data } = await getClient().from('wyceny_shipments')
+      .select('wycena_id').eq('shipment_id', shipmentId).limit(1);
+    const ship = data && data[0];
+    if (!ship || !(await wycenaForToken(ship.wycena_id, req.query.t))) {
+      return res.status(404).send('Nie znaleziono etykiety');
+    }
+    const shipx = require('../../shared/server/wyceny-shipx');
+    const pdf = await shipx.downloadLabel(shipmentId);
+    res.type('application/pdf').set('Content-Disposition', 'inline; filename="etykieta.pdf"').send(pdf);
+  } catch (err) {
+    console.error('Etykieta publiczna:', err.message);
+    res.status(502).send('Nie udało się pobrać etykiety');
+  }
+});
+
+// GET /formularz/api/faktura/:uuid?t=token — faktura/proforma inFakt (PDF inline).
+app.get('/api/faktura/:uuid', async (req, res) => {
+  try {
+    const uuid = String(req.params.uuid || '');
+    if (!/^[A-Za-z0-9-]+$/.test(uuid)) return res.status(400).send('Zły identyfikator');
+    const { data } = await getClient().from('wyceny_invoices')
+      .select('wycena_id, status').eq('infakt_uuid', uuid).limit(1);
+    const inv = data && data[0];
+    if (!inv || inv.status === 'deleted' || !(await wycenaForToken(inv.wycena_id, req.query.t))) {
+      return res.status(404).send('Nie znaleziono faktury');
+    }
+    const infakt = require('../../shared/server/wyceny-infakt');
+    const pdf = await infakt.downloadPdf(uuid);
+    res.type('application/pdf').set('Content-Disposition', 'inline; filename="faktura.pdf"').send(pdf);
+  } catch (err) {
+    console.error('Faktura publiczna:', err.message);
+    res.status(502).send('Nie udało się pobrać faktury');
+  }
+});
+
 const PORT = process.env.PORT || 3007;
 if (require.main === module) {
   app.listen(PORT, () => {

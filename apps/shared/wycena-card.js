@@ -11,6 +11,11 @@
 window.WycenaKarta = (() => {
   'use strict';
 
+  // Baza publicznych linków PDF (etykieta/faktura) — funkcja formularza,
+  // ten sam origin co panele na prod (lumlum.dev). Nadpisywalne globalną
+  // window.PUBLIC_PDF_BASE (np. inny port w dev).
+  const PUBLIC_PDF_BASE = (typeof window !== 'undefined' && window.PUBLIC_PDF_BASE) || '/formularz';
+
   function moneyPLN(v) {
     const n = Number(String(v ?? '').replace(/\s/g, '').replace(',', '.'));
     if (!Number.isFinite(n)) return '—';
@@ -371,8 +376,14 @@ window.WycenaKarta = (() => {
         a.target = '_blank';
         links.appendChild(a);
       }
+      // Publiczny link (bez logowania) gdy wycena ma form_token — druk z
+      // telefonu bez sesji panelu; fallback na proxy panelu dla starych wycen.
       const labelHref = s.label_url
-        || (s.provider === 'shipx' && s.shipment_id ? `${opts.apiBase || ''}/api/wyceny/label/${s.shipment_id}` : null);
+        || (s.provider === 'shipx' && s.shipment_id
+          ? (wycena.form_token
+            ? `${PUBLIC_PDF_BASE}/api/etykieta/${s.shipment_id}?t=${encodeURIComponent(wycena.form_token)}`
+            : `${opts.apiBase || ''}/api/wyceny/label/${s.shipment_id}`)
+          : null);
       if (labelHref) {
         const a = el('a', '', 'Etykieta');
         a.href = labelHref;
@@ -396,7 +407,11 @@ window.WycenaKarta = (() => {
       row.appendChild(main);
       const links = el('div', 'wk-pipe-links');
       const pdfHref = i.pdf_url
-        || (i.infakt_uuid && i.status !== 'deleted' ? `${opts.apiBase || ''}/api/wyceny/invoice-pdf/${i.infakt_uuid}` : null);
+        || (i.infakt_uuid && i.status !== 'deleted'
+          ? (wycena.form_token
+            ? `${PUBLIC_PDF_BASE}/api/faktura/${i.infakt_uuid}?t=${encodeURIComponent(wycena.form_token)}`
+            : `${opts.apiBase || ''}/api/wyceny/invoice-pdf/${i.infakt_uuid}`)
+          : null);
       if (pdfHref) {
         const a = el('a', '', 'PDF');
         a.href = pdfHref;
