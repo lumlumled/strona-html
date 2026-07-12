@@ -69,12 +69,35 @@
       margin-bottom: 0.9rem;
     }
 
-    /* ── Statystyki (placeholder do rozbudowy) ── */
+    /* ── Statystyki (domyślnie zwinięte) ── */
+    .stats-panel { margin-bottom: 0.4rem; }
+
+    .stats-panel > summary {
+      list-style: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      padding: 0.3rem 0.1rem;
+      user-select: none;
+    }
+    .stats-panel > summary::-webkit-details-marker { display: none; }
+    .stats-panel > summary::before {
+      content: '▸';
+      display: inline-block;
+      transition: transform 0.15s ease;
+      color: var(--text-muted);
+    }
+    .stats-panel[open] > summary::before { transform: rotate(90deg); }
+
     .stats {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 0.7rem;
-      margin-bottom: 1rem;
+      margin: 0.6rem 0 1rem;
     }
 
     .stat {
@@ -239,7 +262,10 @@
   <main class="content">
     <header class="content-header">
       <h2>Sprzedaże</h2>
-      <div class="stats" id="stats"></div>
+      <details class="stats-panel" id="stats-panel">
+        <summary>Statystyki</summary>
+        <div class="stats" id="stats"></div>
+      </details>
       <div class="toolbar">
         <input type="text" id="search" placeholder="Szukaj: imię, telefon, e-mail, numer, miasto…">
         <button id="refresh">Odśwież</button>
