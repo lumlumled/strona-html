@@ -66,11 +66,16 @@ async function alertText(wycena, watch, now) {
   }
 }
 
-// Jedno zdanie alertu dla LEADA (termin z Data Feedbacku minął, cisza).
+// Jedno zdanie alertu dla LEADA. Jawny watch (mirror "Data Feedbacku") mówi
+// o minionym UMÓWIONYM terminie; cichy watch AI (temperatura z rozmowy) — o
+// dniach ciszy od ostatniej rozmowy.
 async function alertTextLead(lead, watch, now) {
   const kto = String(lead.Name || '').trim() || 'lead bez nazwy';
   const dniPoTerminie = Math.max(0, Math.floor((now - new Date(watch.due_at).getTime()) / 86400000));
-  const fallback = `Lead ${kto}: termin kontaktu minął ${dniPoTerminie ? `${dniPoTerminie} dni temu` : 'dziś'}, brak nowej rozmowy - warto zadzwonić.`;
+  const dniCiszy = Math.max(1, Math.round((now - new Date(watch.baseline_at).getTime()) / 86400000));
+  const fallback = watch.visible
+    ? `Lead ${kto}: termin kontaktu minął ${dniPoTerminie ? `${dniPoTerminie} dni temu` : 'dziś'}, brak nowej rozmowy - warto zadzwonić.`
+    : `Lead ${kto}: ${dniCiszy} dni ciszy od rozmowy, brak nowego kontaktu - warto wrócić do tematu.`;
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
   if (!OPENAI_API_KEY) return fallback;
   try {
@@ -82,8 +87,10 @@ async function alertTextLead(lead, watch, now) {
         response_format: { type: 'json_object' },
         reasoning_effort: 'minimal',
         messages: [
-          { role: 'system', content: 'Jesteś asystentem CRM. Napisz JEDNO krótkie zdanie po polsku dla handlowca: umówiony termin kontaktu z leadem minął i nie było żadnej rozmowy - warto zadzwonić. Podaj imię i ile dni po terminie. Bez wykrzykników, bez emoji, bez półpauzy "—" (używaj "-"). Zwróć JSON {"alert": "..."}.' },
-          { role: 'user', content: `Lead: ${kto}, status: ${lead['Deal stage'] || 'brak'}, termin kontaktu minął ${dniPoTerminie ? `${dniPoTerminie} dni temu` : 'dzisiaj'}.` },
+          { role: 'system', content: 'Jesteś asystentem CRM. Napisz JEDNO krótkie zdanie po polsku dla handlowca: temat z leadem wisi i warto się odezwać. Podaj imię i sedno (miniony umówiony termin ALBO dni ciszy od rozmowy). Bez wykrzykników, bez emoji, bez półpauzy "—" (używaj "-"). Zwróć JSON {"alert": "..."}.' },
+          { role: 'user', content: watch.visible
+            ? `Lead: ${kto}, status: ${lead['Deal stage'] || 'brak'}. Umówiony termin kontaktu minął ${dniPoTerminie ? `${dniPoTerminie} dni temu` : 'dzisiaj'}, brak nowej rozmowy. Skąd termin: ${watch.reason || 'ustawiony ręcznie'}.`
+            : `Lead: ${kto}, status: ${lead['Deal stage'] || 'brak'}. Cisza od ostatniej rozmowy: ${dniCiszy} dni, brak nowego kontaktu (termin ustawiony automatycznie: ${watch.reason || 'ocena AI z rozmowy'}).` },
         ],
       }),
     });
@@ -280,7 +287,45 @@ async function sweepObietnice(supabase, raport, { notifyOwner }) {
 // Lead pokryty otwartą wyceną (wycena.lead_id) NIE alertuje — watch wyceny
 // pilnuje tego samego kontaktu i alertuje konkretniej (bez dubli po
 // propagacji terminu wycena->lead).
+// Uzbrajanie cichych watchy AI na leadach z transkrypcją rozmowy bez żadnej
+// daty feedbacku (docs §4, etap e — przypadek "klient odezwie się sam / termin
+// brak"). Ten sam mechanizm robi backfill istniejących I ciągłe uzbrajanie
+// nowych leadów, którym przybędzie transkrypcja (sweep chodzi co 30 min, więc
+// nie trzeba żadnego hooka w flow Zadarmy). Zapis wyłącznie do feedback_watch.
+async function armLeady(supabase, raport, { coveredLeadIds }) {
+  try {
+    const { data: leady, error } = await supabase.from('Leady B2C')
+      .select('"ID Leada",Name,Owner,"Deal stage","Treść rozmowy","Historia rozmów","Ilość telefonów","Ostatni kontakt","Data Feedbacku","Najbliższa akcja termin"')
+      .not('Treść rozmowy', 'is', null);
+    if (error) { raport.errors.push(`arm-leady-fetch: ${error.message}`); return; }
+    // Wlot: transkrypcja niepusta, brak jawnego terminu (Data Feedbacku ani
+    // Najbliższa akcja termin), status otwarty. Pokrycie otwartą wyceną i
+    // istniejący watch odfiltrowujemy niżej (dedup z watchem wyceny).
+    const kandydaci = (leady || []).filter((l) => String(l['Treść rozmowy'] || '').trim()
+      && !String(l['Data Feedbacku'] || '').trim()
+      && !String(l['Najbliższa akcja termin'] || '').trim()
+      && !watchdog.LEAD_EXCLUDED_STAGES.has(String(l['Deal stage'] || '').trim()));
+    if (!kandydaci.length) return;
+    const idOf = new Map(kandydaci.map((l) => [l, watchdog.leadObjectId(l)]));
+    const ids = [...idOf.values()].filter(Boolean);
+    const open = await watchdog.getOpenWatches(supabase, 'lead', ids);
+    const doUzbrojenia = kandydaci.filter((l) => {
+      const id = idOf.get(l);
+      return id && !open.has(id) && !coveredLeadIds.has(id);
+    }).slice(0, ARM_LIMIT_PER_RUN);
+    for (const l of doUzbrojenia) {
+      try {
+        const armed = await watchdog.armLead(supabase, l);
+        if (armed) raport.armed += 1;
+      } catch (err) { raport.errors.push(`arm-lead ${l['ID Leada']}: ${err.message}`); }
+    }
+  } catch (err) {
+    raport.errors.push(`arm-leady: ${err.message}`);
+  }
+}
+
 async function sweepLeady(supabase, raport, { notifyOwner, coveredLeadIds }) {
+  await armLeady(supabase, raport, { coveredLeadIds });
   const now = Date.now();
   const { data: watches, error } = await supabase.from(watchdog.FEEDBACK_WATCH_TABLE)
     .select('*').eq('object_type', 'lead').is('resolved_at', null);
@@ -337,7 +382,10 @@ async function sweepLeady(supabase, raport, { notifyOwner, coveredLeadIds }) {
       alertsLeft -= 1;
       raport.alerted += 1;
       const ownerName = watch.owner || String(lead.Owner || '').trim();
-      if (notifyOwner) {
+      // Push tylko dla JAWNYCH watchy leadów (mirror Data Feedbacku). Ciche
+      // watche AI (visible=false) na start idą wyłącznie do paneli (hub +
+      // Backlog) — decyzja Antoniego 2026-07-12; push dołożymy po tygodniu.
+      if (notifyOwner && watch.visible) {
         await notifyOwner({ owner: ownerName, title: 'Watchdog: temat ucieka', body: text, url: '/crm', tag: `watchdog-${watch.id}` })
           .catch((err) => raport.errors.push(`push lead ${watch.id}: ${err.message}`));
       }

@@ -239,8 +239,130 @@ async function armWycena(supabase, wycena, extra = {}) {
   });
 }
 
+// ── AI: cichy termin dla LEADA z transkrypcją rozmowy (docs §4, etap e) ──────
+// Osobny przypadek od wyceny: wejściem jest transkrypcja rozmowy telefonicznej
+// (Zadarma -> "Treść rozmowy"). Zawsze cichy watch (visible=false) —
+// handlowiec, który wpisze jawną "Data Feedbacku", supersedu­je go triggerem
+// mirror (migracja 004). Sygnał z rozmowy "klient odezwie się sam / przemyśli /
+// zobaczymy" = najmocniejsza przesłanka i raczej KRÓTSZY termin.
+
+const LEAD_DUE_DAYS_MIN = 3;
+// Statusy, których nie pilnujemy (zamknięte / śmieciowe). Współdzielone z
+// dispatcherem, żeby wstępny filtr i guard armLead miały jedno źródło prawdy.
+const LEAD_EXCLUDED_STAGES = new Set(['Sprzedane', 'Stracony', 'Błędne dane']);
+
+// "ID Leada" to numeric i potrafi przyjść jako '400.0' — kanoniczny object_id
+// leada to int jako tekst ('400'), identycznie jak trunc(...)::bigint::text
+// w triggerze mirror (migracja 004) i jak wyceny.lead_id.
+function leadObjectId(lead) {
+  const n = Number(lead && lead['ID Leada']);
+  return Number.isFinite(n) ? String(Math.trunc(n)) : '';
+}
+
+function buildLeadWatchPrompt(dzisiaj) {
+  return `Jesteś asystentem CRM firmy LumLum (oświetlenie LED premium).
+Dostajesz dane LEADA po rozmowie telefonicznej (transkrypcja). Zdecyduj, ZA ILE
+DNI handlowiec powinien wrócić do klienta, jeśli ten nie odezwie się sam. Zwróć
+WYŁĄCZNIE jeden obiekt JSON. Bez komentarzy, bez markdownu, bez tekstu przed ani po.
+
+DZISIAJ: ${dzisiaj}
+
+===== JAK OCENIĆ TERMIN (due_days) =====
+Czytaj przede wszystkim TREŚĆ ROZMOWY. Ustaw due_days w zakresie ${LEAD_DUE_DAYS_MIN}-${DUE_DAYS_MAX}:
+- Klient sam zapowiedział, że się odezwie / przemyśli / "zobaczymy" / wróci po
+  czymś konkretnym (wypłata, urlop, decyzja wspólnika) BEZ podania daty
+  -> to najsilniejszy sygnał: krótki termin ${LEAD_DUE_DAYS_MIN}-5 dni (przypilnuj, bo łatwo ucieka).
+- GORĄCY (konkretne pytania o produkt/cenę, umawianie szczegółów, żywy dialog)
+  -> ${LEAD_DUE_DAYS_MIN}-5 dni.
+- NORMALNY (zainteresowany, ale bez konkretów) -> 7 dni.
+- CHŁODNY (zdawkowa rozmowa, "na razie tylko się rozglądam", wiele prób kontaktu
+  bez efektu, temat stary) -> 14 dni.
+- Jeśli rozmowa jasno pokazuje BRAK zainteresowania, ale status nie jest
+  zamknięty -> najdłuższy termin (do ${DUE_DAYS_MAX}).
+Nie wybieraj terminu spoza zakresu ${LEAD_DUE_DAYS_MIN}-${DUE_DAYS_MAX}.
+reason = jedno krótkie zdanie po polsku, z czego wynika termin (najlepiej odwołaj
+się do tego, co klient powiedział w rozmowie). Bez półpauzy "—", używaj "-".
+
+===== FORMAT WYJŚCIOWY =====
+{
+  "due_days": 5,
+  "reason": "krótkie uzasadnienie z rozmowy"
+}`;
+}
+
+function leadWatchContext(lead) {
+  const parts = [
+    `Klient: ${lead.Name || 'brak nazwy'}`,
+    `Deal stage: ${lead['Deal stage'] || 'brak'}`,
+    `Ilość telefonów (prób kontaktu): ${lead['Ilość telefonów'] ?? 'brak'}`,
+    `Ostatni kontakt: ${lead['Ostatni kontakt'] || 'brak'}`,
+    lead['Treść rozmowy'] ? `Treść rozmowy (transkrypcja):\n${String(lead['Treść rozmowy']).slice(0, 2500)}` : '',
+    lead['Historia rozmów'] ? `Historia rozmów:\n${String(lead['Historia rozmów']).slice(0, 1200)}` : '',
+  ];
+  return parts.filter(Boolean).join('\n');
+}
+
+async function analyzeLeadFeedback(lead) {
+  const fallback = { due_days: 7, reason: 'domyślny tydzień (AI niedostępne)' };
+  const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+  if (!OPENAI_API_KEY) return fallback;
+  try {
+    const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_API_KEY}` },
+      body: JSON.stringify({
+        model: WATCHDOG_MODEL,
+        response_format: { type: 'json_object' },
+        reasoning_effort: 'minimal',
+        messages: [
+          { role: 'system', content: buildLeadWatchPrompt(warsawDateStr()) },
+          { role: 'user', content: leadWatchContext(lead) },
+        ],
+      }),
+    });
+    if (!aiRes.ok) return fallback;
+    const body = await aiRes.json();
+    const parsed = JSON.parse(body.choices?.[0]?.message?.content || '');
+    return { ...fallback, ...parsed };
+  } catch (err) {
+    console.warn(`Watchdog: analiza leada ${lead && lead['ID Leada']} (GPT) nie powiodła się:`, err.message);
+    return fallback;
+  }
+}
+
+// Uzbraja CICHY watch AI na leadzie z transkrypcją rozmowy, który nie ma żadnej
+// daty feedbacku. Zapis wyłącznie do feedback_watch (do "Leady B2C" nic nie
+// piszemy). Filtr pokrycia otwartą wyceną robi dispatcher (potrzebuje zbioru
+// wycen). Zwraca utworzony watch albo null (nic do zrobienia).
+async function armLead(supabase, lead) {
+  if (!lead) return null;
+  if (!String(lead['Treść rozmowy'] || '').trim()) return null;
+  if (LEAD_EXCLUDED_STAGES.has(String(lead['Deal stage'] || '').trim())) return null;
+  if (String(lead['Data Feedbacku'] || '').trim()) return null;
+  if (String(lead['Najbliższa akcja termin'] || '').trim()) return null;
+  const id = leadObjectId(lead);
+  if (!id) return null;
+  const open = await getOpenWatches(supabase, 'lead', [id]);
+  if (open.size) return null;
+  const ai = await analyzeLeadFeedback(lead);
+  const days = Math.min(DUE_DAYS_MAX, Math.max(LEAD_DUE_DAYS_MIN, Number(ai.due_days) || 7));
+  const dueAt = warsawToIso(warsawDatePlusDays(days));
+  return setWatch(supabase, {
+    objectType: 'lead',
+    objectId: id,
+    owner: String(lead.Owner || '').trim() || null,
+    dueAt,
+    reason: ai.reason || null,
+    setBy: 'ai',
+    visible: false,
+    source: 'ai_temperatura',
+    backlogTarget: 'b2c',
+  });
+}
+
 module.exports = {
   FEEDBACK_WATCH_TABLE,
+  LEAD_EXCLUDED_STAGES,
   warsawParts,
   warsawDateStr,
   warsawToIso,
@@ -249,6 +371,9 @@ module.exports = {
   setWatch,
   resolveWatch,
   getOpenWatches,
+  leadObjectId,
   analyzeWycenaFeedback,
   armWycena,
+  analyzeLeadFeedback,
+  armLead,
 };
