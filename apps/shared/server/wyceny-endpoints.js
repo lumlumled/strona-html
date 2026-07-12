@@ -194,6 +194,57 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
     }
   });
 
+  // GET /api/wyceny/dla-leada?telefon=&email=&lead_id= — wyceny z NOWEJ tabeli
+  // dopasowane do leada (karta leada w CRM/Backlog pokazuje ten sam format ze
+  // zdjęciami + edytor; edycja zapisuje tu, więc widać ją też w panelu Wyceny).
+  // Match: lead_id, telefon_digits albo e-mail. Scoped jak reszta.
+  app.get('/api/wyceny/dla-leada', requireView, async (req, res) => {
+    try {
+      const supabase = getClient();
+      const telefon = String(req.query.telefon || '').replace(/\D/g, '').replace(/^48/, '');
+      const email = String(req.query.email || '').toLowerCase().trim();
+      const leadId = String(req.query.lead_id || '').trim();
+      const ors = [];
+      if (leadId) ors.push(`lead_id.eq.${leadId}`);
+      if (telefon) ors.push(`telefon_digits.eq.${telefon}`);
+      if (email) ors.push(`email.ilike.${email}`);
+      if (!ors.length) return res.json({ data: [] });
+
+      const { data: wyceny, error } = await scoped(supabase.from('wyceny').select('*'), req)
+        .or(ors.join(',')).order('id', { ascending: false });
+      if (error) throw error;
+
+      const ids = (wyceny || []).map((w) => w.id);
+      let shipments = [], invoices = [];
+      if (ids.length) {
+        const [s, i] = await Promise.all([
+          supabase.from('wyceny_shipments').select('*').in('wycena_id', ids).order('created_at', { ascending: true }),
+          supabase.from('wyceny_invoices').select('*').in('wycena_id', ids).order('created_at', { ascending: true }),
+        ]);
+        if (s.error) throw s.error;
+        if (i.error) throw i.error;
+        shipments = s.data || [];
+        invoices = i.data || [];
+      }
+      const byWycena = (rows) => {
+        const m = new Map();
+        rows.forEach((r) => { if (!m.has(r.wycena_id)) m.set(r.wycena_id, []); m.get(r.wycena_id).push(r); });
+        return m;
+      };
+      const shipMap = byWycena(shipments);
+      const invMap = byWycena(invoices);
+      res.json({
+        data: (wyceny || []).map((w) => ({
+          ...decorate(w),
+          _shipments: shipMap.get(w.id) || [],
+          _invoices: invMap.get(w.id) || [],
+        })),
+      });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
   // GET /api/sprzedaze/stats[?owner=Lorenzo] — nagłówek panelu Sprzedaże.
   // "Sprzedaż" = typ ZAMÓWIENIE; kwota = kwota_sprzedazy_brutto, fallback
   // proponowana. Param `owner` (TYLKO admin) zawęża statystyki do jednego

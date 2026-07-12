@@ -651,62 +651,77 @@ window.LeadKarta = (() => {
 
   // ── Wycena ────────────────────────────────────────────────────────────────
 
-  async function loadWycena(apiBase, lead, container) {
+  // Wycena na karcie leada = ten sam widok i edytor co w panelu Wyceny (nowa
+  // tabela `wyceny`, produkty ze zdjęciami). Edycja/utworzenie zapisuje do bazy,
+  // więc od razu widać to w panelu Wyceny (cross-ref). Dopasowanie po lead_id /
+  // telefonie / e-mailu. Legacy "Wyceny B2C" nie jest już tu czytane.
+  async function loadWycena(apiBase, lead, container, readOnly) {
     container.innerHTML = '<p class="lk-empty-note">Wczytywanie…</p>';
+    if (!window.WycenaKarta) {
+      container.innerHTML = '<p class="lk-empty-note">Widok wyceny się nie wczytał — odśwież stronę.</p>';
+      return;
+    }
+    const telefon = lead._telefon_digits || '';
+    const email = lead['Email'] || '';
+    const leadId = lead['ID Leada'] != null ? String(lead['ID Leada']) : '';
+    const reload = () => loadWycena(apiBase, lead, container, readOnly);
+
+    const prefill = () => ({
+      imie_nazwisko: lead['Name'] || '',
+      telefon_e164: telefon,
+      email,
+      lead_id: leadId || undefined,
+    });
+
+    function addNewButton(target, label) {
+      if (readOnly || !window.WycenaEditor) return;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'wk-btn primary';
+      btn.textContent = label;
+      btn.addEventListener('click', () => window.WycenaEditor.openNew({ apiBase, prefill: prefill(), onSaved: reload }));
+      const wrap = document.createElement('div');
+      wrap.className = 'wk-actions';
+      wrap.appendChild(btn);
+      target.appendChild(wrap);
+    }
+
     try {
-      const res = await fetch(`${apiBase}/api/leady/${lead._telefon_digits}/wycena`);
-      const body = await res.json();
-      const wycena = body.data;
-      if (!wycena) {
-        container.innerHTML = '<p class="lk-empty-note">Brak dopasowanej wyceny.</p>';
+      const params = new URLSearchParams();
+      if (telefon) params.set('telefon', telefon);
+      if (email) params.set('email', email);
+      if (leadId) params.set('lead_id', leadId);
+      const res = await fetch(`${apiBase}/api/wyceny/dla-leada?${params.toString()}`);
+      if (res.status === 401 || res.status === 403) {
+        container.innerHTML = '<p class="lk-empty-note">Wyceny widoczne w panelu Wyceny (brak dostępu z tego widoku).</p>';
         return;
       }
-      container.innerHTML = '';
-      const meta = document.createElement('div');
-      meta.className = 'lk-wycena-meta';
-      [
-        ['ID', wycena['ID']],
-        ['Status', wycena['Status']],
-        ['Kwota', wycena['Kwota']],
-        ['Komentarz', wycena['Komentarz']],
-      ].forEach(([label, value]) => {
-        const div = document.createElement('div');
-        div.innerHTML = `<span class="lk-label">${label}:</span>${value ?? '—'}`;
-        meta.appendChild(div);
-      });
-      if (wycena['Link do formularza']) {
-        const link = document.createElement('a');
-        link.href = cleanFormLink(wycena['Link do formularza']);
-        link.target = '_blank';
-        link.rel = 'noopener';
-        link.textContent = 'Link do formularza wyceny →';
-        meta.appendChild(link);
-      }
-      container.appendChild(meta);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+      const list = Array.isArray(body.data) ? body.data : [];
 
-      const produkty = Array.isArray(wycena.produkty_json) ? wycena.produkty_json : [];
-      if (produkty.length) {
-        const table = document.createElement('table');
-        table.className = 'lk-produkty';
-        table.innerHTML = `
-          <thead><tr><th>Nazwa</th><th>SKU</th><th>Ilość</th><th>Jedn.</th><th>Cena</th><th>VAT</th></tr></thead>
-          <tbody></tbody>
-        `;
-        const tbody = table.querySelector('tbody');
-        produkty.forEach((p) => {
-          const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td>${p.name ?? ''}</td>
-            <td>${p.SKU ?? ''}</td>
-            <td>${p.quantity ?? ''}</td>
-            <td>${p.unit ?? ''}</td>
-            <td>${p.price ?? ''}</td>
-            <td>${p.VAT ?? ''}</td>
-          `;
-          tbody.appendChild(tr);
-        });
-        container.appendChild(table);
+      container.innerHTML = '';
+      if (!list.length) {
+        container.appendChild(Object.assign(document.createElement('p'), {
+          className: 'lk-empty-note', textContent: 'Brak wyceny dla tego leada.',
+        }));
+        addNewButton(container, '+ Utwórz wycenę');
+        return;
       }
+
+      list.forEach((wycena) => {
+        const { el: cardEl } = window.WycenaKarta.buildBody(wycena, {
+          apiBase,
+          readOnly: !!readOnly,
+          mode: 'crm',
+          onChanged: reload,
+          onEdit: (readOnly || !window.WycenaEditor)
+            ? null
+            : (w) => window.WycenaEditor.openEdit(w, { apiBase, onSaved: reload }),
+        });
+        container.appendChild(cardEl);
+      });
+      addNewButton(container, '+ Nowa wycena');
     } catch (err) {
       container.innerHTML = `<p class="lk-empty-note">Błąd wczytywania: ${err.message}</p>`;
     }
@@ -1093,10 +1108,10 @@ window.LeadKarta = (() => {
     if (digits && !readOnly) body.appendChild(notatkaSekcja);
     body.append(akcjaWrap, opisWrap, historia, kontaktGrid, transakcjaGrid);
 
-    if (lead._ma_wycene) {
-      const wycena = buildNestedDetails('Wycena', (container) => loadWycena(apiBase, lead, container));
-      body.appendChild(wycena);
-    }
+    // Sekcja Wycena zawsze dostępna — w środku albo wycena z nowej tabeli
+    // (format ze zdjęciami + edycja), albo przycisk "Utwórz wycenę".
+    const wycena = buildNestedDetails('Wycena', (container) => loadWycena(apiBase, lead, container, readOnly));
+    body.appendChild(wycena);
 
     // ── Pełne rozmowy — zawsze na samym dole karty ──
     if (digits) {

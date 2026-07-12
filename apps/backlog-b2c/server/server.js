@@ -5,7 +5,8 @@ const express = require('express');
 const cors = require('cors');
 const { getClient } = require('./supabase');
 const { registerLeadyEndpoints, NIE_TELEFON_ZRODLA } = require('../../shared/server/leady-endpoints');
-const { createAuth, clientPayload, panelLinks } = require('../../shared/server/auth');
+const { registerWycenyEndpoints } = require('../../shared/server/wyceny-endpoints');
+const { createAuth, clientPayload, panelLinks, isAdmin } = require('../../shared/server/auth');
 const { servePushWorker, registerPushEndpoints } = require('../../shared/server/push');
 
 const app = express();
@@ -1230,6 +1231,17 @@ app.get('/api/leady/nowe', async (req, res) => {
 // module apps/shared/server/leady-endpoints.js — te same ścieżki rejestruje
 // CRM, implementacja w jednym miejscu.
 registerLeadyEndpoints(app, { getClient });
+
+// Endpointy wycen (nowa tabela) — karta leada w Backlogu pokazuje wycenę w tym
+// samym formacie co panel Wyceny i pozwala ją edytować (zapis do bazy = cross-
+// ref). Bramka panelu już chroni; widoczność per owner siedzi w endpointach.
+const wycenyAllow = (req, res, next) => next();
+registerWycenyEndpoints(app, {
+  getClient,
+  requireView: wycenyAllow,
+  requireEdit: wycenyAllow,
+  isAdmin,
+});
 
 // Wszystkie leady z ustawioną najbliższą akcją — frontend nakłada to na
 // wyrenderowane case'y po telefonie (pigułka jest żywa w ciągu dnia, mimo że
