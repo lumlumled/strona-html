@@ -432,6 +432,41 @@ window.WycenaEditor = (() => {
     leadSection.append(leadStatus, leadSearch, leadResults);
     modal.appendChild(leadSection);
 
+    // Feedback (watchdog, docs/plan-watchdog-feedback.md) — jawny termin
+    // "kiedy wrócić do klienta". Pusta data przy zapisie kasuje termin; cichy
+    // termin AI (visible=false) pokazujemy informacyjnie z możliwością
+    // wyciszenia. Zapis idzie jako body.feedback_due ("YYYY-MM-DD" | "").
+    const watch = src._watch || null;
+    const warsawDay = (iso) => new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Warsaw', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date(iso)); // YYYY-MM-DD
+    const plDay = (iso) => new Intl.DateTimeFormat('pl-PL', {
+      timeZone: 'Europe/Warsaw', day: '2-digit', month: '2-digit', year: 'numeric',
+    }).format(new Date(iso));
+    const initialFeedback = watch && watch.visible ? warsawDay(watch.due_at) : '';
+    const feedbackInput = input(initialFeedback, '', 'date');
+    let watchMuted = false;
+    const fbSection = h('div');
+    fbSection.appendChild(h('div', 'wk-section-title', 'Feedback — kiedy wrócić do klienta'));
+    const fbGrid = h('div', 'wk-form-grid');
+    fbGrid.appendChild(field('Termin feedbacku (puste = brak)', feedbackInput));
+    fbSection.appendChild(fbGrid);
+    if (watch && !watch.visible) {
+      const silentRow = h('div', 'wk-lead-status');
+      const silentNote = h('span', 'wk-muted-note',
+        `🤖 Cichy watchdog AI pilnuje do ${plDay(watch.due_at)}${watch.reason ? ` (${watch.reason})` : ''}`);
+      const muteBtn = h('button', 'wk-btn wk-btn--slim', 'Wyłącz watchdoga');
+      muteBtn.type = 'button';
+      muteBtn.addEventListener('click', () => {
+        watchMuted = true;
+        silentNote.textContent = 'Watchdog zostanie wyłączony po zapisie.';
+        muteBtn.remove();
+      });
+      silentRow.append(silentNote, muteBtn);
+      fbSection.appendChild(silentRow);
+    }
+    modal.appendChild(fbSection);
+
     // Pozycje/kwoty/akcje budujemy PO wczytaniu cennika (potrzebny do
     // parametrycznych taśm i pickera). fetchCennik jest cache'owany, więc po
     // pierwszym otwarciu edytora jest to natychmiastowe.
@@ -539,6 +574,11 @@ window.WycenaEditor = (() => {
           rabat24h_wazny_do: rabat24hDo.value ? new Date(rabat24hDo.value).toISOString() : null,
         };
         body.lead_id = leadId || null;
+        // feedback_due tylko gdy coś się zmieniło — niezmieniony termin nie
+        // resetuje baseline'u watchdoga po stronie serwera.
+        const fb = feedbackInput.value;
+        if (watchMuted && !fb) body.feedback_due = '';
+        else if (fb !== initialFeedback) body.feedback_due = fb;
         if (!body.telefon_e164 && !body.email && !body.lead_id) {
           errEl.textContent = 'Podaj telefon albo e-mail.';
           return;

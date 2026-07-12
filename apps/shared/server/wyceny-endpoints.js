@@ -14,6 +14,11 @@
 const WYCENY_STATUSY = ['Open', 'Waiting for payment', 'Fulfilled', 'Closed', 'Stracone'];
 const WYCENY_TYPY = ['WYCENA', 'ZAMÓWIENIE', 'NOTATKA'];
 
+// Watchdog feedbacku (docs/plan-watchdog-feedback.md): termin "kiedy wrócić do
+// klienta" per wycena. Statusy zamykające temat gaszą watcha.
+const watchdog = require('./watchdog');
+const WYCENA_CLOSING_STATUSY = new Set(['Fulfilled', 'Closed', 'Stracone']);
+
 // Publiczny link formularza dla klienta (podmieniany na formularz-test w testach).
 function formularzLink(wycena) {
   const base = process.env.FORMULARZ_URL || 'https://lumlum.co/pages/formularz';
@@ -146,6 +151,46 @@ async function categorizeWyceny(supabase, wyceny) {
   return cat;
 }
 
+// Zapis terminu feedbacku z edytora (body.feedback_due = "YYYY-MM-DD" albo
+// ""/null = wyłącz watchdoga dla wyceny). Jawny termin: visible=true, human.
+// Błąd watcha nie może wywalić zapisu wyceny — watchdog to warstwa dodatkowa.
+async function applyFeedbackDue(supabase, wycena, feedbackDue, user) {
+  try {
+    const raw = String(feedbackDue ?? '').trim();
+    if (!raw) {
+      await watchdog.resolveWatch(supabase, { objectType: 'wycena', objectId: wycena.id, resolution: 'cancelled' });
+      return;
+    }
+    const dueAt = watchdog.warsawToIso(raw);
+    if (!dueAt) return;
+    await watchdog.setWatch(supabase, {
+      objectType: 'wycena',
+      objectId: wycena.id,
+      owner: wycena.owner || null,
+      dueAt,
+      reason: `Termin ustawiony ręcznie w edytorze przez ${user || 'panel'}`,
+      setBy: 'human',
+      visible: true,
+      source: 'edytor',
+      backlogTarget: 'b2c',
+    });
+  } catch (err) {
+    console.error(`Watchdog: błąd zapisu terminu wyceny ${wycena.id}:`, err.message);
+  }
+}
+
+// Doklejenie otwartego watcha do wierszy listy (chip + edytor). Wygoda UI —
+// błąd (np. brak tabeli) nie może położyć listy wycen.
+async function attachWatches(supabase, rows) {
+  try {
+    const map = await watchdog.getOpenWatches(supabase, 'wycena', (rows || []).map((w) => w.id));
+    return (rows || []).map((w) => ({ ...w, _watch: map.get(String(w.id)) || null }));
+  } catch (err) {
+    console.error('Watchdog: błąd odczytu watchy wycen:', err.message);
+    return rows || [];
+  }
+}
+
 async function logEvent(supabase, wycenaId, kind, payload) {
   const { error } = await supabase
     .from('wyceny_events')
@@ -217,12 +262,13 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       invByWycena.get(i.wycena_id).push(i);
     });
     const zrodla = await categorizeWyceny(supabase, wyceny);
-    return (wyceny || []).map((w) => ({
+    const rows = (wyceny || []).map((w) => ({
       ...decorate(w),
       _shipments: shipByWycena.get(w.id) || [],
       _invoices: invByWycena.get(w.id) || [],
       _zrodlo: zrodla.get(w.id) || 'nieprzypisane',
     }));
+    return attachWatches(supabase, rows);
   }
 
   // GET /api/wyceny[?typ=ZAMÓWIENIE][?bez_typ=ZAMÓWIENIE] — lista z
@@ -295,11 +341,11 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       const shipMap = byWycena(shipments);
       const invMap = byWycena(invoices);
       res.json({
-        data: (wyceny || []).map((w) => ({
+        data: await attachWatches(supabase, (wyceny || []).map((w) => ({
           ...decorate(w),
           _shipments: shipMap.get(w.id) || [],
           _invoices: invMap.get(w.id) || [],
-        })),
+        }))),
       });
     } catch (err) {
       handleError(res, err, 502);
@@ -411,9 +457,10 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       if (s.error) throw s.error;
       if (i.error) throw i.error;
       if (e.error) throw e.error;
+      const [withWatch] = await attachWatches(supabase, [decorate(data[0])]);
       res.json({
         data: {
-          ...decorate(data[0]),
+          ...withWatch,
           _shipments: s.data || [],
           _invoices: i.data || [],
           _events: e.data || [],
@@ -477,6 +524,9 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       const { data, error } = await supabase.from('wyceny').insert(row).select('*');
       if (error) throw error;
       await logEvent(supabase, id, 'wycena.created', { source: row.source, user: req.user.name });
+      if (body.feedback_due !== undefined) {
+        await applyFeedbackDue(supabase, data[0], body.feedback_due, req.user.name);
+      }
       res.json({ data: decorate(data[0]) });
     } catch (err) {
       handleError(res, err, 502);
@@ -498,7 +548,10 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
         patch.telefon_digits = String(patch.telefon_e164 || '').replace(/\D/g, '').replace(/^48/, '') || null;
       }
       if (patch.typ && !WYCENY_TYPY.includes(patch.typ)) delete patch.typ;
-      if (!Object.keys(patch).length) return res.status(400).json({ error: 'Brak zmian do zapisania' });
+      const hasFeedbackDue = body.feedback_due !== undefined;
+      if (!Object.keys(patch).length && !hasFeedbackDue) {
+        return res.status(400).json({ error: 'Brak zmian do zapisania' });
+      }
       if (patch.items) await syncItemsToCennik(supabase, patch.items);
       patch.updated_at = new Date().toISOString();
 
@@ -507,6 +560,13 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       if (error) throw error;
       if (!data || !data.length) return res.status(404).json({ error: 'Nie znaleziono wyceny' });
       await logEvent(supabase, id, 'wycena.edited', { fields: Object.keys(patch), user: req.user.name });
+      if (hasFeedbackDue) {
+        await applyFeedbackDue(supabase, data[0], body.feedback_due, req.user.name);
+      } else if (patch.status && WYCENA_CLOSING_STATUSY.has(patch.status)) {
+        // Temat zamknięty (sprzedane/stracone) — watchdog nie ma czego pilnować.
+        await watchdog.resolveWatch(supabase, { objectType: 'wycena', objectId: id, resolution: 'done' })
+          .catch((err) => console.error(`Watchdog: błąd gaszenia watcha wyceny ${id}:`, err.message));
+      }
       res.json({ data: decorate(data[0]) });
     } catch (err) {
       handleError(res, err, 502);
@@ -658,6 +718,8 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
         updated_at: new Date().toISOString(),
       }).eq('id', id);
       await logEvent(supabase, id, 'form.submitted', { source: 'panel-realizuj', user: req.user.name });
+      await watchdog.resolveWatch(supabase, { objectType: 'wycena', objectId: id, resolution: 'done' })
+        .catch((err) => console.error(`Watchdog: błąd gaszenia watcha wyceny ${id}:`, err.message));
       const { startPipeline } = require('./wyceny-pipeline');
       const result = await startPipeline(supabase, id);
       res.json({ ok: true, ...result });
