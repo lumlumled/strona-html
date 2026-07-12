@@ -122,25 +122,35 @@ const OPENAI_TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-m
 // został skasowany w Make, więc powiadomienie cicho nie wychodziło. Teraz to
 // Web Push prosto do ownera leada, przez wspólny notifyUser
 // (apps/shared/server/push.js) — bez pośrednictwa Make.
+//
+// Odbiorcy = owner leada + dodatkowe loginy z env NEW_LEAD_EXTRA_NOTIFY (po
+// przecinku). To drugie jest tymczasowe: dopóki Lorenzo nie włączy powiadomień
+// na swoim telefonie (Web Push per-urządzenie), kopia leci też do Antoniego,
+// żeby żaden lead nie przepadł. Wyłączenie = wyczyszczenie env, bez zmiany kodu.
 async function notifyNewLead({ telefon, name, owner }) {
   try {
-    const ownerName = String(owner || process.env.DEFAULT_HANDLOWIEC || '').trim();
-    if (!ownerName) return;
+    const wanted = new Set();
+    const ownerName = String(owner || process.env.DEFAULT_HANDLOWIEC || '').trim().toLowerCase();
+    if (ownerName) wanted.add(ownerName);
+    String(process.env.NEW_LEAD_EXTRA_NOTIFY || '')
+      .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+      .forEach((n) => wanted.add(n));
+    if (!wanted.size) return;
+
     const supabase = getClient();
-    const { data } = await supabase
-      .from('app_users')
-      .select('id')
-      .ilike('name', ownerName)
-      .eq('active', true)
-      .limit(1);
-    if (!data || !data.length) return;
+    const { data } = await supabase.from('app_users').select('id,name').eq('active', true);
+    const targets = (data || []).filter((u) => wanted.has(String(u.name || '').trim().toLowerCase()));
+    if (!targets.length) return;
+
     const kto = [name, telefon].filter(Boolean).join(' · ') || 'brak danych kontaktowych';
-    await notifyUser(getClient, data[0].id, {
-      title: 'Nowy lead B2C',
-      body: kto,
-      url: '/backlog-b2c/',
-      tag: `nowy-lead-${telefon || name || ''}`,
-    });
+    for (const u of targets) {
+      await notifyUser(getClient, u.id, {
+        title: 'Nowy lead B2C',
+        body: kto,
+        url: '/backlog-b2c/',
+        tag: `nowy-lead-${telefon || name || ''}`,
+      });
+    }
   } catch (err) {
     console.warn('Nie udało się wysłać powiadomienia o nowym leadzie:', err.message);
   }
