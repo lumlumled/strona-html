@@ -98,9 +98,12 @@ async function getShipment(shipmentId) {
 }
 
 // Etykieta PDF (bajty). Dostępna dopiero gdy przesyłka jest potwierdzona
-// (status confirmed — ShipX tworzy ofertę asynchronicznie).
+// (status confirmed — ShipX tworzy ofertę asynchronicznie). Rozmiar A6
+// (decyzja Antoniego 2026-07-13) — pod drukarkę etykiet; nadpisywalny env
+// SHIPX_LABEL_TYPE (np. A6P/normal), gdyby trzeba było inny format.
 async function downloadLabel(shipmentId) {
-  const res = await fetch(`${BASE}/shipments/${shipmentId}/label?format=pdf`, {
+  const type = process.env.SHIPX_LABEL_TYPE || 'A6';
+  const res = await fetch(`${BASE}/shipments/${shipmentId}/label?format=pdf&type=${encodeURIComponent(type)}`, {
     headers: { Authorization: `Bearer ${token()}` },
   });
   if (!res.ok) throw new Error(`ShipX etykieta ${shipmentId} → ${res.status}`);
