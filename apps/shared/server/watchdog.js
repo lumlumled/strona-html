@@ -51,6 +51,13 @@ function plDateToIso(value, fallbackTime = '09:00') {
   return warsawToIso(date, m[4] || fallbackTime);
 }
 
+// "YYYY-MM-DD" dzisiejszej daty Warsaw przesunięte o N dni.
+function warsawDatePlusDays(days) {
+  const { y, m, d } = warsawParts();
+  const dt = new Date(Date.UTC(y, m - 1, d + Number(days || 0)));
+  return dt.toISOString().slice(0, 10);
+}
+
 // ── Zapis/odczyt watchy ──────────────────────────────────────────────────────
 
 // Ustawia termin feedbacku obiektu. Otwarty watch tego obiektu zostaje
@@ -116,13 +123,132 @@ async function getOpenWatches(supabase, objectType, objectIds) {
   return map;
 }
 
+// ── AI: jawna przesłanka terminu + ocena temperatury (jedno wywołanie) ──────
+// Wzorzec 1:1 z analyzeNotatka (leady-endpoints.js): gpt-5-mini, JSON wymuszony,
+// reasoning minimal, daty względne przelicza model od DZISIAJ (Warsaw).
+
+const WATCHDOG_MODEL = process.env.WATCHDOG_MODEL || 'gpt-5-mini';
+const DUE_DAYS_MIN = 2;
+const DUE_DAYS_MAX = 21;
+
+function buildWycenaWatchPrompt(dzisiaj) {
+  return `Jesteś asystentem CRM firmy LumLum (oświetlenie LED premium).
+Dostajesz dane WYCENY wysłanej klientowi. Zdecyduj, KIEDY handlowiec powinien
+wrócić do klienta, jeśli ten nie odezwie się sam. Zwróć WYŁĄCZNIE jeden obiekt
+JSON. Bez komentarzy, bez markdownu, bez tekstu przed ani po.
+
+DZISIAJ: ${dzisiaj}
+
+===== KROK 1: JAWNA PRZESŁANKA =====
+Szukaj w opisie/komentarzu/historii KONKRETNEGO terminu przyszłego kontaktu
+("odezwę się za tydzień", "decyzja po świętach", "klient wraca z urlopu 20.07",
+"zadzwonić w piątek"). Jeśli jest:
+- data_feedbacku = ta data przeliczona względem DZISIAJ, format DD.MM.YYYY
+  (data PRZESZŁA względem DZISIAJ → potraktuj jak brak przesłanki),
+- reason = krótki cytat/parafraza przesłanki (max 12 słów).
+Terminy niezwiązane z kontaktem (dostawa, koniec budowy) → to NIE przesłanka.
+
+===== KROK 2: BRAK PRZESŁANKI — TEMPERATURA =====
+data_feedbacku = null i oceń temperaturę tematu:
+- GORĄCY (duża kwota, świeża wycena, konkretne pytania, dopięte szczegóły,
+  aktywny dialog) → due_days = 3
+- NORMALNY → due_days = 7
+- CHŁODNY (mała kwota, ogólnikowy opis, stary temat, brak reakcji w historii)
+  → due_days = 14
+Dozwolony zakres due_days: ${DUE_DAYS_MIN}-${DUE_DAYS_MAX}.
+reason = jedno krótkie zdanie po polsku, dlaczego taki termin.
+
+===== FORMAT WYJŚCIOWY =====
+{
+  "data_feedbacku": "DD.MM.YYYY lub null",
+  "due_days": 3,
+  "reason": "krótkie uzasadnienie"
+}`;
+}
+
+function wycenaWatchContext(wycena, extra = {}) {
+  const parts = [
+    `Kwota wyceny (brutto): ${wycena.kwota_proponowana_brutto ?? 'brak'}`,
+    `Utworzona: ${String(wycena.created_at || '').slice(0, 10)}`,
+    `Status: ${wycena.status || 'Open'}, etap: ${wycena.process_stage || 'NEW'}`,
+    `Klient: ${wycena.imie_nazwisko || 'brak nazwy'}`,
+    wycena.opis_zamowienia ? `Opis zamówienia: ${String(wycena.opis_zamowienia).slice(0, 800)}` : '',
+    wycena.komentarz ? `Komentarz handlowca: ${String(wycena.komentarz).slice(0, 800)}` : '',
+    wycena.history_log ? `Historia: ${String(wycena.history_log).slice(-1200)}` : '',
+    extra.eventsCount != null ? `Liczba zdarzeń na wycenie: ${extra.eventsCount}` : '',
+    extra.rozmowy ? `Ostatnie rozmowy/notatki z leadem:\n${String(extra.rozmowy).slice(0, 1500)}` : '',
+  ];
+  return parts.filter(Boolean).join('\n');
+}
+
+async function analyzeWycenaFeedback(wycena, extra = {}) {
+  const fallback = { data_feedbacku: null, due_days: 7, reason: 'domyślny tydzień (AI niedostępne)' };
+  const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+  if (!OPENAI_API_KEY) return fallback;
+  try {
+    const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_API_KEY}` },
+      body: JSON.stringify({
+        model: WATCHDOG_MODEL,
+        response_format: { type: 'json_object' },
+        reasoning_effort: 'minimal',
+        messages: [
+          { role: 'system', content: buildWycenaWatchPrompt(warsawDateStr()) },
+          { role: 'user', content: wycenaWatchContext(wycena, extra) },
+        ],
+      }),
+    });
+    if (!aiRes.ok) return fallback;
+    const body = await aiRes.json();
+    const parsed = JSON.parse(body.choices?.[0]?.message?.content || '');
+    return { ...fallback, ...parsed };
+  } catch (err) {
+    console.warn(`Watchdog: analiza wyceny ${wycena.id} (GPT) nie powiodła się:`, err.message);
+    return fallback;
+  }
+}
+
+// Uzbraja watchdoga na wycenie bez otwartego watcha: jawna przesłanka z treści
+// -> visible=true, inaczej cichy termin z oceny temperatury. Wołane przez
+// dispatcher (sweep) — pokrywa nowe wyceny, backfill i re-ewaluację po
+// aktywności. Zwraca utworzony watch albo null (nic do zrobienia).
+async function armWycena(supabase, wycena, extra = {}) {
+  if (!wycena || wycena.typ !== 'WYCENA' || wycena.status !== 'Open') return null;
+  const open = await getOpenWatches(supabase, 'wycena', [wycena.id]);
+  if (open.size) return null;
+  const ai = await analyzeWycenaFeedback(wycena, extra);
+  let dueAt = ai.data_feedbacku ? plDateToIso(ai.data_feedbacku) : null;
+  // Przesłanka z przeszłości / nieparsowalna -> traktuj jak brak przesłanki.
+  if (dueAt && new Date(dueAt).getTime() <= Date.now()) dueAt = null;
+  const explicit = Boolean(dueAt);
+  if (!dueAt) {
+    const days = Math.min(DUE_DAYS_MAX, Math.max(DUE_DAYS_MIN, Number(ai.due_days) || 7));
+    dueAt = warsawToIso(warsawDatePlusDays(days));
+  }
+  return setWatch(supabase, {
+    objectType: 'wycena',
+    objectId: wycena.id,
+    owner: wycena.owner || null,
+    dueAt,
+    reason: ai.reason || null,
+    setBy: 'ai',
+    visible: explicit,
+    source: explicit ? 'notatka' : 'ai_temperatura',
+    backlogTarget: 'b2c',
+  });
+}
+
 module.exports = {
   FEEDBACK_WATCH_TABLE,
   warsawParts,
   warsawDateStr,
   warsawToIso,
   plDateToIso,
+  warsawDatePlusDays,
   setWatch,
   resolveWatch,
   getOpenWatches,
+  analyzeWycenaFeedback,
+  armWycena,
 };
