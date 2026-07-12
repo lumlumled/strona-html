@@ -307,14 +307,20 @@
 
       const fmt = (n) => `${Number(n || 0).toLocaleString('pl-PL', { maximumFractionDigits: 0 })} zł`;
 
-      let delta = null;
-      if (stats.poprzedniMiesiac.suma > 0) {
-        const pct = Math.round(((stats.tenMiesiac.suma - stats.poprzedniMiesiac.suma) / stats.poprzedniMiesiac.suma) * 100);
-        delta = h('span', `stat-delta ${pct >= 0 ? 'up' : 'down'}`, `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct)}% vs poprzedni`);
+      // Porównanie do TEMPA zeszłego miesiąca do dziś (nie do całej kwoty) —
+      // średni obrót/dzień × dni, które minęły w tym miesiącu.
+      const pace = stats.tempo && stats.tempo.poprzedniDoTempa;
+      const tenExtra = document.createDocumentFragment();
+      if (pace > 0) {
+        tenExtra.appendChild(h('div', 'stat-sub', `tempo zeszłego mies. do dziś ≈ ${fmt(pace)}`));
+        const pct = Math.round(((stats.tenMiesiac.suma - pace) / pace) * 100);
+        const delta = h('span', `stat-delta ${pct >= 0 ? 'up' : 'down'}`, `${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct)}% vs tempo`);
+        delta.title = `Względem średniego tempa zeszłego miesiąca do ${stats.tempo.daysElapsed}. dnia (≈ ${fmt(pace)}). Cała kwota zeszłego miesiąca: ${fmt(stats.poprzedniMiesiac.suma)}.`;
+        tenExtra.appendChild(delta);
       }
 
       wrap.append(
-        mk('Ten miesiąc', `${stats.tenMiesiac.count} zamówień`, fmt(stats.tenMiesiac.suma), delta),
+        mk('Ten miesiąc', `${stats.tenMiesiac.count} zamówień`, fmt(stats.tenMiesiac.suma), tenExtra),
         mk('Poprzedni miesiąc', `${stats.poprzedniMiesiac.count} zamówień`, fmt(stats.poprzedniMiesiac.suma)),
         mk('Łącznie', `${stats.total.count} zamówień`, fmt(stats.total.suma)),
       );

@@ -205,10 +205,24 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       const kwota = (r) => num(r.kwota_sprzedazy_brutto ?? r.kwota_proponowana_brutto);
       const sum = (arr) => Math.round(arr.reduce((a, r) => a + kwota(r), 0) * 100) / 100;
       const inMonth = (m) => rows.filter((r) => r.created_at && warsaw(r.created_at) === m);
+      const prevSuma = sum(inMonth(prevMonth));
+
+      // Porównanie do TEMPA, nie do całej kwoty: uśredniamy obrót zeszłego
+      // miesiąca na dzień i skalujemy liczbą dni, które już minęły w tym
+      // miesiącu. Dzięki temu 1. dnia nie jesteś "−100%", tylko relacja do
+      // oczekiwanego tempa (decyzja Antoniego 2026-07-12).
+      const [py, pm] = prevMonth.split('-').map(Number);
+      const daysInPrevMonth = new Date(py, pm, 0).getDate();
+      const daysElapsed = Number(new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Warsaw', day: 'numeric' }).format(new Date()));
+      const poprzedniDoTempa = daysInPrevMonth
+        ? Math.round((prevSuma / daysInPrevMonth) * daysElapsed * 100) / 100
+        : 0;
+
       res.json({
         total: { count: rows.length, suma: sum(rows) },
         tenMiesiac: { count: inMonth(thisMonth).length, suma: sum(inMonth(thisMonth)) },
-        poprzedniMiesiac: { count: inMonth(prevMonth).length, suma: sum(inMonth(prevMonth)) },
+        poprzedniMiesiac: { count: inMonth(prevMonth).length, suma: prevSuma },
+        tempo: { daysElapsed, daysInPrevMonth, poprzedniDoTempa },
       });
     } catch (err) {
       handleError(res, err, 502);
