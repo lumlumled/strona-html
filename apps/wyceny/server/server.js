@@ -36,6 +36,29 @@ app.get('/shared/:file', (req, res) => {
 
 const auth = createAuth({ getClient, panelKey: 'wyceny', loginTitle: 'Wyceny' });
 servePushWorker(app);
+
+// Manifest PWA szybkiej wyceny — PUBLICZNY (przed bramką auth): przeglądarka
+// pobiera manifest bez ciasteczek, więc nie może wpaść na redirect do logowania.
+// start_url/scope liczone z baseUrl, żeby działało i lokalnie, i pod /wyceny.
+app.get('/szybka.webmanifest', (req, res) => {
+  res.type('application/manifest+json').json({
+    name: 'LumLum — Szybka wycena',
+    short_name: 'Szybka wycena',
+    description: 'Ekspresowe dodawanie wyceny tekstem (AI).',
+    start_url: `${req.baseUrl}/szybka-wycena`,
+    scope: `${req.baseUrl}/`,
+    display: 'standalone',
+    orientation: 'portrait',
+    background_color: '#0a0a0a',
+    theme_color: '#000000',
+    icons: [
+      { src: '/assets/lumlum-icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: '/assets/lumlum-icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: '/assets/lumlum-icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+    ],
+  });
+});
+
 auth.register(app);
 registerPushEndpoints(app, { getClient });
 
@@ -51,15 +74,26 @@ registerWycenyEndpoints(app, {
 });
 
 const APP_HTML_TEMPLATE = fs.readFileSync(path.join(__dirname, '..', 'app.html'), 'utf8');
+const SZYBKA_HTML_TEMPLATE = fs.readFileSync(path.join(__dirname, '..', 'szybka.html'), 'utf8');
 
-app.get('/', (req, res) => {
-  const html = APP_HTML_TEMPLATE.replace(
+function injectGlobals(template, req) {
+  return template.replace(
     '<head>',
     `<head>\n<script>window.API_BASE = ${JSON.stringify(req.baseUrl)};\n` +
     `window.LUMLUM_USER = ${JSON.stringify(clientPayload(req.user))};\n` +
     `window.LUMLUM_LINKS = ${JSON.stringify(panelLinks())};</script>`
   );
-  res.type('html').send(html);
+}
+
+app.get('/', (req, res) => {
+  res.type('html').send(injectGlobals(APP_HTML_TEMPLATE, req));
+});
+
+// Osobna strona szybkiej wyceny — własny link + skrót PWA na ekran telefonu.
+// Ta sama logika co "Szybkie dodanie" w panelu (WycenaEditor.openQuickAdd),
+// tylko pełnoekranowo i od razu otwarta.
+app.get('/szybka-wycena', (req, res) => {
+  res.type('html').send(injectGlobals(SZYBKA_HTML_TEMPLATE, req));
 });
 
 const PORT = process.env.PORT || 3008;

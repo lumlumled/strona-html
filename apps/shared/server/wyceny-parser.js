@@ -16,6 +16,12 @@ const path = require('path');
 
 const PARSER_PROMPT = fs.readFileSync(path.join(__dirname, 'wyceny-parser-prompt.txt'), 'utf8');
 const PARSER_MODEL = process.env.WYCENY_PARSER_MODEL || 'gpt-5-mini';
+// Szybkość: gpt-5-mini bez tego chodzi na średnim rozumowaniu i mieli ~20s+.
+// Ekstrakcja z bogatego promptu (domyślne IP20/4000K, tabela kanoniczna SKU)
+// spokojnie wystarcza 'minimal' — na testach ~5s i poprawnie łapie barwę,
+// klasę IP i sterowniki/piloty. Podbić env-em (low/medium), gdyby trafność
+// przy trudniejszych miksach spadła.
+const PARSER_EFFORT = process.env.WYCENY_PARSER_EFFORT || 'minimal';
 
 function warsawNow() {
   return new Intl.DateTimeFormat('sv-SE', {
@@ -35,6 +41,10 @@ async function parseWycenaText(tekst) {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
       model: PARSER_MODEL,
+      // Niskie rozumowanie = wyraźnie szybsza odpowiedź; JSON wymuszony, bo
+      // i tak parsujemy sam obiekt. reasoning_effort tylko dla modeli gpt-5.
+      ...(/^gpt-5/.test(PARSER_MODEL) ? { reasoning_effort: PARSER_EFFORT } : {}),
+      response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: PARSER_PROMPT },
         // Ten sam kształt wejścia co w Make (timestamp + text), tylko bez

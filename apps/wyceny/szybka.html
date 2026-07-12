@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Szybka wycena — LumLum</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link rel="manifest" href="szybka.webmanifest">
+  <meta name="theme-color" content="#000000">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Szybka wycena">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared/wycena-card.css">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --surface-1: #ffffff;
+      --surface-2: #f0f0ee;
+      --page: #f5f5f4;
+      --text-primary: #111111;
+      --text-secondary: #52514e;
+      --text-muted: #8a8984;
+      --border: rgba(17, 17, 17, 0.12);
+      --accent: #111111;
+      --accent-contrast: #ffffff;
+      --accent-soft: #ececea;
+      --good: #0ca30c;
+      --bad: #b5433f;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-1: #161616;
+        --surface-2: #202020;
+        --page: #0a0a0a;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted: #8a8984;
+        --border: rgba(255, 255, 255, 0.14);
+        --accent: #ffffff;
+        --accent-contrast: #0a0a0a;
+        --accent-soft: #262626;
+        --good: #16c116;
+        --bad: #e08585;
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--page);
+      color: var(--text-primary);
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+    }
+    .sz-wrap {
+      flex: 1;
+      width: 100%;
+      max-width: 560px;
+      margin: 0 auto;
+      padding: max(1.6rem, env(safe-area-inset-top)) 1.4rem calc(2rem + env(safe-area-inset-bottom));
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 1.5rem;
+      text-align: center;
+    }
+    .sz-badge {
+      align-self: center;
+      font-size: 3.2rem;
+      line-height: 1;
+      width: 5rem;
+      height: 5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 24px;
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      box-shadow: 0 8px 30px rgba(0,0,0,0.10);
+    }
+    .sz-wrap h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: -0.4px; }
+    .sz-sub { color: var(--text-secondary); font-size: 0.98rem; line-height: 1.5; }
+    .sz-btn {
+      font: inherit;
+      font-size: 1.05rem;
+      font-weight: 700;
+      padding: 1rem 1.3rem;
+      border-radius: 14px;
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: var(--accent-contrast);
+      cursor: pointer;
+      width: 100%;
+    }
+    .sz-btn:active { opacity: 0.85; }
+    .sz-hint { font-size: 0.82rem; color: var(--text-muted); }
+    .sz-hint a { color: var(--text-secondary); }
+    .sz-toast {
+      position: fixed;
+      left: 50%;
+      bottom: calc(1.4rem + env(safe-area-inset-bottom));
+      transform: translateX(-50%) translateY(1.5rem);
+      background: var(--accent);
+      color: var(--accent-contrast);
+      font-weight: 600;
+      font-size: 0.92rem;
+      padding: 0.7rem 1.1rem;
+      border-radius: 12px;
+      box-shadow: 0 10px 34px rgba(0,0,0,0.28);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.22s ease, transform 0.22s ease;
+      z-index: 100;
+    }
+    .sz-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .sz-toast.err { background: var(--bad); color: #fff; }
+  </style>
+</head>
+<body>
+  <div class="sz-wrap">
+    <div class="sz-badge">⚡</div>
+    <div>
+      <h1>Szybka wycena</h1>
+      <p class="sz-sub">Wpisz albo wklej wycenę jak w Telegramie — AI sparsuje produkty, barwę i klasę IP, a Ty zatwierdzasz podgląd.</p>
+    </div>
+    <button class="sz-btn" id="sz-open" type="button">⚡ Nowa szybka wycena</button>
+    <p class="sz-hint">Pełny panel: <a id="sz-panel-link" href="./">Wyceny</a></p>
+  </div>
+  <div class="sz-toast" id="sz-toast"></div>
+
+  <script src="shared/wycena-card.js"></script>
+  <script src="assets/wycena-editor.js"></script>
+  <script>
+    (function () {
+      const API_BASE = (window.API_BASE || '');
+      const openBtn = document.getElementById('sz-open');
+      const toastEl = document.getElementById('sz-toast');
+      document.getElementById('sz-panel-link').href = `${API_BASE}/` || './';
+
+      let toastTimer = null;
+      function toast(msg, isErr) {
+        toastEl.textContent = msg;
+        toastEl.classList.toggle('err', !!isErr);
+        toastEl.classList.add('show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2600);
+      }
+
+      function open() {
+        if (!window.WycenaEditor) { toast('Edytor się nie wczytał — odśwież stronę', true); return; }
+        window.WycenaEditor.openQuickAdd({
+          apiBase: API_BASE,
+          onSaved: (data) => {
+            toast(data && data.id ? `Zapisano wycenę #${data.id}` : 'Zapisano wycenę');
+            // Od razu gotowe na kolejną — tempo pracy na telefonie.
+            setTimeout(open, 350);
+          },
+        });
+      }
+
+      openBtn.addEventListener('click', open);
+      // Otwieramy od razu po wejściu (skrót z ekranu telefonu → pisz od ręki).
+      open();
+    })();
+  </script>
+</body>
+</html>

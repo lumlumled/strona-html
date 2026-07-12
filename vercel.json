@@ -26,7 +26,7 @@
       "maxDuration": 180
     },
     "api/wyceny.js": {
-      "includeFiles": "{apps/wyceny/app.html,apps/wyceny/assets/**,apps/shared/**}",
+      "includeFiles": "{apps/wyceny/app.html,apps/wyceny/szybka.html,apps/wyceny/assets/**,apps/shared/**}",
       "maxDuration": 180
     },
     "api/formularz.js": {
@@ -45,6 +45,8 @@
     { "source": "/crm", "destination": "/crm/", "permanent": false },
     { "source": "/sprzedaze", "destination": "/sprzedaze/", "permanent": false },
     { "source": "/wyceny", "destination": "/wyceny/", "permanent": false },
+    { "source": "/szybka-wycena", "destination": "/wyceny/szybka-wycena", "permanent": false },
+    { "source": "/szybka", "destination": "/wyceny/szybka-wycena", "permanent": false },
     { "source": "/wiadomosci", "destination": "/wiadomosci/", "permanent": false },
     { "source": "/wiedza", "destination": "/wiedza/", "permanent": false }
   ],

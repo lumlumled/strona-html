@@ -490,8 +490,9 @@ window.WycenaEditor = (() => {
     const saveBtn = h('button', 'wk-btn primary', 'Zapisz');
     saveBtn.type = 'button';
     saveBtn.hidden = true;
-    const editorBtn = h('button', 'wk-btn', 'Otwórz w edytorze');
+    const editorBtn = h('button', 'wk-btn', '✎ Edytuj produkty');
     editorBtn.type = 'button';
+    editorBtn.title = 'Otwórz w pełnym edytorze — ilości, barwa, dodaj/usuń pozycję (ten sam co przy Produktach)';
     editorBtn.hidden = true;
     const cancel = h('button', 'wk-btn', 'Anuluj');
     cancel.type = 'button';
