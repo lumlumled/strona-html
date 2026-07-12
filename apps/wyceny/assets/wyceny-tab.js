@@ -67,8 +67,9 @@ window.WycenyTab = (() => {
     return b;
   }
 
-  // Segmentowany filtr właściciela: „Wszyscy" + kółeczko na każdego autora
-  // obecnego na liście (pokazuje się dopiero, gdy właścicieli jest >1).
+  // Filtr właściciela = kółeczka A/L (styl jak owner leada). Bez „Wszyscy":
+  // klik na kółeczko zawęża do tej osoby, klik na aktywne odznacza (=wszyscy).
+  // Pokazuje się dopiero przy >1 właścicielu (Lorenzo i tak widzi tylko swoje).
   function renderOwnerFilter() {
     const wrap = document.getElementById('wyceny-owner-filter');
     if (!wrap) return;
@@ -76,16 +77,18 @@ window.WycenyTab = (() => {
     if (ownerFilter && !owners.includes(ownerFilter)) ownerFilter = '';
     wrap.innerHTML = '';
     if (owners.length < 2) return;
-    const mk = (label, value, title) => {
-      const btn = h('button', 'owner-chip' + (ownerFilter === value ? ' active' : ''), label);
+    owners.forEach((o) => {
+      const active = ownerFilter === o;
+      const btn = h('button', 'owner-circle' + (active ? ' active' : ''), ownerInitial(o));
       btn.type = 'button';
-      if (title) btn.title = title;
-      if (value) btn.style.setProperty('--owner-hue', String(ownerHue(value)));
-      btn.addEventListener('click', () => { ownerFilter = value; renderOwnerFilter(); renderList(); });
-      return btn;
-    };
-    wrap.appendChild(mk('Wszyscy', ''));
-    owners.forEach((o) => wrap.appendChild(mk(ownerInitial(o), o, o)));
+      btn.title = active ? `Tylko: ${o} (kliknij, by pokazać wszystkich)` : `Pokaż tylko: ${o}`;
+      btn.addEventListener('click', () => {
+        ownerFilter = active ? '' : o; // toggle
+        renderOwnerFilter();
+        renderList();
+      });
+      wrap.appendChild(btn);
+    });
   }
 
   // ── Toolbar ────────────────────────────────────────────────────────────────

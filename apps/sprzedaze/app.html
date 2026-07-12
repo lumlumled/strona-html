@@ -155,24 +155,28 @@
     .toolbar button:hover { background: var(--accent-soft); }
     .count-badge { font-size: 0.85rem; color: var(--text-secondary); margin-left: auto; }
 
-    /* ── Filtr właściciela (Wszyscy / A / L …) ── */
-    .owner-filter { display: inline-flex; align-items: center; gap: 0.3rem; }
+    /* ── Filtr właściciela = kółeczka A/L (styl jak owner leada) ── */
+    .owner-filter { display: inline-flex; align-items: center; gap: 0.35rem; }
     .owner-filter:empty { display: none; }
-    .owner-chip {
+    .owner-circle {
+      width: 1.7rem;
+      height: 1.7rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      background: var(--accent-soft);
+      color: var(--text-primary);
       font: inherit;
       font-size: 0.78rem;
-      font-weight: 600;
-      min-width: 1.9rem;
-      padding: 0.34rem 0.55rem;
-      border-radius: 999px;
-      border: 1px solid var(--border);
-      background: var(--surface-1);
-      color: var(--text-secondary);
+      font-weight: 700;
       cursor: pointer;
-      line-height: 1;
+      opacity: 0.5;
+      transition: opacity 0.12s ease, background 0.12s ease;
     }
-    .owner-chip:hover { background: var(--accent-soft); }
-    .owner-chip.active { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
+    .owner-circle:hover { border-color: var(--accent); opacity: 1; }
+    .owner-circle.active { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); opacity: 1; }
 
     .owner-badge {
       flex: 0 0 auto;
@@ -361,16 +365,21 @@
       if (ownerFilter && !owners.includes(ownerFilter)) ownerFilter = '';
       wrap.innerHTML = '';
       if (owners.length < 2) return;
-      const mk = (label, value, title) => {
-        const btn = h('button', 'owner-chip' + (ownerFilter === value ? ' active' : ''), label);
+      // Kółeczka A/L (styl jak owner leada). Bez „Wszyscy": klik = zawęź,
+      // klik na aktywne = odznacz (wspólne). Lista i STATYSTYKI podążają za wyborem.
+      owners.forEach((o) => {
+        const active = ownerFilter === o;
+        const btn = h('button', 'owner-circle' + (active ? ' active' : ''), ownerInitial(o));
         btn.type = 'button';
-        if (title) btn.title = title;
-        if (value) btn.style.setProperty('--owner-hue', String(ownerHue(value)));
-        btn.addEventListener('click', () => { ownerFilter = value; renderOwnerFilter(); renderList(); loadStats(); });
-        return btn;
-      };
-      wrap.appendChild(mk('Wszyscy', ''));
-      owners.forEach((o) => wrap.appendChild(mk(ownerInitial(o), o, o)));
+        btn.title = active ? `Tylko: ${o} (kliknij, by pokazać wszystkich)` : `Pokaż tylko: ${o}`;
+        btn.addEventListener('click', () => {
+          ownerFilter = active ? '' : o; // toggle
+          renderOwnerFilter();
+          renderList();
+          loadStats();
+        });
+        wrap.appendChild(btn);
+      });
     }
 
     // Statystyki podążają za przełącznikiem właściciela: admin (Antoni) może
