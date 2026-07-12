@@ -1805,6 +1805,67 @@ function applyRozmowySpozaBazy(parsed, rozmowySpozaBazyRaw, phoneToLp, nextLp) {
   return next;
 }
 
+// Alerty watchdoga "temat ucieka" (docs/plan-watchdog-feedback.md §8) —
+// otwarte, zaalertowane watche (backlog_target=b2c) z danymi wyceny do
+// renderu. Kategoria w pełni deterministyczna, jak zalegle_feedbacki.
+async function fetchAlertyWatchdoga(supabase) {
+  const { data, error } = await supabase
+    .from('feedback_watch')
+    .select('*')
+    .is('resolved_at', null)
+    .not('alerted_at', 'is', null)
+    .eq('backlog_target', 'b2c')
+    .order('due_at', { ascending: true });
+  if (error) throw error;
+  const rows = data || [];
+  const wycenaIds = rows.filter((r) => r.object_type === 'wycena').map((r) => Number(r.object_id));
+  const wycenaById = new Map();
+  if (wycenaIds.length) {
+    const { data: wyceny, error: wErr } = await supabase
+      .from('wyceny')
+      .select('id,imie_nazwisko,telefon_e164,telefon_digits,kwota_proponowana_brutto')
+      .in('id', wycenaIds);
+    if (wErr) throw wErr;
+    (wyceny || []).forEach((w) => wycenaById.set(String(w.id), w));
+  }
+  return rows.map((r) => {
+    const w = r.object_type === 'wycena' ? wycenaById.get(r.object_id) : null;
+    const digits = w
+      ? String(w.telefon_digits || String(w.telefon_e164 || '').replace(/\D/g, '').replace(/^48/, '')).trim()
+      : '';
+    return {
+      imie: (w && w.imie_nazwisko) || `Wycena #${r.object_id}`,
+      telefon: digits ? `+48${digits}` : '',
+      status: '',
+      opis: r.alert_text || '',
+      kwota: w ? w.kwota_proponowana_brutto : null,
+      owner: r.owner || '',
+      watch_id: r.id,
+      typ_obiektu: r.object_type,
+    };
+  });
+}
+
+// Alert może dotyczyć case'a, który już jest w planie (np. wycena z
+// feedbackiem) — wtedy dostaje TEN SAM lp co bliźniak (checkbox zamyka oba
+// naraz, wzorzec applyRozmowySpozaBazy), zamiast znikać jak w zalegle.
+function applyAlertyWatchdoga(parsed, alertyRaw, phoneToLp, nextLp) {
+  let next = nextLp;
+  const result = alertyRaw.map((alert) => {
+    const digits = normalizePhoneDigits(alert.telefon);
+    let lp = digits ? phoneToLp.get(digits) : undefined;
+    if (lp === undefined) {
+      lp = next;
+      next += 1;
+      if (digits) phoneToLp.set(digits, lp);
+    }
+    return { ...alert, lp, row_number: 0, zamkniete: 0, zadzwonil_dzis: false };
+  });
+  parsed.kategorie = parsed.kategorie || {};
+  parsed.kategorie.alerty_watchdoga = result;
+  return next;
+}
+
 function applyZalegleFeedbacki(parsed, zalegleRaw, phoneToLp, nextLp) {
   let next = nextLp;
   // Case, który model już umieścił gdzieś indziej (nowe/wyceny_z_feedbackiem/
@@ -1828,6 +1889,7 @@ function applyZalegleFeedbacki(parsed, zalegleRaw, phoneToLp, nextLp) {
 
   parsed.kategorie = parsed.kategorie || {};
   parsed.kategorie.zalegle_feedbacki = result;
+  return next;
 }
 
 // Kategorie "planu dnia" w których ma sens oznaczanie zaległości z wczoraj —
@@ -2174,7 +2236,7 @@ app.all('/api/cron/umowa-draft', async (req, res) => {
       fetchCallCountByPhone(supabase),
     ]);
 
-    const [standupLog, logZmianWczoraj, logZmianDzis, nowe, wycenyZFeedbackiem, inneZFeedbackiem, nieodebrane, wycenyHistoryczne, zalegleRaw, rozmowySpozaBazyRaw] = await Promise.all([
+    const [standupLog, logZmianWczoraj, logZmianDzis, nowe, wycenyZFeedbackiem, inneZFeedbackiem, nieodebrane, wycenyHistoryczne, zalegleRaw, rozmowySpozaBazyRaw, alertyWatchdogaRaw] = await Promise.all([
       fetchStandupLog3(supabase),
       fetchLogZmianRange(supabase, wczoraj.start, wczoraj.end),
       fetchLogZmianRange(supabase, dzis.start, dzis.end),
@@ -2185,6 +2247,7 @@ app.all('/api/cron/umowa-draft', async (req, res) => {
       fetchWycenyHistoryczne(supabase),
       fetchZalegleFeedbacki(supabase, wycenaByPhone, callCountByPhone),
       fetchRozmowySpozaBazy(supabase, wycenaByPhone, callCountByPhone),
+      fetchAlertyWatchdoga(supabase),
     ]);
 
     const calledSet = buildCalledTodaySet(logZmianDzis);
@@ -2267,7 +2330,8 @@ app.all('/api/cron/umowa-draft', async (req, res) => {
 
     const { phoneToLp, nextLp } = reassignLps(parsed);
     const nextLpPoBazie = applyRozmowySpozaBazy(parsed, rozmowySpozaBazyRaw, phoneToLp, nextLp);
-    applyZalegleFeedbacki(parsed, zalegleRaw, phoneToLp, nextLpPoBazie);
+    const nextLpPoZaleglych = applyZalegleFeedbacki(parsed, zalegleRaw, phoneToLp, nextLpPoBazie);
+    applyAlertyWatchdoga(parsed, alertyWatchdogaRaw, phoneToLp, nextLpPoZaleglych);
     fixLpMentionsInComment(parsed);
     postProcessCalledToday(parsed, calledSet);
     postProcessCounts(parsed);
