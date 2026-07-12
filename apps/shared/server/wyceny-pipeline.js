@@ -525,7 +525,13 @@ async function runWorker(db) {
   // 4) zamówienia SUBMITTED bez proformy (>10 min) — retry pipeline'u.
   // NIGDY dla wycen z importu arkusza (stare zamówienia sprzed migracji
   // mają stage SUBMITTED bez faktur — to historia, nie zator) i tylko dla
-  // świeżych submitów (ostatnie 7 dni).
+  // świeżych submitów (ostatnie 7 dni). NIGDY też dla zamówień ze sklepu
+  // Shopify (source='shopify'): sklep robi własny fulfillment i faktury, a
+  // one wpadają jako form_status=SUBMITTED/process_stage=SUBMITTED (patrz
+  // wyceny-shopify.js mapStage) — bez tego wykluczenia retry sam odpaliłby na
+  // nich ShipX + inFakt (zamówiłby kuriera i wystawił FV za sklepowy order,
+  // przypadek #1877). Bezpiecznik MUSI być na prodzie, ZANIM wejdzie
+  // SHOPIFY_ADMIN_TOKEN i orders sklepu zaczną się synchronizować.
   const cutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
   const freshCutoff = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
   const { data: stuck } = await db.from('wyceny')
@@ -533,6 +539,7 @@ async function runWorker(db) {
     .eq('form_status', 'SUBMITTED')
     .in('process_stage', ['SUBMITTED', 'ERROR'])
     .neq('source', 'import')
+    .neq('source', 'shopify')
     .gt('form_submitted_at', freshCutoff)
     .lt('updated_at', cutoff)
     .limit(10);
