@@ -103,6 +103,26 @@ test('normalize: email lowercase, fb surowe ID', () => {
   assert.equal(identity.normalize('fb', '1234567890'), '1234567890');
 });
 
+test('extractContacts: mail z treści rozmowy', () => {
+  const r = identity.extractContacts('chyba cyfrowej, mój mail to antoni.chodurski@gmail.com Czy sterownik?');
+  assert.deepEqual(r.emails, ['antoni.chodurski@gmail.com']);
+  assert.deepEqual(r.phones, []);
+});
+
+test('extractContacts: telefon z sygnałem albo formatem grupowanym → 48XXXXXXXXX', () => {
+  assert.deepEqual(identity.extractContacts('mój numer 604 650 590').phones, ['48604650590']);
+  assert.deepEqual(identity.extractContacts('tel: 604-650-590').phones, ['48604650590']);
+  assert.deepEqual(identity.extractContacts('+48 513 141 389').phones, ['48513141389']);
+  assert.deepEqual(identity.extractContacts('telefon 513141389').phones, ['48513141389']);
+});
+
+test('extractContacts: NIE łapie numeru zamówienia/ilości jako telefonu', () => {
+  assert.deepEqual(identity.extractContacts('zamówienie nr 123456789 w toku').phones, []);
+  assert.deepEqual(identity.extractContacts('numer zamówienia 123456789').phones, []);
+  assert.deepEqual(identity.extractContacts('kupię 20m taśmy za 750zł').phones, []);
+  assert.deepEqual(identity.extractContacts('hej chciałbym kupić 10m').phones, []);
+});
+
 // ── resolveCustomer ─────────────────────────────────────────────────────────
 
 test('pierwsze zdarzenie tworzy klienta LL- z jedną tożsamością', async () => {

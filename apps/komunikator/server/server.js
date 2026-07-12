@@ -383,8 +383,72 @@ app.get('/api/threads/:id', async (req, res) => {
     ]);
     for (const r of [messagesRes, identitiesRes, proposalsRes, threadsRes]) if (r.error) throw r.error;
 
+    // Wzbogacenie tożsamości z treści rozmowy: gdy kontaktowi brakuje maila lub
+    // telefonu (np. z Messengera przychodzi tylko fb id), wyłuskujemy je z tego,
+    // co klient napisał ("mój mail to ...", "tel 604 650 590"). Zapis jako
+    // niepotwierdzone (ai_extracted → confirmed=false, chip z "(?)") — dzięki temu
+    // dopina się jego wycena/lead. Jeśli identyfikator NALEŻY JUŻ do innego
+    // klienta (ta sama osoba pisała z drugiego kanału — np. mail podany na
+    // Messengerze vs osobny wątek Gmail), NIE scalamy po cichu: zakładamy
+    // propozycję scalenia (baner "Wykryto dopasowanie" → Antoni potwierdza,
+    // dopiero wtedy wyceny z drugiego kanału wchodzą na wspólny kontakt).
+    // Idempotentne, liczone tylko gdy czegoś brakuje.
+    let identities = identitiesRes.data || [];
+    let proposals = proposalsRes.data || [];
+    const haveType = (t) => identities.some((i) => i.type === t);
+    if (!haveType('email') || !haveType('phone')) {
+      const emails = new Set();
+      const phones = new Set();
+      for (const msg of (messagesRes.data || [])) {
+        if (msg.direction !== 'in' || !msg.body) continue; // tylko słowa klienta
+        const c = identity.extractContacts(msg.body);
+        if (!haveType('email')) c.emails.forEach((e) => emails.add(e));
+        if (!haveType('phone')) c.phones.forEach((p) => phones.add(p));
+      }
+      const toAdd = [
+        ...[...emails].map((value) => ({ type: 'email', value })),
+        ...[...phones].map((value) => ({ type: 'phone', value })),
+      ];
+      let added = 0;
+      let proposed = 0;
+      for (const idn of toAdd) {
+        try {
+          const r = await identity.enrichCustomer(db, customer.id, { ...idn, source: 'ai_extracted' });
+          if (r.status === 'added') {
+            added += 1;
+          } else if (r.status === 'conflict' && r.otherCustomer && r.otherCustomer.id !== customer.id) {
+            // Ta sama osoba, dwa rekordy — zaproponuj scalenie do potwierdzenia.
+            // Ale NIE ponawiaj, jeśli propozycja dla tej pary już istnieje w
+            // JAKIMKOLWIEK stanie (w tym 'rejected') — inaczej odrzucone scalenie
+            // wracałoby przy każdym otwarciu wątku (proposeMerge dedupuje tylko
+            // 'pending'). Pending i tak jest już w `proposals` z pierwszego fetchu.
+            const { data: prior } = await db.from('kom_merge_proposals')
+              .select('id').eq('thread_id', thread.id).eq('candidate_id', r.otherCustomer.id).limit(1);
+            if (!prior || !prior.length) {
+              await identity.proposeMerge(db, {
+                threadId: thread.id,
+                candidateId: r.otherCustomer.id,
+                reason: 'shared_identity_in_message',
+                evidence: { type: idn.type, value: idn.value },
+                confidence: 0.9,
+              });
+              proposed += 1;
+            }
+          }
+        } catch (e) { /* wzbogacenie nie może wywalić wątku */ }
+      }
+      if (added) {
+        const { data: fresh } = await db.from('kom_customer_identities').select('*').eq('customer_id', customer.id);
+        if (fresh) identities = fresh;
+      }
+      if (proposed) {
+        const { data: freshProps } = await db.from('kom_merge_proposals')
+          .select('*').eq('thread_id', thread.id).eq('status', 'pending');
+        if (freshProps) proposals = freshProps;
+      }
+    }
+
     // Kandydaci propozycji scalenia — z nazwą, żeby UI miał co pokazać.
-    const proposals = proposalsRes.data || [];
     const candidateIds = [...new Set(proposals.map((p) => p.candidate_id))];
     let candidates = new Map();
     if (candidateIds.length) {
@@ -398,7 +462,6 @@ app.get('/api/threads/:id', async (req, res) => {
     // Telefon/e-mail klienta z tożsamości (kom_customer_identities: znormalizowane,
     // telefon jako 48XXXXXXXXX, e-mail lowercase) — front dopnie po nich wycenę
     // (GET /api/wyceny/dla-leada sam obcina 48, więc podajemy surowy value).
-    const identities = identitiesRes.data || [];
     const firstIdentity = (type) => {
       const match = identities.find((i) => i.type === type);
       return match ? match.value : '';

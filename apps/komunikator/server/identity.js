@@ -28,6 +28,41 @@ function normalize(type, value) {
 
 const IDENTITY_TYPES = new Set(['fb', 'ig', 'wa', 'tt', 'phone', 'email']);
 
+// Wyłuskuje twarde identyfikatory (email, telefon) z treści wiadomości —
+// klient z Messengera/IG często podaje mail albo numer wprost w rozmowie
+// ("mój mail to ...", "tel 604 650 590"), a kanał daje tylko fb/ig id. Dzięki
+// temu kontakt zyskuje email/telefon i dopina się do wyceny/leada.
+//
+// KONSERWATYWNIE dla telefonu, żeby nie łapać losowych 9-cyfrowych ciągów
+// (numery zamówień, ilości): akceptujemy numer tylko z wyraźnym sygnałem —
+// prefiks +48/48, słowo tel/nr/numer/telefon/kom, albo format grupowany
+// (3-3-3 z separatorami). Email jest jednoznaczny. Zwraca { emails, phones }
+// (telefony znormalizowane do 48XXXXXXXXX, maile lowercase).
+function extractContacts(text) {
+  const s = String(text || '');
+  const emails = new Set();
+  const phones = new Set();
+
+  const emailRe = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
+  let m;
+  while ((m = emailRe.exec(s))) emails.add(m[0].toLowerCase());
+
+  // Grupa 1: sygnał telefonu (prefiks 48 lub słowo tel/telefon/kom — NIE "nr"
+  // ani "numer": to bywa numer zamówienia); grupa 2: ciąg cyfr numeru.
+  const phoneRe = /(\+?48|telefon|tel\.?|kom[oó]rka|kom\.?)?[\s:._-]*((?:\d[\s.-]?){8}\d)/gi;
+  while ((m = phoneRe.exec(s))) {
+    const signal = Boolean(m[1]);
+    const raw = m[2].trim();
+    const grouped = /^\d{3}[\s.-]\d{3}[\s.-]\d{3}$/.test(raw);
+    if (!signal && !grouped) continue;          // bez sygnału i bez formatu → pomiń
+    let d = raw.replace(/\D/g, '');
+    if (d.length === 11 && d.startsWith('48')) d = d.slice(2);
+    if (d.length !== 9) continue;
+    phones.add(`48${d}`);
+  }
+  return { emails: [...emails], phones: [...phones] };
+}
+
 function assertType(type) {
   if (!IDENTITY_TYPES.has(type)) throw new Error(`Nieznany typ tożsamości: ${type}`);
 }
@@ -225,6 +260,7 @@ async function rejectMerge(db, proposalId) {
 
 module.exports = {
   normalize,
+  extractContacts,
   resolveCustomer,
   enrichCustomer,
   attachThread,
