@@ -371,7 +371,7 @@ function createAuth({ getClient, panelKey = null, publicPrefixes = [], loginTitl
     requireAdmin,
     requireSheet,
     invalidateUserCache,
-    findUserByEmail,
+    findUserByLogin,
   };
 }
 
