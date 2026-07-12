@@ -47,15 +47,26 @@ window.WycenaEditor = (() => {
 
   // Kategorie "Dodaj produkt". Taśmy są parametryczne (barwa + IP); reszta to
   // proste listy dopasowane po prefiksie SKU.
+  // Kolejność wg Antoniego. Kafelki mają ZDJĘCIA (reprezentatywny produkt), nie
+  // emoji. Panele biurkowy/ścienny to PILOTY (LL-PANEL → remote). Profile i
+  // Pozostałe to placeholdery ("wkrótce") — na przyszłość.
   const CATEGORIES = [
-    { key: 'dig', label: 'Cyfrowa taśma', icon: '〰️', tape: 'DIG' },
-    { key: 'ana', label: 'Analogowa taśma', icon: '➰', tape: 'ANA' },
-    { key: 'ctrl', label: 'Sterowniki', icon: '🎛️', prefixes: ['LL-CTRL', 'LL-PANEL'] },
-    { key: 'remote', label: 'Piloty', icon: '📱', prefixes: ['LL-REMOTE'] },
-    { key: 'sensor', label: 'Czujniki', icon: '📡', prefixes: ['LL-SENSOR'] },
-    { key: 'psu', label: 'Zasilacze', icon: '🔌', prefixes: ['LL-PSU'] },
-    { key: 'acc', label: 'Akcesoria', icon: '🧰', prefixes: ['LL-ACC'] },
+    { key: 'dig', label: 'Cyfrowa taśma', tape: 'DIG' },
+    { key: 'ana', label: 'Analogowa taśma', tape: 'ANA' },
+    { key: 'ctrl', label: 'Sterowniki', prefixes: ['LL-CTRL'] },
+    { key: 'remote', label: 'Piloty', prefixes: ['LL-REMOTE', 'LL-PANEL'] },
+    { key: 'acc', label: 'Akcesoria', prefixes: ['LL-ACC'] },
+    { key: 'psu', label: 'Zasilacze', prefixes: ['LL-PSU'] },
+    { key: 'sensor', label: 'Czujniki', prefixes: ['LL-SENSOR'] },
+    { key: 'profile', label: 'Profile', placeholder: true },
+    { key: 'pozostale', label: 'Pozostałe', placeholder: true },
   ];
+
+  // Reprezentatywne zdjęcie kategorii (pierwszy produkt ze zdjęciem).
+  function categoryImage(catalog, c) {
+    if (c.tape) { const t = (catalog.tapes[c.tape] || []).find((x) => x.image); return t ? t.image : ''; }
+    const s = (catalog.simple[c.key] || []).find((x) => x.image_url); return s ? s.image_url : '';
+  }
   const TAPE_LABEL = { DIG: 'Cyfrowa taśma', ANA: 'Analogowa taśma' };
 
   function parseTapeSku(sku) {
@@ -104,30 +115,32 @@ window.WycenaEditor = (() => {
     // przypisaniem (TDZ) — to psuło budowę pozycji z taśmą.
     let started = false;
 
-    const thumb = h('div', 'wk-tape-thumb');
-    const nameEl = h('div', 'wk-tape-name');
-    const priceEl = h('div', 'wk-tape-price');
-    const info = h('div', 'wk-tape-info'); info.append(nameEl, priceEl);
-    const head = h('div', 'wk-tape-head'); head.append(thumb, info);
-    const barwaRow = h('div', 'wk-tape-opts');
-    const ipRow = h('div', 'wk-tape-opts');
-    const qtyInput = input(qty, 'ile metrów');
+    // Kompaktowo — wszystko w JEDNEJ linii: [zdjęcie] Cyfrowa taśma COB
+    // [3000K][4000K][6000K] [IP20][IP65] [metry m] cena. Krótkie etykiety.
+    const shortBarwa = (b) => (b === 'RGBCCT' ? 'RGB+CCT' : b);
+    const thumb = h('span', 'wk-tape-thumb');
+    const fam = h('span', 'wk-tape-fam', family === 'DIG' ? 'Cyfrowa taśma COB' : 'Analogowa taśma COB');
+    const barwaRow = h('span', 'wk-tape-opts');
+    const ipRow = h('span', 'wk-tape-opts');
+    const qtyInput = input(qty, 'metry');
     qtyInput.inputMode = 'decimal';
-    const qtyWrap = h('div', 'wk-tape-qty'); qtyWrap.append(h('span', 'wk-tape-qty-label', 'Metry'), qtyInput);
+    qtyInput.className = 'wk-tape-metry';
+    const qtyWrap = h('span', 'wk-tape-qty'); qtyWrap.append(qtyInput, h('span', 'wk-tape-unit', 'm'));
     qtyInput.addEventListener('input', () => { qty = qtyInput.value; onChange(); });
+    const priceEl = h('span', 'wk-tape-price');
 
     function renderThumb(t) {
       thumb.innerHTML = '';
       if (t && t.image) {
         const img = document.createElement('img'); img.src = t.image; img.alt = '';
-        img.addEventListener('error', () => { thumb.innerHTML = ''; thumb.appendChild(h('div', 'wk-thumb-placeholder', '💡')); });
+        img.addEventListener('error', () => { thumb.innerHTML = ''; thumb.appendChild(h('span', 'wk-thumb-placeholder', '')); });
         thumb.appendChild(img);
-      } else thumb.appendChild(h('div', 'wk-thumb-placeholder', '💡'));
+      } else thumb.appendChild(h('span', 'wk-thumb-placeholder', ''));
     }
     function renderOpts() {
       barwaRow.innerHTML = '';
       barwy.forEach((b) => {
-        const btn = h('button', 'wk-opt-btn' + (b === barwa ? ' active' : ''), BARWA_LABELS[b] || b);
+        const btn = h('button', 'wk-opt-btn' + (b === barwa ? ' active' : ''), shortBarwa(b));
         btn.type = 'button';
         btn.addEventListener('click', () => {
           barwa = b;
@@ -138,7 +151,7 @@ window.WycenaEditor = (() => {
       });
       ipRow.innerHTML = '';
       ipsFor(barwa).forEach((i) => {
-        const btn = h('button', 'wk-opt-btn' + (i === ip ? ' active' : ''), IP_LABELS[i] || i);
+        const btn = h('button', 'wk-opt-btn' + (i === ip ? ' active' : ''), i);
         btn.type = 'button';
         btn.addEventListener('click', () => { ip = i; update(); });
         ipRow.appendChild(btn);
@@ -148,13 +161,12 @@ window.WycenaEditor = (() => {
       renderOpts();
       const t = resolve();
       renderThumb(t);
-      nameEl.textContent = t ? t.nazwa : 'Wariant niedostępny';
-      priceEl.textContent = t ? `${moneyPLN(t.price)} / m` : '';
+      priceEl.textContent = t ? `${moneyPLN(t.price)}/m` : '';
       if (started) onChange();
     }
     update();
     started = true;
-    wrap.append(head, h('div', 'wk-tape-lbl', 'Barwa'), barwaRow, h('div', 'wk-tape-lbl', 'Klasa IP'), ipRow, qtyWrap);
+    wrap.append(thumb, fam, barwaRow, ipRow, qtyWrap, priceEl);
 
     return {
       el: wrap,
@@ -186,11 +198,25 @@ window.WycenaEditor = (() => {
       body.innerHTML = '';
       const grid = h('div', 'wk-cat-grid');
       CATEGORIES.forEach((c) => {
+        if (c.placeholder) {
+          const card = h('div', 'wk-cat-btn placeholder');
+          const th = h('span', 'wk-cat-thumb'); th.appendChild(h('span', 'wk-cat-soon', 'wkrótce'));
+          card.append(th, h('span', 'wk-cat-lbl', c.label));
+          grid.appendChild(card);
+          return;
+        }
         const has = c.tape ? (catalog.tapes[c.tape] || []).length : (catalog.simple[c.key] || []).length;
         if (!has) return;
         const btn = h('button', 'wk-cat-btn');
         btn.type = 'button';
-        btn.append(h('span', 'wk-cat-ico', c.icon), h('span', 'wk-cat-lbl', c.label));
+        const th = h('span', 'wk-cat-thumb');
+        const img = categoryImage(catalog, c);
+        if (img) {
+          const im = document.createElement('img'); im.loading = 'lazy'; im.src = img; im.alt = '';
+          im.addEventListener('error', () => { th.innerHTML = ''; });
+          th.appendChild(im);
+        }
+        btn.append(th, h('span', 'wk-cat-lbl', c.label));
         btn.addEventListener('click', () => openCategory(c));
         grid.appendChild(btn);
       });
@@ -298,10 +324,7 @@ window.WycenaEditor = (() => {
 
         const tape = parseTapeSku(p.SKU);
         if (tape && (catalog.tapes[tape.family] || []).length) {
-          // Taśma parametryczna — barwa/IP/metry podmieniają całą pozycję.
-          const headRow = h('div', 'wk-edit-item-head');
-          headRow.append(h('div', 'wk-edit-item-title', TAPE_LABEL[tape.family] || 'Taśma'), remove);
-          box.appendChild(headRow);
+          // Taśma parametryczna w jednej linii; ✕ na końcu wiersza.
           const cfg = buildTapeConfigurator(tape.family, catalog, { barwa: tape.barwa, ip: tape.ip, quantity: p.quantity }, () => {
             const it = cfg.getItem();
             if (it) Object.assign(p, it);
@@ -310,6 +333,7 @@ window.WycenaEditor = (() => {
           // Sync raz, jawnie (konfigurator celowo nie woła onChange w init).
           const it0 = cfg.getItem();
           if (it0) Object.assign(p, it0);
+          cfg.el.appendChild(remove);
           box.appendChild(cfg.el);
         } else {
           // Prosta pozycja — zdjęcie + nazwa (read-only) + ilość.

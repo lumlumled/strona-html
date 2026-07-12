@@ -375,38 +375,36 @@
 .wk-edit-item-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .wk-edit-item-title { font-size: 0.82rem; font-weight: 700; }
 
-/* ── Konfigurator taśmy (barwa + IP + metry) ── */
+/* ── Konfigurator taśmy — JEDNA linia: zdjęcie · nazwa · barwa · IP · metry ── */
 .wk-tape-cfg {
   display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-  padding: 0.55rem;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+  padding: 0.4rem 0.5rem;
   border: 1px solid var(--border);
-  border-radius: 11px;
+  border-radius: 10px;
   background: var(--surface-1);
 }
-.wk-tape-head { display: flex; align-items: center; gap: 0.6rem; }
 .wk-tape-thumb {
   flex: 0 0 auto;
-  width: 52px; height: 52px;
-  border-radius: 9px;
+  width: 34px; height: 34px;
+  border-radius: 7px;
   overflow: hidden;
   border: 1px solid var(--border);
   background: var(--surface-2, var(--accent-soft));
-  display: flex; align-items: center; justify-content: center;
+  display: inline-flex; align-items: center; justify-content: center;
 }
 .wk-tape-thumb img { width: 100%; height: 100%; object-fit: cover; }
-.wk-tape-info { min-width: 0; }
-.wk-tape-name { font-size: 0.86rem; font-weight: 600; line-height: 1.25; }
-.wk-tape-price { font-size: 0.8rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.wk-tape-lbl { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-top: 0.15rem; }
-.wk-tape-opts { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.wk-tape-fam { font-size: 0.84rem; font-weight: 700; white-space: nowrap; }
+.wk-tape-price { font-size: 0.78rem; color: var(--text-muted); font-variant-numeric: tabular-nums; margin-left: auto; white-space: nowrap; }
+.wk-tape-opts { display: inline-flex; gap: 0.25rem; }
 .wk-opt-btn {
   font: inherit;
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   font-weight: 600;
-  padding: 0.32rem 0.6rem;
-  border-radius: 8px;
+  padding: 0.24rem 0.5rem;
+  border-radius: 7px;
   border: 1px solid var(--border);
   background: var(--surface-1);
   color: var(--text-secondary);
@@ -415,19 +413,20 @@
 }
 .wk-opt-btn:hover { border-color: var(--accent); }
 .wk-opt-btn.active { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
-.wk-tape-qty { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.15rem; }
-.wk-tape-qty-label { font-size: 0.82rem; font-weight: 600; }
-.wk-tape-qty input {
-  font: inherit; font-size: 0.9rem;
-  padding: 0.45rem 0.6rem;
-  border-radius: 8px;
+.wk-tape-qty { display: inline-flex; align-items: center; gap: 0.25rem; }
+.wk-tape-unit { font-size: 0.8rem; color: var(--text-muted); }
+.wk-tape-metry {
+  font: inherit; font-size: 0.85rem;
+  padding: 0.28rem 0.45rem;
+  border-radius: 7px;
   border: 1px solid var(--border);
   background: var(--surface-1);
   color: var(--text-primary);
-  max-width: 8rem;
+  width: 4rem;
+  text-align: center;
 }
 
-/* ── Wybór kategorii w pickerze ── */
+/* ── Wybór kategorii w pickerze — kafelki ze ZDJĘCIAMI ── */
 .wk-catalog-body { min-height: 4rem; }
 .wk-cat-grid {
   display: grid;
@@ -440,16 +439,27 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.4rem;
-  padding: 1rem 0.6rem;
+  gap: 0.45rem;
+  padding: 0.55rem;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface-1);
   color: var(--text-primary);
 }
 .wk-cat-btn:hover { border-color: var(--accent); background: var(--accent-soft); }
-.wk-cat-ico { font-size: 1.6rem; line-height: 1; }
+.wk-cat-thumb {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 9px;
+  overflow: hidden;
+  background: var(--surface-2, var(--accent-soft));
+  display: flex; align-items: center; justify-content: center;
+}
+.wk-cat-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .wk-cat-lbl { font-size: 0.84rem; font-weight: 600; text-align: center; }
+.wk-cat-btn.placeholder { cursor: default; opacity: 0.55; }
+.wk-cat-btn.placeholder:hover { border-color: var(--border); background: var(--surface-1); }
+.wk-cat-soon { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
 
 /* Druga linia pozycji: SKU (wąskie) + link do zdjęcia, wcięte pod nazwą. */
 .wk-edit-item-extra {
