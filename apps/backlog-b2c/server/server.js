@@ -116,22 +116,33 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5.1';
 const OPENAI_TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe';
 
-// Webhook wychodzący do jednej konkretnej automatyzacji Antoniego (Make) —
-// odpala się WYŁĄCZNIE gdy webhook Zadarmy sam tworzy nowego leada z numeru,
-// którego nie ma w bazie (patrz createdLead w /api/webhooks/zadarma). Na
-// sztywno w kodzie, celowo (Antoni prosił) — zmiana adresu wymaga deployu.
-const NEW_LEAD_WEBHOOK_URL = 'https://hook.eu1.make.com/2hdhzl5b254o6bayfsynnz6p9hfvjtq2';
-
-async function notifyNewLead(telefon) {
+// Powiadomienie o nowym leadzie utworzonym automatycznie (webhook Zadarmy z
+// numeru spoza bazy albo webhook Facebook Lead Ads). Wcześniej szło POST-em na
+// zewnętrzny hook Make ("nowy lead" → SMS/Telegram do Antoniego); ten hook
+// został skasowany w Make, więc powiadomienie cicho nie wychodziło. Teraz to
+// Web Push prosto do ownera leada, przez wspólny notifyUser
+// (apps/shared/server/push.js) — bez pośrednictwa Make.
+async function notifyNewLead({ telefon, name, owner }) {
   try {
-    const res = await fetch(NEW_LEAD_WEBHOOK_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ telefon }),
+    const ownerName = String(owner || process.env.DEFAULT_HANDLOWIEC || '').trim();
+    if (!ownerName) return;
+    const supabase = getClient();
+    const { data } = await supabase
+      .from('app_users')
+      .select('id')
+      .ilike('name', ownerName)
+      .eq('active', true)
+      .limit(1);
+    if (!data || !data.length) return;
+    const kto = [name, telefon].filter(Boolean).join(' · ') || 'brak danych kontaktowych';
+    await notifyUser(getClient, data[0].id, {
+      title: 'Nowy lead B2C',
+      body: kto,
+      url: '/backlog-b2c/',
+      tag: `nowy-lead-${telefon || name || ''}`,
     });
-    if (!res.ok) console.warn(`Webhook nowego leada odpowiedział ${res.status}`);
   } catch (err) {
-    console.warn('Nie udało się wysłać webhooka nowego leada:', err.message);
+    console.warn('Nie udało się wysłać powiadomienia o nowym leadzie:', err.message);
   }
 }
 
@@ -1027,7 +1038,11 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
         console.error('Błąd tworzenia leada z nieznanego numeru:', createErr.message);
       } else {
         createdLead = inserted;
-        await notifyNewLead(formatPhonePlus(customerDigits));
+        await notifyNewLead({
+          telefon: formatPhonePlus(customerDigits),
+          name: inserted?.Name,
+          owner: inserted?.Owner,
+        });
       }
     }
 
@@ -1137,6 +1152,196 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     res.json({ status: 'ok' });
   } catch (err) {
     await logOperation(supabase, 'zadarma_webhook', 'error', { message: err.message, body: req.body });
+    handleError(res, err, 502);
+  }
+});
+
+// ── Webhook Facebook Lead Ads ───────────────────────────────────────────────
+// Tworzy nowego leada B2C, gdy Facebook zgłasza wypełniony formularz. Zastępuje
+// dawny scenariusz Make ("Nowy Lead B2C"), który padł, gdy przemianowaliśmy
+// klucz w Supabase — patrz docs/plan migracji. Make ma teraz tylko dwa moduły:
+// istniejący trigger "Facebook Lead Ads – New Lead" → HTTP "Make a request"
+// POST-ujący JSON pod ten endpoint. Kolejka zaległych zdarzeń Make przetworzy
+// się sama po aktywacji scenariusza — dedupe po "Facebook Leads ID" gwarantuje,
+// że retry/powtórka nie utworzy drugiego wiersza.
+//
+// Numeracja "ID Leada": ten sam wzorzec co webhook Zadarmy — kolumna jest
+// sekwencyjnym licznikiem nadawanym w aplikacji (nie Postgresowa identity),
+// więc bierzemy max+1. W starym scenariuszu Make ten numer szedł z osobnej
+// komórki "ID Wyceny" w arkuszu; tu liczymy go wprost z tabeli leadów, żeby był
+// spójny z leadami, które już są w bazie.
+//
+// Payload — najprościej przekazać SUROWY obiekt z Facebook Lead Ads (moduł
+// GetLeadDetails) 1:1, bo obsługujemy zagnieżdżony `data` i oryginalne nazwy
+// pól FB. Kontakt: `data.full_name|phone_number|email` (albo płasko name/phone/
+// email). Reszta pól (platform, adId/adName, adsetId/adsetName, campaignId/
+// campaignName, isOrganic, formId, dateCreated) idzie do "marketing_meta"
+// (jsonb) na analizy marketingowe. Warianty nazw akceptowane, żeby mapowanie
+// w Make było odporne:
+//   { platform, leadgenId|facebook_lead_id, formId, isOrganic, adId, adName,
+//     adsetId, adsetName, campaignId, campaignName, dateCreated,
+//     data: { full_name, phone_number, email } }
+app.post('/api/webhooks/lead', express.json(), async (req, res) => {
+  const supabase = getClient();
+  try {
+    if (req.query.token !== process.env.LEAD_WEBHOOK_TOKEN) {
+      return res.status(403).json({ error: 'Nieprawidłowy token' });
+    }
+
+    const body = Array.isArray(req.body) ? req.body[0] : req.body;
+    if (!body || typeof body !== 'object') {
+      return res.status(400).json({ error: 'Puste zdarzenie' });
+    }
+
+    // Dane kontaktowe FB siedzą pod `data` (full_name/phone_number/email) —
+    // obsługujemy i to, i płaskie pola, żeby przyjąć surowy payload albo
+    // ręcznie zmapowany.
+    const d = body.data && typeof body.data === 'object' ? body.data : {};
+    const fbLeadId = String(body.leadgenId ?? body.leadgen_id ?? body.facebook_lead_id ?? '').trim();
+    const name = (body.name ?? body.full_name ?? d.full_name ?? '').toString().trim() || null;
+    const email = (body.email ?? d.email ?? '').toString().trim() || null;
+    const phoneDigits = normalizePhoneDigits(body.phone ?? body.phone_number ?? body.telefon ?? d.phone_number ?? d.phone);
+
+    // Kontekst marketingowy: id + nazwy kampanii/adsetu/reklamy, platforma,
+    // isOrganic, formId. Trzymamy pełny, ustrukturyzowany obiekt (nie tylko
+    // sklejony ad_name) — panel analiz grupuje po kampanii/adsecie i spina z
+    // wydatkami po id. Puste pola pomijamy, żeby jsonb nie puchł nullami.
+    const meta = {
+      platform: body.platform ?? null,
+      is_organic: body.isOrganic ?? body.is_organic ?? null,
+      form_id: (body.formId ?? body.form_id ?? '').toString().trim() || null,
+      ad_id: (body.adId ?? body.ad_id ?? '').toString().trim() || null,
+      ad_name: (body.adName ?? '').toString().trim() || null,
+      adset_id: (body.adsetId ?? body.adset_id ?? '').toString().trim() || null,
+      adset_name: (body.adsetName ?? body.adset_name ?? '').toString().trim() || null,
+      campaign_id: (body.campaignId ?? body.campaign_id ?? '').toString().trim() || null,
+      campaign_name: (body.campaignName ?? body.campaign_name ?? '').toString().trim() || null,
+      date_created: body.dateCreated ?? body.date_created ?? null,
+    };
+    const marketingMeta = Object.fromEntries(
+      Object.entries(meta).filter(([, v]) => v !== null && v !== '')
+    );
+
+    // Czytelny "ad_name" do wyświetlenia w panelu leadów: reklama – adset –
+    // kampania (rozbite id/nazwy zostają w marketing_meta). Przyjmujemy też
+    // gotowy, sklejony ad_name, jeśli ktoś tak zmapuje w Make.
+    const adName =
+      (body.ad_name ?? '').toString().trim() ||
+      [meta.ad_name, meta.adset_name, meta.campaign_name].filter(Boolean).join(' - ') ||
+      null;
+
+    if (!phoneDigits && !fbLeadId) {
+      return res.status(400).json({ error: 'Brak telefonu i Facebook Leads ID — nie da się utworzyć ani zdedupować leada' });
+    }
+
+    // Data: Facebook przysyła dateCreated (ISO); zaległe zdarzenia z kolejki
+    // mają swoją oryginalną datę, więc jej używamy, gdy da się sparsować. Bez
+    // niej — dziś (świeże zgłoszenie leci sekundy po wypełnieniu). Zapisujemy w
+    // DD.MM.YYYY (Europe/Warsaw), tak jak robił to scenariusz Make.
+    let dateStr = warsawDateStr(new Date());
+    if (body.date_created ?? body.dateCreated) {
+      const parsed = new Date(body.date_created ?? body.dateCreated);
+      if (!Number.isNaN(parsed.getTime())) dateStr = warsawDateStr(parsed);
+    }
+
+    // Dedupe: najpierw po Facebook Leads ID (retry tego samego formularza wysyła
+    // ten sam id), potem po telefonie (ta sama osoba już w bazie — z formularza,
+    // z rozmowy Zadarmy albo z wcześniejszego zgłoszenia FB). W obu wypadkach
+    // NIE tworzymy drugiego wiersza.
+    let existing = null;
+    if (fbLeadId) {
+      const { data } = await supabase
+        .from(LEADY_B2C_TABLE)
+        .select('*')
+        .eq('Facebook Leads ID', fbLeadId)
+        .limit(1);
+      existing = data && data[0];
+    }
+    if (!existing && phoneDigits) {
+      existing = await findLeadByPhone(supabase, phoneDigits);
+    }
+    if (existing) {
+      // Nie tworzymy dubla, ale dopełniamy PUSTE pola — lead mógł powstać
+      // wcześniej z rozmowy Zadarmy (bez kontekstu FB) albo bez maila. Tylko
+      // uzupełnianie nulli, NIGDY nadpisywanie tego, co już jest, żeby ręczne
+      // poprawki handlowca zostały nietknięte. Dzięki temu panel analiz nie
+      // gubi metadanych marketingowych na kolizji po telefonie.
+      const enrich = {};
+      if (Object.keys(marketingMeta).length && !existing.marketing_meta) enrich.marketing_meta = marketingMeta;
+      if (fbLeadId && !existing['Facebook Leads ID']) enrich['Facebook Leads ID'] = fbLeadId;
+      if (adName && !existing.ad_name) enrich.ad_name = adName;
+      if (email && !existing.Email) enrich.Email = email;
+      if (name && !existing.Name) enrich.Name = name;
+      // Aktualizujemy WYŁĄCZNIE po jednoznacznym kluczu. Gdyby "ID Leada" było
+      // puste, .eq('ID Leada', null) trafiłby we WSZYSTKIE wiersze bez id —
+      // dlatego twardy warunek na niepustą wartość (fallback po telefonie).
+      const keyCol = existing['ID Leada'] != null ? 'ID Leada' : (existing['Phone number'] != null ? 'Phone number' : null);
+      if (Object.keys(enrich).length && keyCol) {
+        await supabase.from(LEADY_B2C_TABLE).update(enrich).eq(keyCol, existing[keyCol]);
+      }
+      await logOperation(supabase, 'facebook_lead_webhook', 'ok', {
+        duplikat: true, uzupelniono: Object.keys(enrich),
+        facebook_lead_id: fbLeadId || null, telefon: phoneDigits || null,
+      });
+      return res.json({ status: 'ok', created: false, duplikat: true, id_leada: existing['ID Leada'] ?? null });
+    }
+
+    // "ID Leada" NOT NULL bez wartości domyślnej — liczymy max+1 (jak w
+    // /api/webhooks/zadarma). Owner zostawiamy Postgresowi (DEFAULT 'Lorenzo').
+    // "Źródło" NIE ustawiamy: null = zwykły lead widoczny w głównej liście
+    // (tak jak leady z formularza; kolumna niepusta = "rozmowa spoza bazy",
+    // osobny kubełek — patrz fetchLeadyByStage/fetchRozmowySpozaBazy). FB-owy
+    // rodowód niosą "Facebook Leads ID" i "ad_name".
+    const { data: maxRow } = await supabase
+      .from(LEADY_B2C_TABLE)
+      .select('"ID Leada"')
+      .order('"ID Leada"', { ascending: false })
+      .limit(1)
+      .single();
+    const nextIdLeada = (Number(maxRow?.['ID Leada']) || 0) + 1;
+
+    const insertRow = {
+      Date: dateStr,
+      'Deal stage': 'Nowy',
+      'ID Leada': nextIdLeada,
+    };
+    if (phoneDigits) insertRow['Phone number'] = Number(phoneDigits);
+    if (name) insertRow.Name = name;
+    if (email) insertRow.Email = email;
+    if (adName) insertRow.ad_name = adName;
+    if (fbLeadId) insertRow['Facebook Leads ID'] = fbLeadId;
+    if (Object.keys(marketingMeta).length) insertRow.marketing_meta = marketingMeta;
+
+    const { data: inserted, error: createErr } = await supabase
+      .from(LEADY_B2C_TABLE)
+      .insert(insertRow)
+      .select()
+      .single();
+    if (createErr) throw createErr;
+
+    await supabase.from(LOG_ZMIAN_TABLE).insert({
+      zrodlo: 'facebook_lead_webhook',
+      telefon: phoneDigits || null,
+      status_przed: null,
+      status_po: 'Nowy',
+      opis: `Nowy lead z Facebook Lead Ads${adName ? ` (${adName})` : ''}`,
+      handlowiec: inserted?.Owner || process.env.DEFAULT_HANDLOWIEC || null,
+      dopasowano_tabela: LEADY_B2C_TABLE,
+      dopasowano_id: String(inserted?.['Phone number'] ?? ''),
+    });
+
+    await notifyNewLead({
+      telefon: phoneDigits ? formatPhonePlus(phoneDigits) : null,
+      name,
+      owner: inserted?.Owner,
+    });
+
+    await logOperation(supabase, 'facebook_lead_webhook', 'ok', {
+      created: true, id_leada: nextIdLeada, facebook_lead_id: fbLeadId || null, telefon: phoneDigits || null,
+    });
+    res.json({ status: 'ok', created: true, id_leada: nextIdLeada });
+  } catch (err) {
+    await logOperation(supabase, 'facebook_lead_webhook', 'error', { message: err.message, body: req.body });
     handleError(res, err, 502);
   }
 });
