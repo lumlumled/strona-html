@@ -391,6 +391,32 @@ window.WycenaKarta = (() => {
         el('span', '', String(wycena.worker_last_error))
       );
       wrap.appendChild(errBox);
+
+      // "Ponów realizację" — Twój przycisk decyzji z panelu: po poprawie danych
+      // w edycji albo gdy błąd był chwilowy, odpala pipeline od nowa (/realizuj
+      // re-waliduje i startuje). Idempotentnie: istniejąca przesyłka/faktura
+      // nie tworzy się drugi raz (pipeline sprawdza).
+      if (!opts.readOnly) {
+        const retry = el('button', 'wk-btn primary', 'Ponów realizację');
+        retry.type = 'button';
+        retry.title = 'Uruchom realizację jeszcze raz (po poprawie danych lub gdy błąd był chwilowy)';
+        retry.addEventListener('click', async () => {
+          if (!confirm(`Ponowić realizację wyceny #${wycena.id}?`)) return;
+          retry.disabled = true;
+          retry.textContent = 'Ponawiam…';
+          try {
+            const res = await fetch(`${opts.apiBase}/api/wyceny/${wycena.id}/realizuj`, { method: 'POST' });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+            if (opts.onChanged) opts.onChanged();
+          } catch (err) {
+            alert(`Nie udało się: ${err.message}`);
+            retry.disabled = false;
+            retry.textContent = 'Ponów realizację';
+          }
+        });
+        wrap.appendChild(retry);
+      }
     }
 
     // Komentarz do wyceny widoczny przy realizacji (np. "dodaj 1 czujnik

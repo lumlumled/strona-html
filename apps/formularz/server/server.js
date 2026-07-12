@@ -107,6 +107,17 @@ async function notifyWyceny({ wycena, title, body, url, tag }) {
   }
 }
 
+// Klasyfikacja błędu realizacji do powiadomienia: 'dane' (coś w zamówieniu do
+// poprawy — nie ruszamy kodu, dajemy znać co poprawić) vs 'systemowy' (API /
+// kod / konfiguracja) vs 'do sprawdzenia'. Zgrubna heurystyka — karta i tak
+// pokazuje pełną treść; docelowo dokładną ocenę robi panel/przegląd.
+function klasyfikujBlad(msg) {
+  const m = String(msg || '').toLowerCase();
+  if (/validation|incorrect_name|unavailable|invalid|not_?found|target_point|post_?code|postcode|\bnip\b|address|adres|\bcod\b|pobrani|required|brak (adresu|paczkomat|imien|metody)/.test(m)) return 'dane';
+  if (/timeout|econn|network|fetch failed|socket|\b(429|500|502|503|504)\b|unauthorized|forbidden|\b401\b|\b403\b|api key|token|ksef|oauth/.test(m)) return 'systemowy';
+  return 'do sprawdzenia';
+}
+
 // Token w linku: stare linki (bez t) przechodzą w okresie przejściowym;
 // jawnie zły token = odmowa (ochrona przed enumeracją sekwencyjnych ID).
 function tokenOk(wycena, t) {
@@ -244,10 +255,14 @@ app.post('/api/zapis', async (req, res) => {
     try {
       const after = await findWycena(id);
       if (after && after.process_stage === 'ERROR') {
+        const typ = klasyfikujBlad(after.worker_last_error);
+        const naglowek = typ === 'dane'
+          ? '📋 Błąd danych — sprawdź zamówienie'
+          : (typ === 'systemowy' ? '⚠️ Błąd systemowy realizacji' : '⚠️ Błąd realizacji');
         await notifyWyceny({
           wycena: after,
-          title: '⚠️ Błąd realizacji zamówienia',
-          body: `#${id}: ${String(after.worker_last_error || 'nieznany błąd').slice(0, 140)}`,
+          title: naglowek,
+          body: `#${id} [${typ}]: ${String(after.worker_last_error || 'nieznany błąd').slice(0, 130)}`,
           url: '/sprzedaze/',
           tag: `wycena-error-${id}`,
         });
