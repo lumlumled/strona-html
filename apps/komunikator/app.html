@@ -774,7 +774,29 @@
       loadThreads();
     });
 
-    loadThreads();
+    // Deep-link z hubu/alertu watchdoga: /wiadomosci/?klient=LL-00042 (albo
+    // ?watek=<id>). Otwiera wątek tego klienta — przełączamy na widok
+    // „Wszystkie", żeby wątek na pewno był na liście (też zamknięty/odfiltrowany).
+    async function openFromUrl() {
+      let klient = null, watek = null;
+      try {
+        const p = new URLSearchParams(window.location.search);
+        klient = p.get('klient');
+        watek = p.get('watek');
+      } catch (_) { /* brak URL API — zwykłe wczytanie */ }
+
+      if ((klient || (watek && /^\d+$/.test(watek)))) {
+        state.statusFilter = 'all';
+        document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.status === 'all'));
+        await loadThreads();
+        if (watek && /^\d+$/.test(watek)) { openThread(Number(watek)); return; }
+        const t = state.threads.find((x) => x.customer && x.customer.public_id === klient);
+        if (t) { openThread(t.id); return; }
+      }
+      loadThreads();
+    }
+
+    openFromUrl();
     setInterval(loadThreads, 30000); // odśwież listę co 30 s
   </script>
 </body>

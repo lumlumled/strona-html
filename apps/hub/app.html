@@ -565,7 +565,11 @@
           const alertHref = (a) => {
             if (a.object_type === 'lead') return canCrm && LINKS.crm ? `${LINKS.crm}?lead=${encodeURIComponent(a.object_id)}` : null;
             if (a.object_type === 'wycena') return canWyceny && LINKS.wyceny ? `${LINKS.wyceny}?id=${encodeURIComponent(a.object_id)}` : null;
-            return canWiad && LINKS.wiadomosci ? LINKS.wiadomosci : null;
+            // Wiadomość: deep-link do wątku klienta po public_id (komunikator
+            // otwiera go w widoku „Wszystkie"); bez public_id — korzeń panelu.
+            if (!canWiad || !LINKS.wiadomosci) return null;
+            const pid = a._obiekt && a._obiekt.public_id;
+            return pid ? `${LINKS.wiadomosci}?klient=${encodeURIComponent(pid)}` : LINKS.wiadomosci;
           };
 
           // Zwijane (auto-zwinięte) — na górze widać licznik, po rozwinięciu
@@ -620,7 +624,12 @@
               e.preventDefault(); e.stopPropagation();
               x.disabled = true;
               try {
-                const r = await fetch(`${API_BASE}/api/watchdog/alerty/${a.id}/zamknij`, { method: 'POST' });
+                // Obietnice z wiadomości mają osobny endpoint zamknięcia niż
+                // watche wycen/leadów (kom_commitments vs feedback_watch).
+                const zamknijUrl = a.object_type === 'wiadomosc'
+                  ? `${API_BASE}/api/watchdog/obietnice/${a.id}/zamknij`
+                  : `${API_BASE}/api/watchdog/alerty/${a.id}/zamknij`;
+                const r = await fetch(zamknijUrl, { method: 'POST' });
                 if (!r.ok) throw new Error();
                 row.remove();
                 widoczne -= 1;

@@ -449,7 +449,11 @@ function registerWatchdogEndpoints(app, { getClient, isAdmin }) {
             alert_text: c.alert_text,
             alerted_at: c.alerted_at,
             visible: true,
-            _obiekt: { imie_nazwisko: c.kom_customers?.display_name || c.kom_customers?.public_id || '' },
+            // public_id -> deep-link hubu do wątku klienta (/wiadomosci/?klient=).
+            _obiekt: {
+              imie_nazwisko: c.kom_customers?.display_name || c.kom_customers?.public_id || '',
+              public_id: c.kom_customers?.public_id || '',
+            },
           }));
         } catch (err) {
           console.error('Watchdog alerty (obietnice):', err.message);
