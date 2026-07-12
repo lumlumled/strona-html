@@ -1,6 +1,20 @@
 # Wyceny 2.0: pełna migracja mechanizmu wycen z Make do lumlum.dev
 
-Data: 2026-07-11. Stan: PLAN (brief do wdrożenia etapami).
+Data: 2026-07-11. Stan: **NOC 1 ZROBIONA (2026-07-12)** — etapy 0-4 zbudowane,
+przetestowane na realnych API i wdrożone na lumlum.dev. Produkcyjny formularz
+lumlum.co wciąż na Make; przełączenie wg **docs/cutover-noc2-checklista.md**
+(tam też: co czeka na Antoniego — token Shopify, test pełnego opłacenia,
+sprzątnięcie wycen testowych #1875/#1876, rotacja sekretów po stabilizacji).
+Zrealizowane ponad plan: sync zamówień sklepu Shopify do panelu Sprzedaże
+(backfill 55 zamówień + moduł crona na SHOPIFY_ADMIN_TOKEN). Odstępstwa:
+strona formularz-test NIE powstała na Shopify (decyzja Antoniego w nocy —
+zero zmian w theme; zamiast tego identyczna sekcja pod
+lumlum.dev/formularz/test, a plik apps/formularz/liquid/formularz.liquid
+Antoni wklei sam przy cutoverze); MERGE wyceny liczony deterministycznie
+w JS zamiast drugiego wywołania GPT (reguły promptu MERGE są czysto
+mechaniczne, a w panelu i tak jest podgląd przed zapisem).
+
+Oryginalny brief poniżej (bez zmian):
 Źródło audytu: folder `~/Downloads/Wyceny - mechanizm` (10 blueprintów Make,
 formularz.liquid, CSV arkuszy) + LOGIKA_WYCEN.txt + 02_CENNIK_I_LOGIKA_WYCEN.txt.
 

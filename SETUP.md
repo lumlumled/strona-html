@@ -25,18 +25,50 @@ apps/
     assets/                  lista WSZYSTKICH leadów z tej samej tabeli
     server/                  Supabase co backlog-b2c, styl arkusza kalkulacyjnego)
       server.js, package.json, .env (lokalnie)
+  sprzedaze/              — panel Sprzedaże (lumlum.dev/sprzedaze): zamówienia
+    app.html                 (wyceny typ ZAMÓWIENIE + zamówienia ze sklepu
+    assets/                  Shopify), statystyki miesiąc/miesiąc, karta z
+    server/                  fakturą/etykietą/trackingiem, "Zamów kuriera
+      server.js, .env          ponownie"
+  formularz/              — PUBLICZNE endpointy formularza zamówienia
+    liquid/formularz.liquid  (lumlum.dev/formularz/api/dane|zapis — kontrakt
+    server/                  1:1 z dawnym webhookiem Make, formularz
+      server.js, .env         jednorazowy, token w linku) + webhook inFakt +
+                             worker pipeline'u + strona testowa /formularz/test;
+                             liquid/ = sekcja do wklejenia na Shopify (cutover)
   shared/                 — kod wspólny WSZYSTKICH appek:
     lead-card.js/.css        wspólna karta leada (CRM + Backlog)
+    wycena-card.js/.css      wspólna karta wyceny (CRM zakładka Wyceny +
+                             Sprzedaże) — produkty ze zdjęciami, pipeline
     topbar.js/.css           wspólny górny pasek nawigacji (wszystkie appki)
+    migrations/              migracje SQL (run.js + NNN_*.sql)
     server/
       auth.js                logowanie + uprawnienia (konta app_users)
       login.html             wspólna strona logowania (email + hasło)
       leady-endpoints.js     wspólne endpointy karty leada
+      wyceny-endpoints.js    wspólne endpointy wycen (CRM + Sprzedaże):
+                             lista/karta/edycja, szybkie dodanie, linki,
+                             reship, realizuj, proxy PDF faktur i etykiet
+      wyceny-parser.js       parser GPT szybkiego dodania (+ prompt w
+      wyceny-parser-prompt.txt  osobnym pliku — TABELA SKU w prompcie
+                             wymaga ręcznej aktualizacji przy zmianie cennika!)
+      wyceny-pipeline.js     maszyna stanów realizacji zamówienia (lock,
+                             wznawianie, worker: tracking/retry/sync Shopify)
+      wyceny-infakt.js       klient inFakt v3 (KWOTY W GROSZACH, async
+                             faktury, quick payments, KSeF)
+      wyceny-shipx.js        klient InPost ShipX (paczkomat+kurier, JAWNE
+                             mapowanie statusów: tylko delivered=doręczona)
+      wyceny-mailer.js       maile pipeline'u przez Gmail API (tokeny
+                             skrzynki z kom_mailboxes komunikatora)
+      wyceny-shopify.js      sync zamówień sklepu Shopify do wycen
 api/
   index.js                — wrapper huba (montowany w korzeniu domeny)
   backlog-b2c.js          — cienki wrapper: montuje apps/backlog-b2c/server
                             pod /backlog-b2c (Express app.use)
   crm.js                  — analogiczny wrapper dla apps/crm/server pod /crm
+  sprzedaze.js            — wrapper apps/sprzedaze/server pod /sprzedaze
+  formularz.js            — wrapper apps/formularz/server pod /formularz
+                            (publiczny — bez bramki auth, CORS na lumlum.co)
 vercel.json               — jedna funkcja per narzędzie + crony, wszystko
                             prefiksowane ścieżką narzędzia
 package.json              — root, TYLKO żeby Vercel miał skąd zainstalować
