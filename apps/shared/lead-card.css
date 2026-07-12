@@ -461,13 +461,23 @@
 }
 
 /* Sekcja Wycena (meta + tabela pozycji). */
-.lk-wycena-naglowek {
+/* Wiele wycen na leadzie — każda jako osobne rozwijane. */
+.lk-wycena-collapse { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 0.5rem; overflow: hidden; }
+.lk-wycena-collapse > summary {
+  cursor: pointer;
+  list-style: none;
   font-weight: 700;
-  font-size: 0.9rem;
-  padding: 0.35rem 0;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 0.4rem;
+  font-size: 0.88rem;
+  padding: 0.55rem 0.7rem;
+  background: var(--surface-1);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }
+.lk-wycena-collapse > summary::-webkit-details-marker { display: none; }
+.lk-wycena-collapse > summary::before { content: '▸'; color: var(--text-muted); transition: transform 0.15s; }
+.lk-wycena-collapse[open] > summary::before { transform: rotate(90deg); }
+.lk-wycena-collapse > .wk-body { padding: 0.2rem 0.7rem 0.7rem; }
 .lk-wycena-meta { display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; margin-bottom: 0.6rem; font-size: 0.85rem; }
 .lk-wycena-meta div span.lk-label { color: var(--text-muted); margin-right: 0.3rem; }
 .lk-wycena-meta a { color: var(--accent); }
