@@ -291,6 +291,82 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
     }
   });
 
+  // ── Szybkie dodanie (pole tekstowe -> GPT -> podgląd -> zapis) ────────────
+
+  // POST /api/wyceny/parsuj { tekst } -> { parsed, row, match }
+  // Sam parsing + dopasowanie istniejącej wyceny; NIC nie zapisuje — panel
+  // pokazuje podgląd do zatwierdzenia (przewaga nad Telegramem).
+  app.post('/api/wyceny/parsuj', requireEdit, async (req, res) => {
+    try {
+      const tekst = String(req.body?.tekst || '').trim();
+      if (!tekst) return res.status(400).json({ error: 'Wpisz treść wyceny' });
+      const parser = require('./wyceny-parser');
+      const parsed = await parser.parseWycenaText(tekst);
+      const row = parser.parsedToRow(parsed, tekst);
+      const match = await parser.findMatch(getClient(), parsed);
+      res.json({ parsed, row, match });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
+  // POST /api/wyceny/zapisz-parsowane { tekst, row, decyzja, matchId }
+  // decyzja: 'nowa' (nowy wiersz) | 'podmien' (FULL_REPLACE na istniejącej —
+  // podmiana items+kwoty, kontakt zostaje, log dopisany).
+  app.post('/api/wyceny/zapisz-parsowane', requireEdit, async (req, res) => {
+    try {
+      const supabase = getClient();
+      const { tekst, row, decyzja, matchId } = req.body || {};
+      if (!row || typeof row !== 'object') return res.status(400).json({ error: 'Brak danych wyceny' });
+
+      if (decyzja === 'podmien' && matchId) {
+        const { data: oldData, error: oldErr } = await scoped(supabase.from('wyceny').select('*'), req)
+          .eq('id', Number(matchId)).limit(1);
+        if (oldErr) throw oldErr;
+        if (!oldData || !oldData.length) return res.status(404).json({ error: 'Nie znaleziono wyceny do podmiany' });
+        const old = oldData[0];
+        const patch = {
+          items: Array.isArray(row.items) && row.items.length ? row.items : old.items,
+          kwota_proponowana_brutto: row.kwota_proponowana_brutto ?? old.kwota_proponowana_brutto,
+          typ: row.typ === 'ZAMÓWIENIE' ? 'ZAMÓWIENIE' : old.typ,
+          rabat24h_kwota: row.rabat24h_kwota ?? old.rabat24h_kwota,
+          rabat24h_wazny_do: row.rabat24h_wazny_do ?? old.rabat24h_wazny_do,
+          history_log: [old.history_log, row.history_log].filter(Boolean).join('\n'),
+          updated_at: new Date().toISOString(),
+        };
+        const { data, error } = await supabase.from('wyceny').update(patch).eq('id', old.id).select('*');
+        if (error) throw error;
+        await logEvent(supabase, old.id, 'wycena.edited', { source: 'quick-add', mode: 'FULL_REPLACE', user: req.user.name });
+        return res.json({ data: decorate(data[0]), updated: true });
+      }
+
+      // nowa wycena
+      const maKontakt = String(row.telefon_e164 || '').trim() || String(row.email || '').trim();
+      if (!maKontakt && !row.lead_id) {
+        return res.status(400).json({ error: 'Wycena wymaga telefonu lub e-maila (albo podpięcia pod leada)' });
+      }
+      const { data: idData, error: idErr } = await supabase.rpc('wyceny_next_id');
+      if (idErr) throw idErr;
+      const crypto = require('crypto');
+      const insert = {
+        id: idData,
+        owner: String(req.user.name || 'Antoni'),
+        source: 'quick-add',
+        form_token: crypto.randomBytes(12).toString('base64url'),
+      };
+      EDITABLE_WYCENA_FIELDS.forEach((f) => { if (row[f] !== undefined) insert[f] = row[f]; });
+      insert.status = row.status || 'Open';
+      insert.history_log = row.history_log || null;
+      if (insert.telefon_e164) insert.telefon_digits = String(insert.telefon_e164).replace(/\D/g, '').replace(/^48/, '');
+      const { data, error } = await supabase.from('wyceny').insert(insert).select('*');
+      if (error) throw error;
+      await logEvent(supabase, idData, 'wycena.created', { source: 'quick-add', user: req.user.name, tekst: String(tekst || '').slice(0, 500) });
+      res.json({ data: decorate(data[0]), created: true });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
   // POST /api/wyceny/:id/otworz-formularz — odblokowanie jednorazowego
   // formularza (np. klient pomylił adres). Historia submitu zostaje w events.
   app.post('/api/wyceny/:id(\\d+)/otworz-formularz', requireEdit, async (req, res) => {

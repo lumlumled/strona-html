@@ -72,16 +72,23 @@ window.WycenyTab = (() => {
 
     cfg.toolbarEl.append(search, statusSel, typSel, refresh, count);
 
-    // Przycisk nowej wyceny — edytor dochodzi w module wycena-editor.js;
-    // bez niego przycisku nie ma (podgląd / stary deploy).
+    // Szybkie dodanie (tekst -> AI -> podgląd) + pełny edytor — moduł
+    // wycena-editor.js; bez niego przycisków nie ma (podgląd / stary deploy).
     if (!cfg.readOnly && window.WycenaEditor) {
-      const add = h('button', '', '+ Dodaj wycenę');
+      const quick = h('button', '', '⚡ Szybka wycena');
+      quick.type = 'button';
+      quick.style.fontWeight = '700';
+      quick.addEventListener('click', () => window.WycenaEditor.openQuickAdd({
+        apiBase: cfg.apiBase,
+        onSaved: () => load(),
+      }));
+      const add = h('button', '', '+ Nowa wycena');
       add.type = 'button';
-      add.style.fontWeight = '700';
       add.addEventListener('click', () => window.WycenaEditor.openNew({
         apiBase: cfg.apiBase,
         onSaved: () => load(),
       }));
+      cfg.toolbarEl.insertBefore(quick, count);
       cfg.toolbarEl.insertBefore(add, count);
     }
   }
