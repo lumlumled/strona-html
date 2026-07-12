@@ -37,74 +37,203 @@ window.WycenaEditor = (() => {
     return cennikCache;
   }
 
-  // Picker produktów: siatka kart (zdjęcie + nazwa + cena) z wyszukiwarką.
-  // Klik = dodaje pozycję do wyceny; picker zostaje otwarty, żeby dorzucić
-  // kolejne. Zamykasz krzyżykiem / "Gotowe" / klikiem w tło.
-  function openCatalogPicker({ apiBase, onPick }) {
-    const { modal, destroy } = openModal('Dodaj produkt z cennika');
+  // ── Katalog: model z cennika (kategorie + taśmy parametryczne) ───────────────
+  const BARWA_ORDER = ['3000K', '4000K', '6000K', 'CCT', 'RGBCCT'];
+  const BARWA_LABELS = {
+    '3000K': '3000K · ciepła', '4000K': '4000K · neutralna', '6000K': '6000K · zimna',
+    CCT: 'CCT · biel regulowana', RGBCCT: 'RGB+CCT · kolory',
+  };
+  const IP_LABELS = { IP20: 'IP20 · wewnątrz', IP65: 'IP65 · wodoodporna', IP67: 'IP67 · wodoodporna' };
 
-    const search = document.createElement('input');
-    search.type = 'search';
-    search.className = 'wk-catalog-search';
-    search.placeholder = 'Szukaj produktu (nazwa / SKU)…';
-    modal.appendChild(search);
+  // Kategorie "Dodaj produkt". Taśmy są parametryczne (barwa + IP); reszta to
+  // proste listy dopasowane po prefiksie SKU.
+  const CATEGORIES = [
+    { key: 'dig', label: 'Cyfrowa taśma', icon: '〰️', tape: 'DIG' },
+    { key: 'ana', label: 'Analogowa taśma', icon: '➰', tape: 'ANA' },
+    { key: 'ctrl', label: 'Sterowniki', icon: '🎛️', prefixes: ['LL-CTRL', 'LL-PANEL'] },
+    { key: 'remote', label: 'Piloty', icon: '📱', prefixes: ['LL-REMOTE'] },
+    { key: 'sensor', label: 'Czujniki', icon: '📡', prefixes: ['LL-SENSOR'] },
+    { key: 'psu', label: 'Zasilacze', icon: '🔌', prefixes: ['LL-PSU'] },
+    { key: 'acc', label: 'Akcesoria', icon: '🧰', prefixes: ['LL-ACC'] },
+  ];
+  const TAPE_LABEL = { DIG: 'Cyfrowa taśma', ANA: 'Analogowa taśma' };
 
-    const grid = h('div', 'wk-catalog-grid');
-    grid.appendChild(h('div', 'wk-quick-hint', 'Wczytywanie cennika…'));
-    modal.appendChild(grid);
+  function parseTapeSku(sku) {
+    const m = /^LL-TAPE-(DIG|ANA)-COB-(.+)-(IP\d+)$/.exec(String(sku || ''));
+    return m ? { family: m[1], barwa: m[2], ip: m[3] } : null;
+  }
 
-    const actions = h('div', 'wk-modal-actions');
-    const done = h('button', 'wk-btn primary', 'Gotowe');
-    done.type = 'button';
-    done.addEventListener('click', destroy);
-    actions.appendChild(done);
-    modal.appendChild(actions);
+  function buildCatalogModel(cennik) {
+    const tapes = { DIG: [], ANA: [] };
+    const simple = {};
+    (cennik || []).forEach((s) => {
+      const t = parseTapeSku(s.sku);
+      if (t && tapes[t.family]) {
+        tapes[t.family].push({ ...t, sku: s.sku, price: s.price_brutto, image: s.image_url || '', nazwa: s.nazwa, unit: s.unit || 'm' });
+      } else {
+        const cat = CATEGORIES.find((c) => c.prefixes && c.prefixes.some((p) => String(s.sku || '').startsWith(p)));
+        const key = cat ? cat.key : 'acc';
+        (simple[key] = simple[key] || []).push(s);
+      }
+    });
+    return { tapes, simple };
+  }
 
-    function renderGrid(items) {
-      grid.innerHTML = '';
-      if (!items.length) { grid.appendChild(h('div', 'wk-quick-hint', 'Brak produktów pasujących do wyszukiwania.')); return; }
-      items.forEach((s) => {
-        const card = h('button', 'wk-catalog-card');
-        card.type = 'button';
-        const thumbSlot = h('div', 'wk-catalog-thumb');
-        if (s.image_url) {
-          const img = document.createElement('img');
-          img.loading = 'lazy';
-          img.src = s.image_url;
-          img.alt = '';
-          img.addEventListener('error', () => { thumbSlot.innerHTML = ''; thumbSlot.appendChild(h('div', 'wk-thumb-placeholder', '💡')); });
-          thumbSlot.appendChild(img);
-        } else {
-          thumbSlot.appendChild(h('div', 'wk-thumb-placeholder', '💡'));
-        }
-        card.appendChild(thumbSlot);
-        card.appendChild(h('div', 'wk-catalog-name', s.nazwa));
-        if (s.price_brutto != null && s.price_brutto !== '') {
-          card.appendChild(h('div', 'wk-catalog-price', `${moneyPLN(s.price_brutto)}/${s.unit || 'szt'}`));
-        }
-        card.addEventListener('click', () => {
-          onPick(s);
-          card.classList.add('dodano');
-          const prev = card.querySelector('.wk-catalog-added');
-          if (!prev) card.appendChild(h('div', 'wk-catalog-added', '✓ dodano'));
+  // Konfigurator taśmy: selektor barwa + IP + metry; zdjęcie/cena/nazwa wg
+  // wybranego wariantu. Domyślnie 4000K / IP20. Używany przy dodawaniu i edycji.
+  function buildTapeConfigurator(family, catalog, initial, onChange) {
+    const list = (catalog.tapes[family] || []);
+    const wrap = h('div', 'wk-tape-cfg');
+    const barwy = BARWA_ORDER.filter((b) => list.some((t) => t.barwa === b));
+    const allIps = [...new Set(list.map((t) => t.ip))].sort();
+    const ipsFor = (b) => allIps.filter((i) => list.some((t) => t.barwa === b && t.ip === i));
+
+    let barwa = (initial && initial.barwa && barwy.includes(initial.barwa)) ? initial.barwa
+      : (barwy.includes('4000K') ? '4000K' : barwy[0]);
+    let ip;
+    (function pickIp() {
+      const avail = ipsFor(barwa);
+      ip = (initial && initial.ip && avail.includes(initial.ip)) ? initial.ip
+        : (avail.includes('IP20') ? 'IP20' : avail[0]);
+    })();
+    let qty = (initial && initial.quantity != null && initial.quantity !== '') ? String(initial.quantity) : '';
+
+    const resolve = () => list.find((t) => t.barwa === barwa && t.ip === ip) || null;
+
+    const thumb = h('div', 'wk-tape-thumb');
+    const nameEl = h('div', 'wk-tape-name');
+    const priceEl = h('div', 'wk-tape-price');
+    const info = h('div', 'wk-tape-info'); info.append(nameEl, priceEl);
+    const head = h('div', 'wk-tape-head'); head.append(thumb, info);
+    const barwaRow = h('div', 'wk-tape-opts');
+    const ipRow = h('div', 'wk-tape-opts');
+    const qtyInput = input(qty, 'ile metrów');
+    qtyInput.inputMode = 'decimal';
+    const qtyWrap = h('div', 'wk-tape-qty'); qtyWrap.append(h('span', 'wk-tape-qty-label', 'Metry'), qtyInput);
+    qtyInput.addEventListener('input', () => { qty = qtyInput.value; onChange(); });
+
+    function renderThumb(t) {
+      thumb.innerHTML = '';
+      if (t && t.image) {
+        const img = document.createElement('img'); img.src = t.image; img.alt = '';
+        img.addEventListener('error', () => { thumb.innerHTML = ''; thumb.appendChild(h('div', 'wk-thumb-placeholder', '💡')); });
+        thumb.appendChild(img);
+      } else thumb.appendChild(h('div', 'wk-thumb-placeholder', '💡'));
+    }
+    function renderOpts() {
+      barwaRow.innerHTML = '';
+      barwy.forEach((b) => {
+        const btn = h('button', 'wk-opt-btn' + (b === barwa ? ' active' : ''), BARWA_LABELS[b] || b);
+        btn.type = 'button';
+        btn.addEventListener('click', () => {
+          barwa = b;
+          if (!ipsFor(barwa).includes(ip)) { const a = ipsFor(barwa); ip = a.includes('IP20') ? 'IP20' : a[0]; }
+          update();
         });
-        grid.appendChild(card);
+        barwaRow.appendChild(btn);
+      });
+      ipRow.innerHTML = '';
+      ipsFor(barwa).forEach((i) => {
+        const btn = h('button', 'wk-opt-btn' + (i === ip ? ' active' : ''), IP_LABELS[i] || i);
+        btn.type = 'button';
+        btn.addEventListener('click', () => { ip = i; update(); });
+        ipRow.appendChild(btn);
       });
     }
+    function update() {
+      renderOpts();
+      const t = resolve();
+      renderThumb(t);
+      nameEl.textContent = t ? t.nazwa : 'Wariant niedostępny';
+      priceEl.textContent = t ? `${moneyPLN(t.price)} / m` : '';
+      onChange();
+    }
+    update();
+    wrap.append(head, h('div', 'wk-tape-lbl', 'Barwa'), barwaRow, h('div', 'wk-tape-lbl', 'Klasa IP'), ipRow, qtyWrap);
 
-    fetchCennik(apiBase).then((cennik) => {
-      const all = cennik.slice();
-      const apply = () => {
-        const q = search.value.trim().toLowerCase();
-        renderGrid(!q ? all : all.filter((s) => `${s.nazwa || ''} ${s.sku || ''}`.toLowerCase().includes(q)));
-      };
-      search.addEventListener('input', apply);
-      apply();
-      search.focus();
-    }).catch((err) => {
-      grid.innerHTML = '';
-      grid.appendChild(h('div', 'wk-error', `Nie udało się wczytać cennika: ${err.message}`));
-    });
+    return {
+      el: wrap,
+      getItem: () => {
+        const t = resolve();
+        if (!t) return null;
+        return { name: t.nazwa, SKU: t.sku, quantity: money(qty) || 1, unit: t.unit || 'm', price: String(t.price ?? ''), VAT: '23', image_url: t.image || '' };
+      },
+    };
+  }
+
+  // Picker: najpierw kategoria; taśmy → konfigurator (barwa/IP/metry), reszta →
+  // siatka zdjęć (klik = dodaj). onPick dostaje gotową pozycję do wyceny.
+  function openCatalogPicker({ catalog, onPick }) {
+    const { modal, destroy } = openModal('Dodaj produkt');
+    const body = h('div', 'wk-catalog-body');
+    modal.appendChild(body);
+    const actions = h('div', 'wk-modal-actions');
+    const back = h('button', 'wk-btn', '‹ Kategorie');
+    back.type = 'button';
+    back.style.visibility = 'hidden';
+    const done = h('button', 'wk-btn primary', 'Gotowe');
+    done.type = 'button'; done.addEventListener('click', destroy);
+    actions.append(back, done);
+    modal.appendChild(actions);
+
+    function showCategories() {
+      back.style.visibility = 'hidden';
+      body.innerHTML = '';
+      const grid = h('div', 'wk-cat-grid');
+      CATEGORIES.forEach((c) => {
+        const has = c.tape ? (catalog.tapes[c.tape] || []).length : (catalog.simple[c.key] || []).length;
+        if (!has) return;
+        const btn = h('button', 'wk-cat-btn');
+        btn.type = 'button';
+        btn.append(h('span', 'wk-cat-ico', c.icon), h('span', 'wk-cat-lbl', c.label));
+        btn.addEventListener('click', () => openCategory(c));
+        grid.appendChild(btn);
+      });
+      body.appendChild(grid);
+    }
+
+    function openCategory(c) {
+      back.style.visibility = 'visible';
+      body.innerHTML = '';
+      body.appendChild(h('div', 'wk-section-title', c.label));
+      if (c.tape) {
+        const cfg = buildTapeConfigurator(c.tape, catalog, {}, () => {});
+        body.appendChild(cfg.el);
+        const add = h('button', 'wk-btn primary', '+ Dodaj taśmę');
+        add.type = 'button';
+        add.style.marginTop = '0.7rem';
+        add.addEventListener('click', () => {
+          const it = cfg.getItem();
+          if (it) { onPick(it); add.textContent = '✓ Dodano — dodaj kolejną'; setTimeout(() => { add.textContent = '+ Dodaj taśmę'; }, 1300); }
+        });
+        body.appendChild(add);
+      } else {
+        const grid = h('div', 'wk-catalog-grid');
+        (catalog.simple[c.key] || []).forEach((s) => {
+          const card = h('button', 'wk-catalog-card');
+          card.type = 'button';
+          const thumbSlot = h('div', 'wk-catalog-thumb');
+          if (s.image_url) {
+            const img = document.createElement('img'); img.loading = 'lazy'; img.src = s.image_url; img.alt = '';
+            img.addEventListener('error', () => { thumbSlot.innerHTML = ''; thumbSlot.appendChild(h('div', 'wk-thumb-placeholder', '💡')); });
+            thumbSlot.appendChild(img);
+          } else thumbSlot.appendChild(h('div', 'wk-thumb-placeholder', '💡'));
+          card.appendChild(thumbSlot);
+          card.appendChild(h('div', 'wk-catalog-name', s.nazwa));
+          if (s.price_brutto != null && s.price_brutto !== '') card.appendChild(h('div', 'wk-catalog-price', `${moneyPLN(s.price_brutto)}/${s.unit || 'szt'}`));
+          card.addEventListener('click', () => {
+            onPick({ name: s.nazwa, SKU: s.sku, quantity: 1, unit: s.unit || 'szt', price: String(s.price_brutto ?? ''), VAT: String(s.vat || 23), image_url: s.image_url || '' });
+            card.classList.add('dodano');
+            if (!card.querySelector('.wk-catalog-added')) card.appendChild(h('div', 'wk-catalog-added', '✓ dodano'));
+          });
+          grid.appendChild(card);
+        });
+        body.appendChild(grid);
+      }
+    }
+
+    back.addEventListener('click', showCategories);
+    showCategories();
   }
 
   function openModal(titleText) {
@@ -142,91 +271,63 @@ window.WycenaEditor = (() => {
 
   // ── Pełny edytor ───────────────────────────────────────────────────────────
 
-  function buildItemsEditor(items, onChange) {
+  // Edytor pozycji — bez ręcznej edycji nazwy/ceny/SKU/linku. Produkt wybiera
+  // się z katalogu; edytujesz TYLKO ilość, a taśmy dodatkowo przez parametry
+  // (barwa + IP → podmiana wariantu). Nieznane pozycje (spoza katalogu) zostają
+  // widoczne read-only z możliwością zmiany ilości i usunięcia.
+  function buildItemsEditor(items, catalog, onChange) {
     const wrap = h('div', 'wk-edit-items');
     const state = { items: (items || []).map((p) => ({ ...p })) };
-    // W pierwszym renderze NIE wołamy onChange: przy edycji wyceny z pozycjami
-    // update() odpaliłby refreshTotals(), a ten sięga po itemsEd/sumaVal, których
-    // jeszcze nie ma (TDZ) — wyjątek psuł cały modal (brak pozycji i zapisu).
-    // Caller i tak woła refreshTotals() jawnie po zbudowaniu edytora.
+    // Pierwszy render NIE woła onChange (refreshTotals sięga po itemsEd/sumaVal
+    // jeszcze nieistniejące — TDZ). Caller woła refreshTotals() jawnie później.
     let ready = false;
 
     function render() {
       wrap.innerHTML = '';
       state.items.forEach((p, idx) => {
         const box = h('div', 'wk-edit-item-box');
-        const row = h('div', 'wk-edit-item');
+        const remove = h('button', 'wk-edit-item-remove', '✕');
+        remove.type = 'button';
+        remove.title = 'Usuń pozycję';
+        remove.addEventListener('click', () => { state.items.splice(idx, 1); render(); if (ready) onChange(); });
 
-        // Miniatura (żywa — aktualizuje się po wklejeniu linku do zdjęcia).
-        const thumbSlot = h('div', 'wk-edit-thumb-slot');
-        function renderThumb() {
-          thumbSlot.innerHTML = '';
+        const tape = parseTapeSku(p.SKU);
+        if (tape && (catalog.tapes[tape.family] || []).length) {
+          // Taśma parametryczna — barwa/IP/metry podmieniają całą pozycję.
+          const headRow = h('div', 'wk-edit-item-head');
+          headRow.append(h('div', 'wk-edit-item-title', TAPE_LABEL[tape.family] || 'Taśma'), remove);
+          box.appendChild(headRow);
+          const cfg = buildTapeConfigurator(tape.family, catalog, { barwa: tape.barwa, ip: tape.ip, quantity: p.quantity }, () => {
+            const it = cfg.getItem();
+            if (it) Object.assign(p, it);
+            if (ready) onChange();
+          });
+          box.appendChild(cfg.el);
+        } else {
+          // Prosta pozycja — zdjęcie + nazwa (read-only) + ilość.
+          const row = h('div', 'wk-edit-item');
+          const thumbSlot = h('div', 'wk-edit-thumb-slot');
           if (p.image_url) {
             const img = document.createElement('img');
-            img.className = 'wk-thumb';
-            img.style.width = '42px';
-            img.style.height = '42px';
-            img.src = p.image_url;
-            img.alt = '';
+            img.className = 'wk-thumb'; img.style.width = '42px'; img.style.height = '42px';
+            img.src = p.image_url; img.alt = '';
             img.addEventListener('error', () => { thumbSlot.innerHTML = ''; thumbSlot.appendChild(h('div', 'wk-thumb-placeholder', '💡')); });
             thumbSlot.appendChild(img);
           } else {
             thumbSlot.appendChild(h('div', 'wk-thumb-placeholder', '💡'));
           }
+          const nameEl = h('div', 'wk-edit-item-name', p.name || 'Produkt');
+          const qty = input(p.quantity ?? 1, 'ilość');
+          qty.inputMode = 'decimal';
+          qty.className = 'wk-edit-qty';
+          qty.addEventListener('input', () => { p.quantity = qty.value; if (ready) onChange(); });
+          const unit = h('span', 'wk-edit-item-unit', p.unit || 'szt');
+          row.append(thumbSlot, nameEl, qty, unit, remove);
+          box.appendChild(row);
         }
-        renderThumb();
-        row.appendChild(thumbSlot);
-
-        const name = input(p.name, 'Nazwa produktu');
-        name.addEventListener('input', () => { p.name = name.value; onChange(); });
-        row.appendChild(name);
-
-        const qty = input(p.quantity ?? 1, 'ilość');
-        qty.inputMode = 'decimal';
-        qty.addEventListener('input', () => { p.quantity = qty.value; update(); });
-        row.appendChild(qty);
-
-        const unit = input(p.unit || 'szt', 'jedn.');
-        unit.addEventListener('input', () => { p.unit = unit.value; onChange(); });
-        row.appendChild(unit);
-
-        const price = input(p.price ?? '', 'cena');
-        price.inputMode = 'decimal';
-        price.addEventListener('input', () => { p.price = price.value; update(); });
-        row.appendChild(price);
-
-        const total = h('div', 'wk-line-total');
-        row.appendChild(total);
-
-        const remove = h('button', 'wk-edit-item-remove', '✕');
-        remove.type = 'button';
-        remove.title = 'Usuń pozycję';
-        remove.addEventListener('click', () => {
-          state.items.splice(idx, 1);
-          render();
-          onChange();
-        });
-        row.appendChild(remove);
-        box.appendChild(row);
-
-        // Druga linia: SKU (opcjonalny) + link do zdjęcia. Pozycja z linkiem
-        // jest zapisywana do cennika przy zapisie wyceny (serwer, dedupe).
-        const extra = h('div', 'wk-edit-item-extra');
-        const sku = input(p.SKU || '', 'SKU (opcjonalny)');
-        sku.addEventListener('input', () => { p.SKU = sku.value.trim(); onChange(); });
-        const imgUrl = input(p.image_url || '', 'link do zdjęcia (https://…)');
-        imgUrl.addEventListener('input', () => { p.image_url = imgUrl.value.trim(); renderThumb(); onChange(); });
-        extra.append(sku, imgUrl);
-        box.appendChild(extra);
-
-        function update() {
-          total.textContent = moneyPLN(money(p.price) * (money(p.quantity) || 0));
-          if (ready) onChange();
-        }
-        update();
         wrap.appendChild(box);
       });
-      if (!state.items.length) wrap.appendChild(h('div', 'wk-quick-hint', 'Brak pozycji — dodaj z cennika albo własną.'));
+      if (!state.items.length) wrap.appendChild(h('div', 'wk-quick-hint', 'Brak pozycji — dodaj produkt poniżej.'));
     }
 
     render();
@@ -244,7 +345,7 @@ window.WycenaEditor = (() => {
           VAT: String(p.VAT || '23'),
           image_url: p.image_url || '',
         })),
-      addItem: (p) => { state.items.push(p); render(); onChange(); },
+      addItem: (p) => { state.items.push({ ...p }); render(); if (ready) onChange(); },
       suma: () => state.items.reduce((a, p) => a + money(p.price) * (money(p.quantity) || 0), 0),
     };
   }
@@ -331,144 +432,145 @@ window.WycenaEditor = (() => {
     leadSection.append(leadStatus, leadSearch, leadResults);
     modal.appendChild(leadSection);
 
-    // Pozycje
-    modal.appendChild(h('div', 'wk-section-title', 'Pozycje'));
-    let kwotaTouched = Boolean(!isNew || (prefill && prefill.kwota_proponowana_brutto != null));
-    const itemsEd = buildItemsEditor(src.items || [], () => refreshTotals());
-    modal.appendChild(itemsEd.el);
+    // Pozycje/kwoty/akcje budujemy PO wczytaniu cennika (potrzebny do
+    // parametrycznych taśm i pickera). fetchCennik jest cache'owany, więc po
+    // pierwszym otwarciu edytora jest to natychmiastowe.
+    const loadingEl = h('div', 'wk-quick-hint', 'Wczytywanie cennika…');
+    modal.appendChild(loadingEl);
 
-    // Dodawanie pozycji — siatka produktów ze zdjęciami (klik = dodaj).
-    const addbar = h('div', 'wk-edit-addbar');
-    const catalogBtn = h('button', 'wk-btn primary', '+ Dodaj produkt');
-    catalogBtn.type = 'button';
-    catalogBtn.addEventListener('click', () => openCatalogPicker({
-      apiBase,
-      onPick: (s) => itemsEd.addItem({
-        name: s.nazwa, SKU: s.sku, quantity: 1, unit: s.unit || 'szt',
-        price: String(s.price_brutto ?? ''), VAT: String(s.vat || 23), image_url: s.image_url || '',
-      }),
-    }));
-    const customBtn = h('button', 'wk-btn', '+ własna pozycja');
-    customBtn.type = 'button';
-    customBtn.addEventListener('click', () => itemsEd.addItem({ name: '', quantity: 1, unit: 'szt', price: '', VAT: '23' }));
-    addbar.append(catalogBtn, customBtn);
-    modal.appendChild(addbar);
+    fetchCennik(apiBase).then((cennik) => {
+      const catalog = buildCatalogModel(cennik);
+      loadingEl.remove();
 
-    // Kwoty: suma pozycji + kwota dla klienta (rabat = różnica, na żywo)
-    const summary = h('div', 'wk-edit-summary');
-    const sumaRow = h('div', 'row');
-    const sumaVal = h('span');
-    sumaRow.append(h('span', '', 'Suma pozycji'), sumaVal);
-    const rabatRow = h('div', 'row');
-    const rabatVal = h('span');
-    rabatVal.style.fontWeight = '600';
-    rabatRow.append(h('span', '', 'Rabat (kwota − suma pozycji)'), rabatVal);
-    const kwotaRow = h('div', 'row');
-    const kwotaInput = input(src.kwota_proponowana_brutto ?? '', '0,00');
-    kwotaInput.inputMode = 'decimal';
-    kwotaInput.addEventListener('input', () => { kwotaTouched = true; refreshTotals(); });
-    kwotaRow.append(h('span', '', 'Do zapłaty (kwota dla klienta)'), kwotaInput);
-    summary.append(sumaRow, rabatRow, kwotaRow);
-    modal.appendChild(summary);
+      modal.appendChild(h('div', 'wk-section-title', 'Pozycje'));
+      let kwotaTouched = Boolean(!isNew || (prefill && prefill.kwota_proponowana_brutto != null));
+      const itemsEd = buildItemsEditor(src.items || [], catalog, () => refreshTotals());
+      modal.appendChild(itemsEd.el);
 
-    // Rabat czasowy — kwota + ile godzin ważny. Godziny liczą "ważny do" od
-    // teraz; pole "ważny do" można też nadpisać ręcznie. Pipeline faktur i tak
-    // stosuje ten rabat, dopóki termin nie minął (wyceny-pipeline.js).
-    const rabat24hGrid = h('div', 'wk-form-grid');
-    const rabat24hKwota = input(src.rabat24h_kwota ?? '', 'np. 100');
-    rabat24hKwota.inputMode = 'decimal';
-    // Domyślne godziny wyznaczamy z parsowanej daty ważności (24h / 72h / 7 dni),
-    // żeby pole zgadzało się z tym, co złapał parser; fallback 24.
-    const godzinyStart = (() => {
-      if (!src.rabat24h_wazny_do) return '24';
-      const diffH = Math.round((new Date(src.rabat24h_wazny_do).getTime() - Date.now()) / 3600000);
-      return diffH > 0 ? String(diffH) : '24';
-    })();
-    const rabat24hGodziny = input(godzinyStart, 'np. 24', 'number');
-    rabat24hGodziny.min = '1';
-    rabat24hGodziny.step = '1';
-    const rabat24hDo = input('', '', 'datetime-local');
-    const setDoFromHours = () => {
-      const hrs = money(rabat24hGodziny.value);
-      if (!hrs) return;
-      const d = new Date(Date.now() + hrs * 60 * 60 * 1000);
-      const p = (x) => String(x).padStart(2, '0');
-      rabat24hDo.value = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-    };
-    if (src.rabat24h_wazny_do) {
-      const d = new Date(src.rabat24h_wazny_do);
-      if (!Number.isNaN(d.getTime())) {
+      // Dodawanie pozycji — kategorie + parametryczne taśmy (openCatalogPicker).
+      const addbar = h('div', 'wk-edit-addbar');
+      const catalogBtn = h('button', 'wk-btn primary', '+ Dodaj produkt');
+      catalogBtn.type = 'button';
+      catalogBtn.addEventListener('click', () => openCatalogPicker({ catalog, onPick: (it) => itemsEd.addItem(it) }));
+      addbar.append(catalogBtn);
+      modal.appendChild(addbar);
+
+      // Kwoty: suma pozycji + kwota dla klienta (rabat = różnica, na żywo)
+      const summary = h('div', 'wk-edit-summary');
+      const sumaRow = h('div', 'row');
+      const sumaVal = h('span');
+      sumaRow.append(h('span', '', 'Suma pozycji'), sumaVal);
+      const rabatRow = h('div', 'row');
+      const rabatVal = h('span');
+      rabatVal.style.fontWeight = '600';
+      rabatRow.append(h('span', '', 'Rabat (kwota − suma pozycji)'), rabatVal);
+      const kwotaRow = h('div', 'row');
+      const kwotaInput = input(src.kwota_proponowana_brutto ?? '', '0,00');
+      kwotaInput.inputMode = 'decimal';
+      kwotaInput.addEventListener('input', () => { kwotaTouched = true; refreshTotals(); });
+      kwotaRow.append(h('span', '', 'Do zapłaty (kwota dla klienta)'), kwotaInput);
+      summary.append(sumaRow, rabatRow, kwotaRow);
+      modal.appendChild(summary);
+
+      // Rabat czasowy — kwota + ile godzin ważny. Godziny liczą "ważny do" od
+      // teraz; pole "ważny do" można też nadpisać ręcznie. Pipeline faktur i tak
+      // stosuje ten rabat, dopóki termin nie minął (wyceny-pipeline.js).
+      const rabat24hGrid = h('div', 'wk-form-grid');
+      const rabat24hKwota = input(src.rabat24h_kwota ?? '', 'np. 100');
+      rabat24hKwota.inputMode = 'decimal';
+      const godzinyStart = (() => {
+        if (!src.rabat24h_wazny_do) return '24';
+        const diffH = Math.round((new Date(src.rabat24h_wazny_do).getTime() - Date.now()) / 3600000);
+        return diffH > 0 ? String(diffH) : '24';
+      })();
+      const rabat24hGodziny = input(godzinyStart, 'np. 24', 'number');
+      rabat24hGodziny.min = '1';
+      rabat24hGodziny.step = '1';
+      const rabat24hDo = input('', '', 'datetime-local');
+      const setDoFromHours = () => {
+        const hrs = money(rabat24hGodziny.value);
+        if (!hrs) return;
+        const d = new Date(Date.now() + hrs * 60 * 60 * 1000);
         const p = (x) => String(x).padStart(2, '0');
         rabat24hDo.value = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-      }
-    }
-    rabat24hGodziny.addEventListener('input', () => { if (rabat24hKwota.value) setDoFromHours(); });
-    rabat24hKwota.addEventListener('input', () => { if (rabat24hKwota.value && !rabat24hDo.value) setDoFromHours(); });
-    rabat24hGrid.append(
-      field('Rabat czasowy — kwota (zł)', rabat24hKwota),
-      field('Ważny przez (godziny)', rabat24hGodziny),
-      field('Ważny do', rabat24hDo),
-    );
-    modal.appendChild(rabat24hGrid);
-
-    function refreshTotals() {
-      const suma = itemsEd.suma();
-      sumaVal.textContent = moneyPLN(suma);
-      if (!kwotaTouched) kwotaInput.value = suma ? String(Math.round(suma * 100) / 100) : '';
-      const kwota = money(kwotaInput.value);
-      const rabat = kwota && suma ? Math.round((kwota - suma) * 100) / 100 : 0;
-      rabatVal.textContent = rabat < 0 ? moneyPLN(rabat) : (rabat > 0 ? `+${moneyPLN(rabat)}` : '—');
-      rabatVal.style.color = rabat < 0 ? 'var(--bad, #b5433f)' : '';
-    }
-    refreshTotals();
-
-    // Akcje
-    const actions = h('div', 'wk-modal-actions');
-    const errEl = h('span', 'wk-error');
-    const save = h('button', 'wk-btn primary', isNew ? 'Utwórz wycenę' : 'Zapisz zmiany');
-    save.type = 'button';
-    save.addEventListener('click', async () => {
-      errEl.textContent = '';
-      const body = {
-        imie_nazwisko: imie.value.trim() || null,
-        telefon_e164: telefon.value.replace(/\D/g, '') || null,
-        email: email.value.trim().toLowerCase() || null,
-        komentarz: komentarz.value.trim() || null,
-        items: itemsEd.getItems(),
-        kwota_proponowana_brutto: kwotaInput.value ? money(kwotaInput.value) : null,
-        rabat24h_kwota: rabat24hKwota.value ? money(rabat24hKwota.value) : null,
-        rabat24h_wazny_do: rabat24hDo.value ? new Date(rabat24hDo.value).toISOString() : null,
       };
-      body.lead_id = leadId || null;
-      if (!body.telefon_e164 && !body.email && !body.lead_id) {
-        errEl.textContent = 'Podaj telefon albo e-mail.';
-        return;
+      if (src.rabat24h_wazny_do) {
+        const d = new Date(src.rabat24h_wazny_do);
+        if (!Number.isNaN(d.getTime())) {
+          const p = (x) => String(x).padStart(2, '0');
+          rabat24hDo.value = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+        }
       }
-      if (!body.items.length) {
-        errEl.textContent = 'Dodaj przynajmniej jedną pozycję.';
-        return;
+      rabat24hGodziny.addEventListener('input', () => { if (rabat24hKwota.value) setDoFromHours(); });
+      rabat24hKwota.addEventListener('input', () => { if (rabat24hKwota.value && !rabat24hDo.value) setDoFromHours(); });
+      rabat24hGrid.append(
+        field('Rabat czasowy — kwota (zł)', rabat24hKwota),
+        field('Ważny przez (godziny)', rabat24hGodziny),
+        field('Ważny do', rabat24hDo),
+      );
+      modal.appendChild(rabat24hGrid);
+
+      function refreshTotals() {
+        const suma = itemsEd.suma();
+        sumaVal.textContent = moneyPLN(suma);
+        if (!kwotaTouched) kwotaInput.value = suma ? String(Math.round(suma * 100) / 100) : '';
+        const kwota = money(kwotaInput.value);
+        const rabat = kwota && suma ? Math.round((kwota - suma) * 100) / 100 : 0;
+        rabatVal.textContent = rabat < 0 ? moneyPLN(rabat) : (rabat > 0 ? `+${moneyPLN(rabat)}` : '—');
+        rabatVal.style.color = rabat < 0 ? 'var(--bad, #b5433f)' : '';
       }
-      save.disabled = true;
-      try {
-        const res = await fetch(isNew ? `${apiBase}/api/wyceny` : `${apiBase}/api/wyceny/${wycena.id}`, {
-          method: isNew ? 'POST' : 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        const resBody = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(resBody.error || `Błąd ${res.status}`);
-        destroy();
-        if (onSaved) onSaved(resBody.data);
-      } catch (err) {
-        errEl.textContent = err.message;
-        save.disabled = false;
-      }
+      refreshTotals();
+
+      // Akcje
+      const actions = h('div', 'wk-modal-actions');
+      const errEl = h('span', 'wk-error');
+      const save = h('button', 'wk-btn primary', isNew ? 'Utwórz wycenę' : 'Zapisz zmiany');
+      save.type = 'button';
+      save.addEventListener('click', async () => {
+        errEl.textContent = '';
+        const body = {
+          imie_nazwisko: imie.value.trim() || null,
+          telefon_e164: telefon.value.replace(/\D/g, '') || null,
+          email: email.value.trim().toLowerCase() || null,
+          komentarz: komentarz.value.trim() || null,
+          items: itemsEd.getItems(),
+          kwota_proponowana_brutto: kwotaInput.value ? money(kwotaInput.value) : null,
+          rabat24h_kwota: rabat24hKwota.value ? money(rabat24hKwota.value) : null,
+          rabat24h_wazny_do: rabat24hDo.value ? new Date(rabat24hDo.value).toISOString() : null,
+        };
+        body.lead_id = leadId || null;
+        if (!body.telefon_e164 && !body.email && !body.lead_id) {
+          errEl.textContent = 'Podaj telefon albo e-mail.';
+          return;
+        }
+        if (!body.items.length) {
+          errEl.textContent = 'Dodaj przynajmniej jedną pozycję.';
+          return;
+        }
+        save.disabled = true;
+        try {
+          const res = await fetch(isNew ? `${apiBase}/api/wyceny` : `${apiBase}/api/wyceny/${wycena.id}`, {
+            method: isNew ? 'POST' : 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          const resBody = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(resBody.error || `Błąd ${res.status}`);
+          destroy();
+          if (onSaved) onSaved(resBody.data);
+        } catch (err) {
+          errEl.textContent = err.message;
+          save.disabled = false;
+        }
+      });
+      const cancel = h('button', 'wk-btn', 'Anuluj');
+      cancel.type = 'button';
+      cancel.addEventListener('click', destroy);
+      actions.append(errEl, cancel, save);
+      modal.appendChild(actions);
+    }).catch((err) => {
+      loadingEl.textContent = `Nie udało się wczytać cennika: ${err.message}`;
     });
-    const cancel = h('button', 'wk-btn', 'Anuluj');
-    cancel.type = 'button';
-    cancel.addEventListener('click', destroy);
-    actions.append(errEl, cancel, save);
-    modal.appendChild(actions);
   }
 
   // ── Szybkie dodanie ────────────────────────────────────────────────────────

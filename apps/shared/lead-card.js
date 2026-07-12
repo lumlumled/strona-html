@@ -709,20 +709,12 @@ window.LeadKarta = (() => {
         return;
       }
 
-      // Nagłówek per wycena — jeden lead może mieć kilka RÓŻNYCH wycen (inne
-      // produkty/kwoty); bez nagłówka wyglądają jak duplikat. Numer + data + kwota.
+      // Jeden lead może mieć kilka RÓŻNYCH wycen (inne produkty/kwoty). Przy
+      // wielu — każda jako osobne rozwijane "Wycena N · data · kwota", żeby dało
+      // się otwierać po kolei. Przy jednej — pokazujemy od razu.
       const wielo = list.length > 1;
       list.forEach((wycena, idx) => {
-        if (wielo) {
-          const money = window.WycenaKarta.utils.moneyPLN(wycena.kwota_proponowana_brutto ?? wycena._suma_pozycji);
-          const data = wycena.created_at ? window.WycenaKarta.utils.formatDT(wycena.created_at).split(' ')[0] : '';
-          const hdr = document.createElement('div');
-          hdr.className = 'lk-wycena-naglowek';
-          hdr.textContent = `Wycena #${wycena.id}${data ? ` · ${data}` : ''} · ${money}`;
-          if (idx > 0) hdr.style.marginTop = '0.8rem';
-          container.appendChild(hdr);
-        }
-        const { el: cardEl } = window.WycenaKarta.buildBody(wycena, {
+        const buildCard = () => window.WycenaKarta.buildBody(wycena, {
           apiBase,
           readOnly: !!readOnly,
           mode: 'crm',
@@ -730,8 +722,21 @@ window.LeadKarta = (() => {
           onEdit: (readOnly || !window.WycenaEditor)
             ? null
             : (w) => window.WycenaEditor.openEdit(w, { apiBase, onSaved: reload }),
-        });
-        container.appendChild(cardEl);
+        }).el;
+
+        if (wielo) {
+          const money = window.WycenaKarta.utils.moneyPLN(wycena.kwota_proponowana_brutto ?? wycena._suma_pozycji);
+          const data = wycena.created_at ? window.WycenaKarta.utils.formatDT(wycena.created_at).split(' ')[0] : '';
+          const det = document.createElement('details');
+          det.className = 'lk-wycena-collapse';
+          if (idx === 0) det.open = true;
+          const sum = document.createElement('summary');
+          sum.textContent = `Wycena ${idx + 1}${data ? ` · ${data}` : ''} · ${money} (#${wycena.id})`;
+          det.append(sum, buildCard());
+          container.appendChild(det);
+        } else {
+          container.appendChild(buildCard());
+        }
       });
       addNewButton(container, '+ Nowa wycena');
     } catch (err) {
