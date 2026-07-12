@@ -7,7 +7,7 @@ const { getClient } = require('./supabase');
 const { registerLeadyEndpoints, NIE_TELEFON_ZRODLA } = require('../../shared/server/leady-endpoints');
 const { registerWycenyEndpoints } = require('../../shared/server/wyceny-endpoints');
 const { createAuth, clientPayload, panelLinks, isAdmin } = require('../../shared/server/auth');
-const { servePushWorker, registerPushEndpoints } = require('../../shared/server/push');
+const { servePushWorker, registerPushEndpoints, notifyUser } = require('../../shared/server/push');
 
 const app = express();
 app.use(cors());
@@ -1243,6 +1243,11 @@ registerWycenyEndpoints(app, {
   isAdmin,
 });
 
+// Watchdog "temat ucieka" (docs/plan-watchdog-feedback.md): odczyt/zamykanie
+// alertów dla hubu i Backlogu. Sam sweep jest niżej, przy cronach.
+const { runWatchdogSweep, registerWatchdogEndpoints } = require('../../shared/server/watchdog-dispatcher');
+registerWatchdogEndpoints(app, { getClient, isAdmin });
+
 // Wszystkie leady z ustawioną najbliższą akcją — frontend nakłada to na
 // wyrenderowane case'y po telefonie (pigułka jest żywa w ciągu dnia, mimo że
 // dokument Umowy to migawka z rana). To samo zapytanie posłuży przyszłemu
@@ -2464,6 +2469,30 @@ app.all('/api/cron/podsumowanie-dnia', async (req, res) => {
     res.json({ json: parsed });
   } catch (err) {
     await logOperation(supabase, 'podsumowanie_dnia_cron', 'error', { data: dataIso, message: err.message });
+    handleError(res, err, 502);
+  }
+});
+
+// Watchdog "temat ucieka" — sweep (docs/plan-watchdog-feedback.md §7).
+// Odpalany przez pg_cron + pg_net co 30 min 8-20 Warsaw (NIE vercel.json —
+// Hobby). Uzbraja wyceny bez watcha, gasi przy aktywności, alertuje ciszę;
+// push do ownera przez istniejący notifyUser (apps/shared/server/push.js).
+app.all('/api/cron/watchdog', async (req, res) => {
+  const supabase = getClient();
+  try {
+    if (!isCronAuthorized(req)) return res.status(401).json({ error: 'Brak autoryzacji' });
+    const notifyOwner = async ({ owner, title, body, url, tag }) => {
+      if (!owner) return;
+      const { data } = await supabase.from('app_users')
+        .select('id').ilike('name', String(owner).trim()).eq('active', true).limit(1);
+      if (!data || !data.length) return;
+      await notifyUser(getClient, data[0].id, { title, body, url, tag });
+    };
+    const raport = await runWatchdogSweep(supabase, { notifyOwner });
+    await logOperation(supabase, 'watchdog_cron', raport.errors.length ? 'partial' : 'ok', raport);
+    res.json({ ok: true, ...raport });
+  } catch (err) {
+    await logOperation(supabase, 'watchdog_cron', 'error', { message: err.message });
     handleError(res, err, 502);
   }
 });
