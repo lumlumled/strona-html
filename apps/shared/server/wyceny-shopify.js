@@ -7,6 +7,8 @@
 // Wymaga SHOPIFY_ADMIN_TOKEN (custom app, scope read_orders; token od
 // Antoniego). Worker woła syncShopifyOrders przy każdym przebiegu — brak
 // tokenu = cichy skip.
+const { canonicalize } = require('./wyceny-shopify-canon');
+
 const SHOP = process.env.SHOPIFY_SHOP || 'lumlum-co.myshopify.com';
 const API_VERSION = '2025-04';
 
@@ -49,19 +51,18 @@ function mapStage(order) {
 // Zamówienie Shopify -> wiersz wyceny (bez id — nadaje go upsert).
 function orderToRow(order, skuIndex) {
   const addr = order.shippingAddress || {};
+  // Kanonizacja do naszego cennika (nazwa/SKU/zdjęcie, taśmy na metry) —
+  // wyceny-shopify-canon.js. Bez dopasowania (np. produkt testowy) zostaje
+  // surowa nazwa; flagi _unmatched nie zapisujemy.
   const items = (order.lineItems?.nodes || order.lineItems || []).map((li) => {
-    const sku = li.sku || li.variant?.sku || '';
-    const name = li.variant?.displayName || li.title;
-    const match = (sku && skuIndex.bySku.get(sku)) || skuIndex.byName.get(String(name).toLowerCase());
-    return {
-      name,
-      SKU: sku || (match ? match.sku : ''),
+    const it = canonicalize({
+      name: li.variant?.displayName || li.title,
+      sku: li.sku || li.variant?.sku || '',
       quantity: li.quantity || 1,
-      unit: match ? match.unit : 'szt',
-      price: String(li.discountedUnitPriceSet?.shopMoney?.amount ?? ''),
-      VAT: '23',
-      image_url: match ? match.image_url : '',
-    };
+      unitPrice: li.discountedUnitPriceSet?.shopMoney?.amount,
+    }, skuIndex);
+    delete it._unmatched;
+    return it;
   });
   const phone = order.phone || addr.phone || order.customer?.defaultPhoneNumber?.phoneNumber || '';
   const digits = String(phone).replace(/\D/g, '').replace(/^48/, '');
