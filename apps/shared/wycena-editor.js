@@ -630,6 +630,7 @@ window.WycenaEditor = (() => {
           if (!res.ok) throw new Error(resBody.error || `Błąd ${res.status}`);
           destroy();
           if (onSaved) onSaved(resBody.data);
+          showSavedBar(resBody.data, { apiBase, onSaved });
         } catch (err) {
           errEl.textContent = err.message;
           save.disabled = false;
@@ -801,6 +802,7 @@ window.WycenaEditor = (() => {
         if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
         destroy();
         if (onSaved) onSaved(body.data);
+        showSavedBar(body.data, { apiBase, onSaved });
       } catch (err) {
         errEl.textContent = err.message;
         saveBtn.disabled = false;
@@ -812,6 +814,80 @@ window.WycenaEditor = (() => {
       destroy();
       openEditor({ apiBase, onSaved, prefill: lastRow });
     });
+  }
+
+  // ── Pasek z linkiem po zapisie ──────────────────────────────────────────────
+  // Po każdym zapisie (szybka wycena ORAZ pełny edytor) przykleja na dole
+  // ekranu pasek z klienckim linkiem wyceny — wisi do ręcznego zamknięcia, nie
+  // znika sam, żeby link był od razu pod ręką do wysłania klientowi. Obok linku
+  // skrót "Pokaż wycenę" (otwiera tę wycenę). Jeden pasek na raz: kolejny zapis
+  // podmienia poprzedni. Kopiowanie linku = wysłanie: oznacza wycenę jako
+  // "Link wysłany" (POST /wyslij-link, tak jak przycisk w karcie). Świadomie NIE
+  // wołamy onSaved po kopiowaniu — w szybkiej wycenie onSaved otwiera modal od
+  // nowa, więc potwierdzenie pokazujemy w samym pasku.
+  let savedBarEl = null;
+  function closeSavedBar() {
+    if (savedBarEl) { savedBarEl.remove(); savedBarEl = null; }
+  }
+  function showSavedBar(saved, { apiBase, onSaved }) {
+    if (!saved || !saved.id) return;
+    const link = saved._link || '';
+    closeSavedBar();
+
+    const bar = h('div', 'wk-savedbar');
+    const titleEl = h('span', 'wk-savedbar-title', `✓ Wycena #${saved.id}`);
+    bar.appendChild(titleEl);
+
+    const input = document.createElement('input');
+    input.readOnly = true;
+    input.value = link;
+    input.title = link;
+    input.addEventListener('focus', () => input.select());
+    input.addEventListener('click', () => input.select());
+    bar.appendChild(input);
+
+    const copy = h('button', 'wk-btn primary', '📋 Kopiuj link');
+    copy.type = 'button';
+    copy.addEventListener('click', async () => {
+      // Kopiowanie = wysłanie: oznaczamy wycenę "Link wysłany" (jak w karcie).
+      // POST zwraca aktualny link; gdy się nie uda (offline/sesja), i tak
+      // kopiujemy znany link, żeby akcja nigdy nie zniknęła bez efektu.
+      let toCopy = link;
+      try {
+        const res = await fetch(`${apiBase}/api/wyceny/${saved.id}/wyslij-link`, { method: 'POST' });
+        const b = await res.json().catch(() => ({}));
+        if (res.ok) {
+          if (b.link) toCopy = b.link;
+          titleEl.textContent = `✓ Wycena #${saved.id} · link wysłany`;
+        }
+      } catch (_) { /* brak sieci/sesji — kopiujemy lokalny link */ }
+      try {
+        await navigator.clipboard.writeText(toCopy);
+      } catch (_) {
+        input.select();
+        try { document.execCommand('copy'); } catch (_e) { /* brak clipboard — nic nie psujemy */ }
+      }
+      copy.textContent = 'Skopiowano ✓';
+      setTimeout(() => { copy.textContent = '📋 Kopiuj link'; }, 1500);
+    });
+    bar.appendChild(copy);
+
+    const show = h('button', 'wk-btn', 'Pokaż wycenę');
+    show.type = 'button';
+    show.addEventListener('click', () => {
+      closeSavedBar();
+      openEditor({ apiBase, onSaved, wycena: saved });
+    });
+    bar.appendChild(show);
+
+    const close = h('button', 'wk-savedbar-close', '×');
+    close.type = 'button';
+    close.title = 'Zamknij';
+    close.addEventListener('click', closeSavedBar);
+    bar.appendChild(close);
+
+    document.body.appendChild(bar);
+    savedBarEl = bar;
   }
 
   return {

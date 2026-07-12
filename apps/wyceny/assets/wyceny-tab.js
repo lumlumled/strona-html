@@ -10,9 +10,13 @@ window.WycenyTab = (() => {
   let loaded = false;
   let all = [];
   let statusy = [];
-  let typy = [];
   let ownerFilter = ''; // '' = wszyscy; inaczej dokładna nazwa ownera
   let zrodloFilter = ''; // '' = wszystkie źródła; b2c | wiadomosci | b2b | nieprzypisane
+  // Widok: 'aktywne' = wszystko oprócz Stracone (domyślny), 'stracone' = tylko
+  // Stracone. Statusy dalej po Open — wszystko po drodze idzie do Sprzedaży
+  // (typ ZAMÓWIENIE, wykluczony z tej listy), więc nie ma tu osobnego filtra
+  // statusu; ta jedna oś (aktywne/stracone) zastępuje dawny selektor statusu.
+  let widok = 'aktywne';
 
   // Źródło wyceny — "co jest gdzie" (liczone server-side, pole _zrodlo).
   const ZRODLO_LABELS = {
@@ -111,13 +115,24 @@ window.WycenyTab = (() => {
     search.placeholder = 'Szukaj: imię, telefon, e-mail albo numer…';
     search.addEventListener('input', renderList);
 
-    const statusSel = document.createElement('select');
-    statusSel.id = 'wyceny-status-filter';
-    statusSel.addEventListener('change', renderList);
-
-    const typSel = document.createElement('select');
-    typSel.id = 'wyceny-typ-filter';
-    typSel.addEventListener('change', renderList);
+    // Przełącznik Aktywne / Stracone (zastępuje dawny selektor statusu). Stracone
+    // to jedyny „poza-Open" stan, który zostaje w tym panelu — reszta drogi
+    // (opłacone → zamówienie) żyje w Sprzedażach.
+    const widokWrap = h('div', 'widok-toggle');
+    widokWrap.id = 'wyceny-widok-toggle';
+    [['aktywne', 'Aktywne'], ['stracone', 'Stracone']].forEach(([val, label]) => {
+      const btn = h('button', 'widok-btn' + (widok === val ? ' active' : ''), label);
+      btn.type = 'button';
+      btn.dataset.widok = val;
+      btn.addEventListener('click', () => {
+        widok = val;
+        widokWrap.querySelectorAll('.widok-btn').forEach((b) => {
+          b.classList.toggle('active', b.dataset.widok === widok);
+        });
+        renderList();
+      });
+      widokWrap.appendChild(btn);
+    });
 
     // Filtr źródła — "co jest gdzie". B2B na razie placeholder (wkrótce).
     const zrodloSel = document.createElement('select');
@@ -140,7 +155,7 @@ window.WycenyTab = (() => {
     const count = h('span', 'count-badge');
     count.id = 'wyceny-count';
 
-    cfg.toolbarEl.append(search, statusSel, typSel, zrodloSel, ownerFilterWrap, refresh, count);
+    cfg.toolbarEl.append(search, widokWrap, zrodloSel, ownerFilterWrap, refresh, count);
 
     // Szybkie dodanie (tekst -> AI -> podgląd) + pełny edytor — moduł
     // wycena-editor.js; bez niego przycisków nie ma (podgląd / stary deploy).
@@ -161,29 +176,6 @@ window.WycenyTab = (() => {
       cfg.toolbarEl.insertBefore(quick, count);
       cfg.toolbarEl.insertBefore(add, count);
     }
-  }
-
-  function fillFilters() {
-    const statusSel = document.getElementById('wyceny-status-filter');
-    const typSel = document.getElementById('wyceny-typ-filter');
-    statusSel.innerHTML = '';
-    typSel.innerHTML = '';
-    const optAllS = h('option', '', 'Wszystkie statusy');
-    optAllS.value = '';
-    statusSel.appendChild(optAllS);
-    statusy.forEach((s) => {
-      const o = h('option', '', s);
-      o.value = s;
-      statusSel.appendChild(o);
-    });
-    const optAllT = h('option', '', 'Wszystkie typy');
-    optAllT.value = '';
-    typSel.appendChild(optAllT);
-    typy.forEach((t) => {
-      const o = h('option', '', TYP_LABELS[t] || t);
-      o.value = t;
-      typSel.appendChild(o);
-    });
   }
 
   // ── Wiersz listy ───────────────────────────────────────────────────────────
@@ -319,10 +311,10 @@ window.WycenyTab = (() => {
   // ── Lista + filtry ─────────────────────────────────────────────────────────
   function matches(wycena) {
     const q = (document.getElementById('wyceny-search')?.value || '').trim().toLowerCase();
-    const status = document.getElementById('wyceny-status-filter')?.value || '';
-    const typ = document.getElementById('wyceny-typ-filter')?.value || '';
-    if (status && wycena.status !== status) return false;
-    if (typ && wycena.typ !== typ) return false;
+    // Oś Aktywne/Stracone zamiast selektora statusu: 'stracone' = tylko Stracone,
+    // 'aktywne' = cała reszta (wszystko oprócz Stracone).
+    const jestStracona = String(wycena.status || '').trim().toLowerCase() === 'stracone';
+    if (widok === 'stracone' ? !jestStracona : jestStracona) return false;
     if (zrodloFilter && (wycena._zrodlo || 'nieprzypisane') !== zrodloFilter) return false;
     if (ownerFilter && String(wycena.owner || '').trim() !== ownerFilter) return false;
     if (!q) return true;
@@ -357,8 +349,6 @@ window.WycenyTab = (() => {
       if (!res.ok) throw new Error(body.error || 'Błąd wczytywania');
       all = body.data || [];
       statusy = body.statusy || [];
-      typy = body.typy || [];
-      fillFilters();
       renderOwnerFilter();
       renderList();
       loaded = true;

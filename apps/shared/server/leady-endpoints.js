@@ -111,6 +111,29 @@ async function findWycenaByPhoneScan(supabase, phoneDigits) {
   return (data || []).find((r) => normalizePhoneDigits(r['Telefon']) === phoneDigits) || null;
 }
 
+// Czy lead ma wycenę w NOWEJ tabeli `wyceny` (nie legacy "Wyceny B2C"). Steruje
+// tylko flagą _ma_wycene na karcie (etykiety "Kwota"/"Proponowana kwota" i
+// chowanie pól legacy) — dlatego wystarczy istnienie choćby jednego wiersza.
+// Match jak w GET /api/wyceny/dla-leada: po lead_id ORAZ telefon_digits
+// (telefon_digits = cyfry bez prefiksu 48, spójnie z zapisem w tej tabeli).
+async function hasWycenaNowa(supabase, phoneDigits, leadId) {
+  const ors = [];
+  // "ID Leada" bywa numeric (np. "314" albo "314.0"); kanoniczny lead_id w
+  // wycenach to liczba całkowita jako tekst ("314") — normalizujemy jak w
+  // GET /api/wyceny/szukaj-leada, inaczej "314.0" nie trafiłoby w "314".
+  const lidNum = Number(leadId);
+  if (Number.isFinite(lidNum)) ors.push(`lead_id.eq.${lidNum}`);
+  if (phoneDigits) ors.push(`telefon_digits.eq.${phoneDigits}`);
+  if (!ors.length) return false;
+  const { data, error } = await supabase
+    .from('wyceny')
+    .select('id')
+    .or(ors.join(','))
+    .limit(1);
+  if (error) throw error;
+  return (data || []).length > 0;
+}
+
 // Ekstrakcja akcji z ręcznej notatki handlowca. null NIE czyści
 // dotychczasowej akcji — notatka bez wynikającego kroku zostawia ją w spokoju.
 function buildNotatkaAnalysisPrompt(dzisiaj, poprzedniaAkcja) {
@@ -259,8 +282,11 @@ function registerLeadyEndpoints(app, { getClient, requireView, requireEdit }) {
       const lead = await findLeadByPhone(supabase, digits);
       if (!lead) return res.status(404).json({ error: 'Nie znaleziono leada o tym numerze' });
 
-      const [wycena, logRows] = await Promise.all([
-        findWycenaByPhoneScan(supabase, digits),
+      // _ma_wycene liczymy z NOWEJ tabeli `wyceny` (lead_id/telefon), nie z
+      // legacy "Wyceny B2C" — inaczej wyceny z nowego systemu dawały false
+      // i karta pokazywała "Proponowana kwota"/pola legacy zamiast "Kwota".
+      const [maWycene, logRows] = await Promise.all([
+        hasWycenaNowa(supabase, digits.replace(/^48/, ''), lead['ID Leada']),
         supabase.from(LOG_ZMIAN_TABLE).select('data_zmiany,zrodlo').eq('telefon', digits)
           .then(({ data, error }) => {
             if (error) throw error;
@@ -282,7 +308,7 @@ function registerLeadyEndpoints(app, { getClient, requireView, requireEdit }) {
           ...lead,
           _telefon_digits: digits,
           _telefon_formatted: formatPhonePlus(lead['Phone number']),
-          _ma_wycene: Boolean(wycena),
+          _ma_wycene: maWycene,
           _ilosc_polaczen: count,
           _kontakt_dzisiaj: dzisiaj,
         },

@@ -98,6 +98,23 @@
     .toolbar button:hover { background: var(--accent-soft); }
     .count-badge { font-size: 0.85rem; color: var(--text-secondary); margin-left: auto; }
 
+    /* ── Przełącznik Aktywne / Stracone (segmentowany) ── */
+    .widok-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .toolbar .widok-toggle .widok-btn {
+      border: none;
+      border-radius: 0;
+      font-weight: 600;
+      padding: 0.5rem 0.9rem;
+      background: var(--surface-1);
+      color: var(--text-secondary);
+    }
+    .toolbar .widok-toggle .widok-btn + .widok-btn { border-left: 1px solid var(--border); }
+    .toolbar .widok-toggle .widok-btn:hover { background: var(--accent-soft); }
+    .toolbar .widok-toggle .widok-btn.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
     /* ── Filtr właściciela = kółeczka A/L (styl jak owner leada) ── */
     .owner-filter { display: inline-flex; align-items: center; gap: 0.35rem; }
     .owner-filter:empty { display: none; }

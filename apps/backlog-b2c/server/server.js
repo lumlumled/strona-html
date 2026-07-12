@@ -914,6 +914,14 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     const call = Array.isArray(req.body) ? req.body[0] : req.body;
     if (!call) return res.status(400).json({ error: 'Puste zdarzenie' });
 
+    // Czas PRZYJŚCIA webhooka. Zadarma wysyła `call.callstart` w strefie konta
+    // (~UTC+3), a parsowaliśmy go jako UTC → Historia rozmów i Ostatni kontakt
+    // wychodziły przesunięte (rozmowa 20:29 PL zapisywała się jako 23:28; patrz
+    // raport-test-e2e-2026-07-12.md pkt 4). Webhook przychodzi tuż po rozmowie,
+    // więc jego czas przyjścia jest o rząd wielkości bliższy prawdy niż surowy
+    // callstart — i nie zależy od (niepewnej) strefy konta ani od DST.
+    const receivedAt = new Date();
+
     // `numer_klienta` jawnie w payloadzie (Make wie na pewno, które pole u
     // niego jest numerem klienta w danej gałęzi) ma pierwszeństwo — eliminacja
     // przez porównanie z własnym numerem zostaje jako fallback dla webhooka
@@ -974,8 +982,7 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     // górze, format zgodny z historycznymi wpisami migrowanymi z Notes
     // ("DD.MM.YYYY HH:mm - treść") — podsumowania rozmów NIE trafiają już
     // do Notes (opis = ręczna notatka handlowca).
-    const callStartDate = call.callstart ? new Date(call.callstart) : new Date();
-    const historiaEntry = `${warsawDateTimeStr(Number.isNaN(callStartDate.getTime()) ? new Date() : callStartDate)} - ${answered ? opis : 'Nie odebrał'}`;
+    const historiaEntry = `${warsawDateTimeStr(receivedAt)} - ${answered ? opis : 'Nie odebrał'}`;
 
     // Status nigdy nie cofa się w dół lejka — patrz STATUS_RANK/statusRank.
     // "Nie odebrał" traktowane osobno (nie przez rangę): wolno wejść w nie
@@ -1037,7 +1044,11 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
           'Najbliższa akcja': akcjaPoRozmowie,
           'Najbliższa akcja termin': akcjaTermin,
           'Najbliższa akcja owner': akcjaOwner,
-          'Ostatni kontakt': call.callstart || null,
+          // Warszawski czas jako tekst "DD.MM.YYYY HH:mm" (nie surowy callstart
+          // z cudzej strefy). Ten format wyświetla się poprawnie na surowo w
+          // kaflu "planu dnia" i jest parsowany przez parseLeadDate (serwer) /
+          // parseAnyDate (karta). Patrz receivedAt.
+          'Ostatni kontakt': warsawDateTimeStr(receivedAt),
           Źródło: 'Zadarma — rozmowa bez dopasowania w bazie',
           'Treść rozmowy': transcript || null,
           'ID Leada': nextIdLeada,
@@ -1093,7 +1104,9 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     if (lead) {
       const patch = {
         'Ilość telefonów': (Number(lead['Ilość telefonów']) || 0) + 1,
-        'Ostatni kontakt': call.callstart || null,
+        // Warszawski "DD.MM.YYYY HH:mm" zamiast surowego callstart — patrz
+        // receivedAt / komentarz przy tworzeniu leada wyżej.
+        'Ostatni kontakt': warsawDateTimeStr(receivedAt),
         'Treść rozmowy': transcript || lead['Treść rozmowy'] || null,
         // statusAfter — patrz wyżej, ta sama decyzja co poszła do Log zmian
         // (status_po), żeby oba miejsca nigdy się nie rozjechały.
@@ -1368,11 +1381,14 @@ const WYCENY_B2C_TABLE = 'Wyceny B2C';
 
 function parseLeadDate(value) {
   if (!value) return null;
+  // "DD.MM.YYYY" (i "DD.MM.YYYY HH:mm") sprawdzamy PRZED new Date() — inaczej
+  // silnik parsuje kropkowany zapis po amerykańsku albo odrzuca wariant z
+  // godziną. Godzina jest opcjonalna: "Ostatni kontakt" bywa zapisany z czasem
+  // (warsawDateTimeStr z webhooka Zadarmy), "Data Feedbacku" bez.
+  const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[ T](\d{1,2}):(\d{2}))?/.exec(String(value).trim());
+  if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]), Number(m[4] || 0), Number(m[5] || 0));
   const asDate = new Date(value);
-  if (!Number.isNaN(asDate.getTime())) return asDate;
-  const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(String(value).trim());
-  if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
-  return null;
+  return Number.isNaN(asDate.getTime()) ? null : asDate;
 }
 
 // app.html oczekuje dat w polu data_feedbacku wyłącznie jako "DD.MM.YYYY"
