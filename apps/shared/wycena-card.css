@@ -566,6 +566,18 @@
   color: #fff;
 }
 
+/* ── Chip źródła wyceny (lista) ── */
+.zrodlo-chip { font-weight: 600; }
+.zrodlo-b2c { background: rgba(34, 139, 230, 0.14); color: #1c6fc0; }
+.zrodlo-wiadomosci { background: rgba(130, 80, 200, 0.16); color: #7048c0; }
+.zrodlo-b2b { background: rgba(240, 178, 61, 0.18); color: #a06a10; }
+.zrodlo-nieprzypisane { background: var(--accent-soft); color: var(--text-muted); }
+@media (prefers-color-scheme: dark) {
+  .zrodlo-b2c { color: #7db8f0; }
+  .zrodlo-wiadomosci { color: #b79cf0; }
+  .zrodlo-b2b { color: #e0b877; }
+}
+
 /* ── Historia rozmów (karta) ── */
 .wk-rozmowy-list { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.55rem; }
 .wk-rozmowa {

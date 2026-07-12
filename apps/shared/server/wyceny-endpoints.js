@@ -87,6 +87,59 @@ async function syncItemsToCennik(supabase, items) {
   return items;
 }
 
+// Kategoria źródła wyceny (dla filtra na liście — "co jest gdzie"):
+//   b2c          — podpięta pod leada B2C (lead_id) LUB tel/mail pasuje do "Leady B2C"
+//   wiadomosci   — tel/mail pasuje do kontaktu w komunikatorze (kom_customer_identities)
+//   b2b          — placeholder (arkusz Leady B2B jeszcze nie istnieje) — nigdy teraz nie pada
+//   nieprzypisane— brak dopasowania (większość na start)
+// Priorytet: b2c > wiadomosci > nieprzypisane. Zapytania ograniczone do
+// telefonów/maili z bieżącej listy (nie skanują całych tabel).
+async function categorizeWyceny(supabase, wyceny) {
+  const cat = new Map();
+  const rows = wyceny || [];
+  if (!rows.length) return cat;
+  const digitsOf = (w) => String(w.telefon_digits || String(w.telefon_e164 || '').replace(/\D/g, '').replace(/^48/, '')).trim();
+  const emailOf = (w) => String(w.email || '').toLowerCase().trim();
+
+  const phones9 = new Set();
+  const emails = new Set();
+  rows.forEach((w) => { const d = digitsOf(w); if (d) phones9.add(d); const e = emailOf(w); if (e) emails.add(e); });
+
+  const leadPhones = new Set();
+  const leadEmails = new Set();
+  const phoneNums = [...phones9].map(Number).filter((n) => Number.isFinite(n));
+  const komValues = new Set();
+
+  const jobs = [];
+  if (phoneNums.length) {
+    jobs.push(supabase.from('Leady B2C').select('"Phone number", Email').in('Phone number', phoneNums)
+      .then(({ data }) => (data || []).forEach((l) => {
+        if (l['Phone number'] != null) leadPhones.add(String(l['Phone number']));
+        if (l.Email) leadEmails.add(String(l.Email).toLowerCase().trim());
+      })));
+  }
+  if (emails.size) {
+    jobs.push(supabase.from('Leady B2C').select('Email').in('Email', [...emails])
+      .then(({ data }) => (data || []).forEach((l) => { if (l.Email) leadEmails.add(String(l.Email).toLowerCase().trim()); })));
+  }
+  const lookupVals = [...[...phones9].map((d) => `48${d}`), ...emails];
+  if (lookupVals.length) {
+    jobs.push(supabase.from('kom_customer_identities').select('value').in('value', lookupVals)
+      .then(({ data }) => (data || []).forEach((r) => { if (r.value) komValues.add(String(r.value)); })));
+  }
+  // Kategoryzacja to wygoda UI — pojedynczy błąd (np. brak tabeli) nie może
+  // wywalić listy wycen; wtedy wszystko wpada w 'nieprzypisane'.
+  await Promise.allSettled(jobs);
+
+  rows.forEach((w) => {
+    const d = digitsOf(w); const e = emailOf(w);
+    const isB2C = Boolean(w.lead_id) || (d && leadPhones.has(d)) || (e && leadEmails.has(e));
+    const isMsg = (d && komValues.has(`48${d}`)) || (e && komValues.has(e));
+    cat.set(w.id, isB2C ? 'b2c' : (isMsg ? 'wiadomosci' : 'nieprzypisane'));
+  });
+  return cat;
+}
+
 async function logEvent(supabase, wycenaId, kind, payload) {
   const { error } = await supabase
     .from('wyceny_events')
@@ -157,10 +210,12 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       if (!invByWycena.has(i.wycena_id)) invByWycena.set(i.wycena_id, []);
       invByWycena.get(i.wycena_id).push(i);
     });
+    const zrodla = await categorizeWyceny(supabase, wyceny);
     return (wyceny || []).map((w) => ({
       ...decorate(w),
       _shipments: shipByWycena.get(w.id) || [],
       _invoices: invByWycena.get(w.id) || [],
+      _zrodlo: zrodla.get(w.id) || 'nieprzypisane',
     }));
   }
 

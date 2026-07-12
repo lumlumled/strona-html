@@ -12,6 +12,15 @@ window.WycenyTab = (() => {
   let statusy = [];
   let typy = [];
   let ownerFilter = ''; // '' = wszyscy; inaczej dokładna nazwa ownera
+  let zrodloFilter = ''; // '' = wszystkie źródła; b2c | wiadomosci | b2b | nieprzypisane
+
+  // Źródło wyceny — "co jest gdzie" (liczone server-side, pole _zrodlo).
+  const ZRODLO_LABELS = {
+    b2c: 'Lead B2C',
+    wiadomosci: 'Wiadomości',
+    b2b: 'Lead B2B',
+    nieprzypisane: 'Nieprzypisane',
+  };
 
   const STATUS_COLORS = {
     open: '#a8c8f0',
@@ -110,6 +119,17 @@ window.WycenyTab = (() => {
     typSel.id = 'wyceny-typ-filter';
     typSel.addEventListener('change', renderList);
 
+    // Filtr źródła — "co jest gdzie". B2B na razie placeholder (wkrótce).
+    const zrodloSel = document.createElement('select');
+    zrodloSel.id = 'wyceny-zrodlo-filter';
+    [['', 'Wszystkie źródła'], ['b2c', 'Lead B2C'], ['wiadomosci', 'Wiadomości'],
+     ['b2b', 'Lead B2B (wkrótce)'], ['nieprzypisane', 'Nieprzypisane']].forEach(([val, label]) => {
+      const o = h('option', '', label);
+      o.value = val;
+      zrodloSel.appendChild(o);
+    });
+    zrodloSel.addEventListener('change', () => { zrodloFilter = zrodloSel.value; renderList(); });
+
     const ownerFilterWrap = h('div', 'owner-filter');
     ownerFilterWrap.id = 'wyceny-owner-filter';
 
@@ -120,7 +140,7 @@ window.WycenyTab = (() => {
     const count = h('span', 'count-badge');
     count.id = 'wyceny-count';
 
-    cfg.toolbarEl.append(search, statusSel, typSel, ownerFilterWrap, refresh, count);
+    cfg.toolbarEl.append(search, statusSel, typSel, zrodloSel, ownerFilterWrap, refresh, count);
 
     // Szybkie dodanie (tekst -> AI -> podgląd) + pełny edytor — moduł
     // wycena-editor.js; bez niego przycisków nie ma (podgląd / stary deploy).
@@ -251,6 +271,9 @@ window.WycenyTab = (() => {
 
     const typChip = h('span', 'wk-chip' + (wycena.typ === 'ZAMÓWIENIE' ? ' info' : ''), TYP_LABELS[wycena.typ] || wycena.typ);
 
+    const zrodlo = wycena._zrodlo || 'nieprzypisane';
+    const zrodloChip = h('span', `wk-chip zrodlo-chip zrodlo-${zrodlo}`, ZRODLO_LABELS[zrodlo] || zrodlo);
+
     const nameText = (wycena.imie_nazwisko
       || [wycena.first_name, wycena.last_name].filter(Boolean).join(' ')
       || '').trim();
@@ -267,7 +290,7 @@ window.WycenyTab = (() => {
     const stage = WycenaKarta.utils.stageChip(wycena.process_stage);
     rightAnchor.append(ownerBadge(wycena.owner), kwota, stage, buildStatusPill(wycena));
 
-    summary.append(chevron, lp, typChip);
+    summary.append(chevron, lp, typChip, zrodloChip);
     if (nameText) {
       summary.append(h('span', 'summary-name', nameText), h('span', 'summary-dash', '—'));
     }
@@ -300,6 +323,7 @@ window.WycenyTab = (() => {
     const typ = document.getElementById('wyceny-typ-filter')?.value || '';
     if (status && wycena.status !== status) return false;
     if (typ && wycena.typ !== typ) return false;
+    if (zrodloFilter && (wycena._zrodlo || 'nieprzypisane') !== zrodloFilter) return false;
     if (ownerFilter && String(wycena.owner || '').trim() !== ownerFilter) return false;
     if (!q) return true;
     const hay = `#${wycena.id} ${wycena.id} ${wycena.imie_nazwisko || ''} ${wycena.first_name || ''} ${wycena.last_name || ''} ${wycena.telefon_e164 || ''} ${wycena.telefon_digits || ''} ${wycena.email || ''}`.toLowerCase();
