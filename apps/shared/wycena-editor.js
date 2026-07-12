@@ -99,6 +99,10 @@ window.WycenaEditor = (() => {
     let qty = (initial && initial.quantity != null && initial.quantity !== '') ? String(initial.quantity) : '';
 
     const resolve = () => list.find((t) => t.barwa === barwa && t.ip === ip) || null;
+    // Pierwsze update() NIE woła onChange: caller robi `const cfg = buildTape...(
+    // () => cfg.getItem())`, więc onChange sięgnąłby po cfg jeszcze przed jego
+    // przypisaniem (TDZ) — to psuło budowę pozycji z taśmą.
+    let started = false;
 
     const thumb = h('div', 'wk-tape-thumb');
     const nameEl = h('div', 'wk-tape-name');
@@ -146,9 +150,10 @@ window.WycenaEditor = (() => {
       renderThumb(t);
       nameEl.textContent = t ? t.nazwa : 'Wariant niedostępny';
       priceEl.textContent = t ? `${moneyPLN(t.price)} / m` : '';
-      onChange();
+      if (started) onChange();
     }
     update();
+    started = true;
     wrap.append(head, h('div', 'wk-tape-lbl', 'Barwa'), barwaRow, h('div', 'wk-tape-lbl', 'Klasa IP'), ipRow, qtyWrap);
 
     return {
@@ -302,6 +307,9 @@ window.WycenaEditor = (() => {
             if (it) Object.assign(p, it);
             if (ready) onChange();
           });
+          // Sync raz, jawnie (konfigurator celowo nie woła onChange w init).
+          const it0 = cfg.getItem();
+          if (it0) Object.assign(p, it0);
           box.appendChild(cfg.el);
         } else {
           // Prosta pozycja — zdjęcie + nazwa (read-only) + ilość.
