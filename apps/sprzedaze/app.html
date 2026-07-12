@@ -326,6 +326,21 @@
       );
     }
 
+    // Zamówienia z Shopify mają WŁASNĄ numerację S1, S2… (wg daty), osobną od
+    // numeracji #ID naszego systemu. Numer S liczymy deterministycznie z daty
+    // (najstarsze = S1), więc jest stabilny i nie miesza się z #ID. Nowe
+    // zamówienia sklepu zawsze są najnowsze, więc dostają kolejny najwyższy S.
+    function assignShopifySeq(list) {
+      list.forEach((w) => { delete w._sNo; });
+      list.filter((w) => w.source === 'shopify' && w.created_at)
+        .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+        .forEach((w, i) => { w._sNo = i + 1; });
+    }
+
+    function displayNo(w) {
+      return (w.source === 'shopify' && w._sNo) ? `S${w._sNo}` : `#${w.id}`;
+    }
+
     // ── Wiersz sprzedaży ─────────────────────────────────────────────────────
     function placeOf(w) {
       if (w.punkt_odbioru && String(w.punkt_odbioru).replace(/[,\s]/g, '')) {
@@ -351,7 +366,7 @@
 
       summary.append(
         h('span', 'chevron'),
-        h('span', 'lp', `#${w.id}`),
+        h('span', 'lp', displayNo(w)),
         h('span', 'summary-name', name),
         h('span', 'summary-place', placeOf(w)),
         rightAnchor,
@@ -377,7 +392,7 @@
     function matches(w) {
       const q = document.getElementById('search').value.trim().toLowerCase();
       if (!q) return true;
-      const hay = `#${w.id} ${w.id} ${w.imie_nazwisko || ''} ${w.first_name || ''} ${w.last_name || ''} ${w.telefon_e164 || ''} ${w.email || ''} ${w.ship_city || ''} ${w.punkt_odbioru || ''}`.toLowerCase();
+      const hay = `${displayNo(w)} ${w.id} ${w.shopify_order_name || ''} ${w.imie_nazwisko || ''} ${w.first_name || ''} ${w.last_name || ''} ${w.telefon_e164 || ''} ${w.email || ''} ${w.ship_city || ''} ${w.punkt_odbioru || ''}`.toLowerCase();
       return hay.includes(q);
     }
 
@@ -437,6 +452,10 @@
         const listBody = await listRes.json();
         if (!listRes.ok) throw new Error(listBody.error || 'Błąd wczytywania');
         all = listBody.data || [];
+        // Numeracja S dla Shopify + sort chronologiczny (najnowsze u góry) —
+        // zamiast po #ID, bo zamówienia sklepu dostawały ID poza kolejnością dat.
+        assignShopifySeq(all);
+        all.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
         renderList();
         const statsBody = await statsRes.json().catch(() => null);
         if (statsRes.ok && statsBody) renderStats(statsBody);
