@@ -193,15 +193,16 @@ app.post('/api/zapis', async (req, res) => {
       ship_country: patch.ship_country || '',
     });
 
-    // Start pipeline'u realizacji (etap 4) — miękko: brak modułu/błąd startu
-    // nie może wywalić zapisu zamówienia (worker i tak podejmie z bazy).
+    // Start pipeline'u realizacji — SYNCHRONICZNIE przed odpowiedzią
+    // (serverless umiera po res.json; formularz i tak czeka na overlay,
+    // a maxDuration=180 s starcza z zapasem). Błąd pipeline'u nie wywala
+    // zapisu zamówienia — worker retry podejmie z bazy.
     try {
-      const { startPipeline } = require('./pipeline');
-      startPipeline(id).catch((err) => {
-        console.error(`Pipeline start ${id}:`, err.message);
-        return logEvent(id, 'pipeline.error', { step: 'start', error: err.message });
-      });
-    } catch (_) { /* pipeline jeszcze nie wdrożony */ }
+      const { startPipeline } = require('../../shared/server/wyceny-pipeline');
+      await startPipeline(getClient(), id);
+    } catch (err) {
+      console.error(`Pipeline start ${id}:`, err.message);
+    }
 
     res.json({ ok: true, id: `#${id}` });
   } catch (err) {
@@ -209,6 +210,48 @@ app.post('/api/zapis', async (req, res) => {
     res.status(502).json({ error: 'Błąd serwera' });
   }
 });
+
+// POST /formularz/api/infakt-webhook — hak "faktura opłacona" z inFakt
+// (przepięty z Make przy cutoverze). Kształt payloadu jak w Make #3:
+// event.name == 'invoice_paid', resource.uuid == uuid opłaconej proformy.
+app.post('/api/infakt-webhook', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const eventName = body.event?.name || body.event_name || '';
+    const uuid = body.resource?.uuid || body.invoice?.uuid || '';
+    if (eventName !== 'invoice_paid' || !uuid) {
+      return res.json({ ok: true, skipped: eventName || 'no-event' });
+    }
+    const { onInvoicePaid } = require('../../shared/server/wyceny-pipeline');
+    const result = await onInvoicePaid(getClient(), uuid);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('inFakt webhook:', err.message);
+    // 200 mimo błędu — inFakt nie musi retry'ować; nasz worker dokończy
+    res.json({ ok: false, error: err.message.slice(0, 200) });
+  }
+});
+
+// /formularz/api/cron/worker — odpalany przez pg_cron + pg_net (Vercel Hobby:
+// crony częstsze niż 1/dzień muszą iść spoza vercel.json, jak w komunikatorze;
+// pg_net woła GET z ?secret=, ręcznie można POST z Bearerem).
+async function cronWorker(req, res) {
+  try {
+    const auth = req.headers.authorization || '';
+    const token = auth.replace(/^Bearer\s+/i, '') || req.query.token || req.query.secret;
+    if (!process.env.CRON_SECRET || token !== process.env.CRON_SECRET) {
+      return res.status(401).json({ error: 'Zły token' });
+    }
+    const { runWorker } = require('../../shared/server/wyceny-pipeline');
+    const raport = await runWorker(getClient());
+    res.json({ ok: true, ...raport });
+  } catch (err) {
+    console.error('Worker:', err.message);
+    res.status(502).json({ error: err.message.slice(0, 300) });
+  }
+}
+app.post('/api/cron/worker', cronWorker);
+app.get('/api/cron/worker', cronWorker);
 
 // GET /formularz/test?id=...&t=... — strona testowa formularza: DOKŁADNIE ta
 // sekcja liquid, która przy cutoverze (noc 2) trafi do live theme Shopify

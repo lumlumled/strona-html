@@ -367,6 +367,81 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
     }
   });
 
+  // ── Pipeline z panelu ─────────────────────────────────────────────────────
+
+  // POST /api/wyceny/:id/reship — "Zamów kuriera ponownie": nowa przesyłka
+  // ShipX na te same dane, BEZ faktury i bez zmiany statusów (kind 'reship').
+  app.post('/api/wyceny/:id(\\d+)/reship', requireEdit, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const supabase = getClient();
+      const { data, error } = await scoped(supabase.from('wyceny').select('id'), req).eq('id', id).limit(1);
+      if (error) throw error;
+      if (!data || !data.length) return res.status(404).json({ error: 'Nie znaleziono wyceny' });
+      const { reship } = require('./wyceny-pipeline');
+      const shipment = await reship(supabase, id);
+      res.json({ data: shipment });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
+  // POST /api/wyceny/:id/realizuj — "Realizuj zamówienie" bez formularza
+  // (sprzedaż domknięta telefonicznie): wymaga płatności i adresu/paczkomatu,
+  // zamyka formularz i odpala ten sam pipeline co submit.
+  app.post('/api/wyceny/:id(\\d+)/realizuj', requireEdit, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const supabase = getClient();
+      const { data, error } = await scoped(supabase.from('wyceny').select('*'), req).eq('id', id).limit(1);
+      if (error) throw error;
+      if (!data || !data.length) return res.status(404).json({ error: 'Nie znaleziono wyceny' });
+      const w = data[0];
+      if (!w.payment_method) return res.status(400).json({ error: 'Ustaw metodę płatności (transfer/cod) w edycji wyceny' });
+      const maLocker = String(w.punkt_odbioru || '').replace(/[,\s]/g, '').length > 3;
+      const maAdres = w.ship_street && w.ship_postcode && w.ship_city;
+      if (!maLocker && !maAdres) return res.status(400).json({ error: 'Uzupełnij adres dostawy albo paczkomat w edycji wyceny' });
+      if (!w.first_name && !w.imie_nazwisko) return res.status(400).json({ error: 'Uzupełnij imię i nazwisko odbiorcy' });
+      await supabase.from('wyceny').update({
+        form_status: 'SUBMITTED',
+        form_submitted_at: w.form_submitted_at || new Date().toISOString(),
+        typ: 'ZAMÓWIENIE',
+        process_stage: 'SUBMITTED',
+        first_name: w.first_name || String(w.imie_nazwisko || '').split(' ')[0],
+        last_name: w.last_name || String(w.imie_nazwisko || '').split(' ').slice(1).join(' '),
+        updated_at: new Date().toISOString(),
+      }).eq('id', id);
+      await logEvent(supabase, id, 'form.submitted', { source: 'panel-realizuj', user: req.user.name });
+      const { startPipeline } = require('./wyceny-pipeline');
+      const result = await startPipeline(supabase, id);
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
+  // Proxy plików: PDF faktury (inFakt) i etykiety (ShipX) wymagają naszych
+  // sekretów — panel dostaje je przez te endpointy, nic nie idzie na Drive.
+  app.get('/api/wyceny/invoice-pdf/:uuid', requireView, async (req, res) => {
+    try {
+      const infakt = require('./wyceny-infakt');
+      const pdf = await infakt.downloadPdf(String(req.params.uuid));
+      res.type('application/pdf').set('Content-Disposition', 'inline; filename="faktura.pdf"').send(pdf);
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
+  app.get('/api/wyceny/label/:shipmentId', requireView, async (req, res) => {
+    try {
+      const shipx = require('./wyceny-shipx');
+      const pdf = await shipx.downloadLabel(String(req.params.shipmentId));
+      res.type('application/pdf').set('Content-Disposition', 'inline; filename="etykieta.pdf"').send(pdf);
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
   // POST /api/wyceny/:id/otworz-formularz — odblokowanie jednorazowego
   // formularza (np. klient pomylił adres). Historia submitu zostaje w events.
   app.post('/api/wyceny/:id(\\d+)/otworz-formularz', requireEdit, async (req, res) => {

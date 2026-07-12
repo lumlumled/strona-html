@@ -350,9 +350,11 @@ window.WycenaKarta = (() => {
         a.target = '_blank';
         links.appendChild(a);
       }
-      if (s.label_url) {
+      const labelHref = s.label_url
+        || (s.provider === 'shipx' && s.shipment_id ? `${opts.apiBase || ''}/api/wyceny/label/${s.shipment_id}` : null);
+      if (labelHref) {
         const a = el('a', '', 'Etykieta');
-        a.href = s.label_url;
+        a.href = labelHref;
         a.target = '_blank';
         links.appendChild(a);
       }
@@ -372,9 +374,11 @@ window.WycenaKarta = (() => {
       if (subParts.length) main.appendChild(el('div', 'wk-pipe-sub', subParts.join(' · ')));
       row.appendChild(main);
       const links = el('div', 'wk-pipe-links');
-      if (i.pdf_url) {
+      const pdfHref = i.pdf_url
+        || (i.infakt_uuid && i.status !== 'deleted' ? `${opts.apiBase || ''}/api/wyceny/invoice-pdf/${i.infakt_uuid}` : null);
+      if (pdfHref) {
         const a = el('a', '', 'PDF');
-        a.href = i.pdf_url;
+        a.href = pdfHref;
         a.target = '_blank';
         links.appendChild(a);
       }
@@ -392,6 +396,32 @@ window.WycenaKarta = (() => {
       list.appendChild(el('div', 'wk-pipe-sub', 'Jeszcze bez przesyłek i faktur.'));
     }
     wrap.appendChild(list);
+
+    // "Realizuj zamówienie" — sprzedaż domknięta bez formularza (telefon):
+    // ten sam pipeline co submit; wymaga płatności i adresu/paczkomatu.
+    if (!opts.readOnly && opts.mode === 'crm' && wycena.form_status !== 'SUBMITTED'
+      && ['NEW', 'FORM_SENT'].includes(wycena.process_stage)) {
+      const actions = el('div', 'wk-actions');
+      const btn = el('button', 'wk-btn', '▶ Realizuj zamówienie');
+      btn.title = 'Zamyka formularz i odpala realizację (przesyłka + faktura + mail) na danych z wyceny';
+      btn.type = 'button';
+      btn.addEventListener('click', async () => {
+        if (!confirm(`Zrealizować zamówienie #${wycena.id} bez formularza?\nPłatność: ${wycena.payment_method || 'BRAK — ustaw w edycji!'}\nPipeline utworzy przesyłkę, fakturę i wyśle maila do klienta.`)) return;
+        btn.disabled = true;
+        try {
+          const res = await fetch(`${opts.apiBase}/api/wyceny/${wycena.id}/realizuj`, { method: 'POST' });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+          if (opts.onChanged) opts.onChanged();
+        } catch (err) {
+          alert(`Nie udało się: ${err.message}`);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+      actions.appendChild(btn);
+      wrap.appendChild(actions);
+    }
 
     // "Zamów kuriera ponownie" — dosyłka/reklamacja na te same dane, bez
     // faktury i bez zmiany statusów (panel Sprzedaże; endpoint w pipeline).

@@ -261,9 +261,11 @@ async function main() {
     await client.query('delete from wyceny_invoices where wycena_id=$1', [id]);
     if (r.shipment_id || r.tracking_number) {
       const stage = mapStage(r.process_stage, typ);
+      // raw_status 'import' = przesyłka z arkusza; worker archiwizuje ją przy
+      // martwym trackingu (404) zamiast odpytywać w kółko
       await client.query(
-        `insert into wyceny_shipments (wycena_id, provider, kind, shipment_id, service, status, tracking_number, label_url, delivered_at)
-         values ($1,'shipx','order',$2,$3,$4,$5,$6,$7)`,
+        `insert into wyceny_shipments (wycena_id, provider, kind, shipment_id, service, status, raw_status, tracking_number, label_url, delivered_at)
+         values ($1,'shipx','order',$2,$3,$4,'import',$5,$6,$7)`,
         [
           id, r.shipment_id || null,
           // arkusz miewa "puste" punkty odbioru w postaci ", " — to kurier
