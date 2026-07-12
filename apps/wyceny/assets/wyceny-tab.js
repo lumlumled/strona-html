@@ -251,14 +251,14 @@ window.WycenyTab = (() => {
 
     const typChip = h('span', 'wk-chip' + (wycena.typ === 'ZAMÓWIENIE' ? ' info' : ''), TYP_LABELS[wycena.typ] || wycena.typ);
 
-    const name = h('span', 'summary-name', wycena.imie_nazwisko
+    const nameText = (wycena.imie_nazwisko
       || [wycena.first_name, wycena.last_name].filter(Boolean).join(' ')
-      || wycena.email || '(bez danych)');
+      || '').trim();
 
-    const dash = h('span', 'summary-dash', '—');
-    const phone = h('span', 'summary-phone', wycena.telefon_e164
+    const phoneText = wycena.telefon_e164
       ? (String(wycena.telefon_e164).startsWith('+') ? wycena.telefon_e164 : `+${wycena.telefon_e164}`)
-      : (wycena.email || '—'));
+      : '';
+    const phone = h('span', 'summary-phone', phoneText);
 
     const rightAnchor = h('div', 'right-anchor');
     const kwota = h('span', 'summary-feedback', moneyShort(wycena.kwota_proponowana_brutto));
@@ -267,7 +267,11 @@ window.WycenyTab = (() => {
     const stage = WycenaKarta.utils.stageChip(wycena.process_stage);
     rightAnchor.append(ownerBadge(wycena.owner), kwota, stage, buildStatusPill(wycena));
 
-    summary.append(chevron, lp, typChip, name, dash, phone, buildDates(wycena), rightAnchor);
+    summary.append(chevron, lp, typChip);
+    if (nameText) {
+      summary.append(h('span', 'summary-name', nameText), h('span', 'summary-dash', '—'));
+    }
+    summary.append(phone, buildDates(wycena), rightAnchor);
     details.appendChild(summary);
 
     let bodyBuilt = false;
