@@ -467,6 +467,7 @@ window.WycenaKarta = (() => {
     const list = el('div', 'wk-history-list');
     (wycena._events || []).forEach((ev) => {
       const row = el('div', 'wk-event');
+      row.appendChild(el('span', 'wk-event-dot'));
       row.appendChild(el('span', 'wk-event-time', formatDT(ev.created_at)));
       row.appendChild(el('span', 'wk-event-kind', EVENT_LABELS[ev.kind] || ev.kind));
       if (ev.payload) {

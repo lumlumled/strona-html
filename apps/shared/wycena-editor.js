@@ -145,6 +145,11 @@ window.WycenaEditor = (() => {
   function buildItemsEditor(items, onChange) {
     const wrap = h('div', 'wk-edit-items');
     const state = { items: (items || []).map((p) => ({ ...p })) };
+    // W pierwszym renderze NIE wołamy onChange: przy edycji wyceny z pozycjami
+    // update() odpaliłby refreshTotals(), a ten sięga po itemsEd/sumaVal, których
+    // jeszcze nie ma (TDZ) — wyjątek psuł cały modal (brak pozycji i zapisu).
+    // Caller i tak woła refreshTotals() jawnie po zbudowaniu edytora.
+    let ready = false;
 
     function render() {
       wrap.innerHTML = '';
@@ -216,7 +221,7 @@ window.WycenaEditor = (() => {
 
         function update() {
           total.textContent = moneyPLN(money(p.price) * (money(p.quantity) || 0));
-          onChange();
+          if (ready) onChange();
         }
         update();
         wrap.appendChild(box);
@@ -225,6 +230,7 @@ window.WycenaEditor = (() => {
     }
 
     render();
+    ready = true;
     return {
       el: wrap,
       getItems: () => state.items
@@ -252,14 +258,14 @@ window.WycenaEditor = (() => {
     const imie = input(src.imie_nazwisko, 'Imię i nazwisko');
     const telefon = input(src.telefon_e164, 'np. 48513141389');
     const email = input(src.email, 'adres@klienta.pl');
-    const opis = input(src.opis_zamowienia, 'krótki opis (opcjonalnie)');
-    // Komentarz do wyceny — pokazuje się przy realizacji (np. "dodaj 1 czujnik
-    // więcej"). Typ celowo usunięty: dopóki nie zrealizowana, to wycena.
+    // Komentarz do wyceny — pokazuje się przy realizacji (rzeczy POZA wyceną,
+    // np. "dodać 1 czujnik więcej" albo "wysłać w czwartek"). Typ celowo
+    // usunięty: dopóki nie zrealizowana, to wycena.
     const komentarz = document.createElement('textarea');
     komentarz.className = 'wk-quick-textarea';
     komentarz.rows = 2;
     komentarz.style.minHeight = '3.2rem';
-    komentarz.placeholder = 'np. dodać 1 czujnik więcej, zapakować na prezent…';
+    komentarz.placeholder = 'np. dodać 1 czujnik więcej poza wyceną albo wysłać w czwartek…';
     komentarz.value = src.komentarz || '';
 
     const grid = h('div', 'wk-form-grid');
@@ -268,9 +274,6 @@ window.WycenaEditor = (() => {
       field('Telefon', telefon),
       field('E-mail', email),
     );
-    const opisWrap = field('Opis', opis);
-    opisWrap.style.gridColumn = '1 / -1';
-    grid.appendChild(opisWrap);
     const komWrap = field('Komentarz (widoczny przy realizacji)', komentarz);
     komWrap.style.gridColumn = '1 / -1';
     grid.appendChild(komWrap);
@@ -430,7 +433,6 @@ window.WycenaEditor = (() => {
         imie_nazwisko: imie.value.trim() || null,
         telefon_e164: telefon.value.replace(/\D/g, '') || null,
         email: email.value.trim().toLowerCase() || null,
-        opis_zamowienia: opis.value.trim() || null,
         komentarz: komentarz.value.trim() || null,
         items: itemsEd.getItems(),
         kwota_proponowana_brutto: kwotaInput.value ? money(kwotaInput.value) : null,

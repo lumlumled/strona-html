@@ -241,8 +241,19 @@
 .wk-event {
   font-size: 0.78rem;
   display: flex;
-  gap: 0.55rem;
+  gap: 0.5rem;
   align-items: baseline;
+}
+
+/* Kropka osi czasu historii edycji (jak w Historii rozmów). */
+.wk-event-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  border: 1.5px solid var(--text-muted);
+  align-self: center;
 }
 
 .wk-event-time { color: var(--text-muted); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
