@@ -107,7 +107,13 @@ async function categorizeWyceny(supabase, wyceny) {
 
   const leadPhones = new Set();
   const leadEmails = new Set();
-  const phoneNums = [...phones9].map(Number).filter((n) => Number.isFinite(n));
+  // "Leady B2C"."Phone number" bywa z prefiksem 48 (np. 48602366320), a
+  // wyceny.telefon_digits jest 9-cyfrowe (602366320) — szukamy OBU postaci.
+  const phoneNums = [];
+  phones9.forEach((d) => {
+    const n9 = Number(d); if (Number.isFinite(n9)) phoneNums.push(n9);
+    const n48 = Number(`48${d}`); if (Number.isFinite(n48)) phoneNums.push(n48);
+  });
   const komValues = new Set();
 
   const jobs = [];
@@ -133,7 +139,7 @@ async function categorizeWyceny(supabase, wyceny) {
 
   rows.forEach((w) => {
     const d = digitsOf(w); const e = emailOf(w);
-    const isB2C = Boolean(w.lead_id) || (d && leadPhones.has(d)) || (e && leadEmails.has(e));
+    const isB2C = Boolean(w.lead_id) || (d && (leadPhones.has(d) || leadPhones.has(`48${d}`))) || (e && leadEmails.has(e));
     const isMsg = (d && komValues.has(`48${d}`)) || (e && komValues.has(e));
     cat.set(w.id, isB2C ? 'b2c' : (isMsg ? 'wiadomosci' : 'nieprzypisane'));
   });
@@ -327,9 +333,11 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       ];
       const digits = q.replace(/\D/g, '');
       if (digits.length >= 6) {
-        const p9 = Number(digits.replace(/^48/, '').slice(-9));
-        if (Number.isFinite(p9)) {
-          jobs.push(supabase.from('Leady B2C').select(cols).eq('Phone number', p9).limit(10).then(({ data }) => add(data)));
+        const d9 = digits.replace(/^48/, '').slice(-9);
+        // "Phone number" bywa z prefiksem 48 albo bez — szukamy obu postaci.
+        const nums = [Number(d9), Number(`48${d9}`)].filter(Number.isFinite);
+        if (nums.length) {
+          jobs.push(supabase.from('Leady B2C').select(cols).in('Phone number', nums).limit(10).then(({ data }) => add(data)));
         }
       }
       await Promise.allSettled(jobs);

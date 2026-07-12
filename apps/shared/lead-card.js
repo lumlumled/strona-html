@@ -709,7 +709,19 @@ window.LeadKarta = (() => {
         return;
       }
 
-      list.forEach((wycena) => {
+      // Nagłówek per wycena — jeden lead może mieć kilka RÓŻNYCH wycen (inne
+      // produkty/kwoty); bez nagłówka wyglądają jak duplikat. Numer + data + kwota.
+      const wielo = list.length > 1;
+      list.forEach((wycena, idx) => {
+        if (wielo) {
+          const money = window.WycenaKarta.utils.moneyPLN(wycena.kwota_proponowana_brutto ?? wycena._suma_pozycji);
+          const data = wycena.created_at ? window.WycenaKarta.utils.formatDT(wycena.created_at).split(' ')[0] : '';
+          const hdr = document.createElement('div');
+          hdr.className = 'lk-wycena-naglowek';
+          hdr.textContent = `Wycena #${wycena.id}${data ? ` · ${data}` : ''} · ${money}`;
+          if (idx > 0) hdr.style.marginTop = '0.8rem';
+          container.appendChild(hdr);
+        }
         const { el: cardEl } = window.WycenaKarta.buildBody(wycena, {
           apiBase,
           readOnly: !!readOnly,
