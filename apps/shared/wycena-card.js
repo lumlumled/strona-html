@@ -344,6 +344,17 @@ window.WycenaKarta = (() => {
     }
     wrap.appendChild(title);
 
+    // Treść błędu pipeline widoczna wprost na karcie (nie tylko status
+    // "Błąd pipeline") — żeby od razu było wiadomo CO poszło nie tak.
+    if (wycena.process_stage === 'ERROR' && wycena.worker_last_error) {
+      const errBox = el('div', 'wk-pipe-error');
+      errBox.append(
+        el('span', 'wk-pipe-error-ico', '⚠️'),
+        el('span', '', String(wycena.worker_last_error))
+      );
+      wrap.appendChild(errBox);
+    }
+
     // Komentarz do wyceny widoczny przy realizacji (np. "dodaj 1 czujnik
     // więcej") — pakujący/realizujący musi go zobaczyć.
     if (wycena.komentarz && String(wycena.komentarz).trim()) {

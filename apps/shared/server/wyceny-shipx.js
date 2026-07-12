@@ -66,9 +66,16 @@ async function createShipment(wycena, { locker, codAmount, insuranceAmount, refe
   };
   if (locker) {
     payload.parcels = { template: 'medium' };
+    // Kod paczkomatu = PIERWSZY token pola punkt_odbioru. Liquid zapisuje tu
+    // sklejkę "KOD — adres" (np. "WAW201M — Nowogrodzka 27"), a ShipX wymaga
+    // samego kodu ("WAW201M") — inaczej 400 incorrect_name (+ kaskadowo
+    // cod unavailable_for_target_point). punkt_odbioru_ID (czysty kod) miałby
+    // pierwszeństwo, gdyby serwer go zapisywał; dziś w bazie jest tylko sklejka.
+    const targetPoint = String(wycena.punkt_odbioru_ID || wycena.punkt_odbioru || '')
+      .trim().split(/[\s,]+/)[0];
     payload.custom_attributes = {
       sending_method: 'dispatch_order',
-      target_point: String(wycena.punkt_odbioru || '').split(',')[0].trim(),
+      target_point: targetPoint,
     };
     payload.service = 'inpost_locker_standard';
   } else {

@@ -135,6 +135,23 @@
 
 .wk-komentarz-ico { flex: 0 0 auto; }
 
+.wk-pipe-error {
+  margin: 0.5rem 0 0.7rem;
+  border: 1px solid var(--bad, #d14343);
+  background: color-mix(in srgb, var(--bad, #d14343) 12%, transparent);
+  border-radius: 10px;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.wk-pipe-error-ico { flex: 0 0 auto; }
+
 /* ── Siatka informacji (Kontakt / Dostawa i płatność) ── */
 .wk-grid {
   display: grid;

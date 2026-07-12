@@ -13,6 +13,7 @@
 require('dotenv').config();
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
+const { notifyUser } = require('../../shared/server/push');
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -80,6 +81,29 @@ async function logEvent(wycenaId, kind, payload) {
     await getClient().from('wyceny_events').insert({ wycena_id: wycenaId, kind, payload: payload || null });
   } catch (err) {
     console.error(`Błąd zapisu zdarzenia ${kind}:`, err.message);
+  }
+}
+
+// Powiadomienie push do handlowca (owner wyceny) + ZAWSZE do właściciela
+// (env WYCENY_EXTRA_NOTIFY, domyślnie "Antoni") — dokładnie jak przy nowym
+// leadzie (apps/backlog-b2c/server/server.js notifyNewLead). Nigdy nie wywala
+// głównego przepływu: błędy tylko logujemy.
+async function notifyWyceny({ wycena, title, body, url, tag }) {
+  try {
+    const wanted = new Set();
+    const ownerName = String(wycena.owner || '').trim().toLowerCase();
+    if (ownerName) wanted.add(ownerName);
+    String(process.env.WYCENY_EXTRA_NOTIFY || 'Antoni')
+      .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+      .forEach((n) => wanted.add(n));
+    if (!wanted.size) return;
+    const { data } = await getClient().from('app_users').select('id,name').eq('active', true);
+    const targets = (data || []).filter((u) => wanted.has(String(u.name || '').trim().toLowerCase()));
+    for (const u of targets) {
+      await notifyUser(getClient, u.id, { title, body, url, tag });
+    }
+  } catch (err) {
+    console.warn(`Powiadomienie wyceny ${wycena?.id} nie wyszło:`, err.message);
   }
 }
 
@@ -193,6 +217,17 @@ app.post('/api/zapis', async (req, res) => {
       ship_country: patch.ship_country || '',
     });
 
+    // Powiadomienie "klient wypełnił formularz" — do ownera + Antoniego.
+    const klientNazwa = [patch.first_name || wycena.first_name, patch.last_name || wycena.last_name]
+      .filter(Boolean).join(' ').trim();
+    await notifyWyceny({
+      wycena,
+      title: 'Formularz wypełniony',
+      body: `#${id}${klientNazwa ? ` · ${klientNazwa}` : ''} · ${patch.payment_method === 'cod' ? 'pobranie' : 'przelew'}`,
+      url: '/sprzedaze/',
+      tag: `wycena-submit-${id}`,
+    });
+
     // Start pipeline'u realizacji — SYNCHRONICZNIE przed odpowiedzią
     // (serverless umiera po res.json; formularz i tak czeka na overlay,
     // a maxDuration=180 s starcza z zapasem). Błąd pipeline'u nie wywala
@@ -202,6 +237,23 @@ app.post('/api/zapis', async (req, res) => {
       await startPipeline(getClient(), id);
     } catch (err) {
       console.error(`Pipeline start ${id}:`, err.message);
+    }
+
+    // Jeśli realizacja padła (ERROR) — powiadom o błędzie Z TREŚCIĄ, żeby było
+    // od razu wiadomo co poprawić (ten sam błąd widać też na karcie).
+    try {
+      const after = await findWycena(id);
+      if (after && after.process_stage === 'ERROR') {
+        await notifyWyceny({
+          wycena: after,
+          title: '⚠️ Błąd realizacji zamówienia',
+          body: `#${id}: ${String(after.worker_last_error || 'nieznany błąd').slice(0, 140)}`,
+          url: '/sprzedaze/',
+          tag: `wycena-error-${id}`,
+        });
+      }
+    } catch (err) {
+      console.warn(`Sprawdzenie błędu ${id}:`, err.message);
     }
 
     res.json({ ok: true, id: `#${id}` });
