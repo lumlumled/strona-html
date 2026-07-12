@@ -55,9 +55,9 @@ window.WycenaEditor = (() => {
     { key: 'ana', label: 'Analogowa taśma', tape: 'ANA' },
     { key: 'ctrl', label: 'Sterowniki', prefixes: ['LL-CTRL'] },
     { key: 'remote', label: 'Piloty', prefixes: ['LL-REMOTE', 'LL-PANEL'] },
+    { key: 'sensor', label: 'Czujniki', prefixes: ['LL-SENSOR'] },
     { key: 'acc', label: 'Akcesoria', prefixes: ['LL-ACC'] },
     { key: 'psu', label: 'Zasilacze', prefixes: ['LL-PSU'] },
-    { key: 'sensor', label: 'Czujniki', prefixes: ['LL-SENSOR'] },
     { key: 'profile', label: 'Profile', placeholder: true },
     { key: 'pozostale', label: 'Pozostałe', placeholder: true },
   ];
