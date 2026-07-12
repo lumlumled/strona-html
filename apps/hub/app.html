@@ -170,6 +170,63 @@
 
     .today-item .go { flex: 0 0 auto; color: var(--text-muted); font-size: 0.95rem; }
 
+    /* ── Alerty „temat ucieka" — zwijana grupa + bubble z osuwaniem ── */
+    .alerts-group {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.5rem 0.7rem;
+      background: var(--surface-1);
+      margin-bottom: 1.1rem;
+    }
+    .alerts-group > summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      user-select: none;
+    }
+    .alerts-group > summary::-webkit-details-marker { display: none; }
+    .alerts-group > summary::before {
+      content: '▸';
+      color: var(--text-muted);
+      transition: transform 0.15s ease;
+    }
+    .alerts-group[open] > summary::before { transform: rotate(90deg); }
+    .alerts-group .alert-count { color: var(--bad); font-weight: 700; font-variant-numeric: tabular-nums; }
+    .alerts-group .today-list { margin-top: 0.45rem; }
+
+    .alert-item { display: flex; align-items: center; gap: 0.25rem; }
+    .alert-link {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: 0.5rem 0.55rem;
+      margin: 0 -0.15rem;
+      border-radius: 10px;
+      text-decoration: none;
+      color: var(--text-primary);
+    }
+    a.alert-link:hover { background: var(--accent-soft); }
+    .alert-dismiss {
+      flex: 0 0 auto;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 1.15rem;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0.15rem 0.45rem;
+      border-radius: 8px;
+    }
+    .alert-dismiss:hover { background: var(--accent-soft); color: var(--text-primary); }
+    .alert-dismiss:disabled { opacity: 0.4; cursor: default; }
+
     .today-empty { color: var(--text-muted); font-size: 0.88rem; font-style: italic; }
 
     .today-more {
@@ -498,21 +555,42 @@
         // ── 🚨 Alerty watchdoga — na samej górze: to tematy, które właśnie
         // uciekają (termin minął + zero aktywności). ──
         if (alerty.length) {
-          const group = document.createElement('div');
-          group.className = 'today-group';
-          const h = document.createElement('h3');
-          h.textContent = '🚨 Alerty — temat ucieka';
+          // Deep-link do KONKRETNEJ sprawy (nie do korzenia panelu): lead ->
+          // /crm/?lead=, wycena -> /wyceny/?id= (handlery w tych panelach
+          // otwierają i przewijają do wiersza). Wiadomości: brak deep-linku,
+          // więc korzeń komunikatora. Otwieramy w nowej karcie, żeby ekran
+          // Start został — triage „co ucieka" bez gubienia listy.
+          const canWyceny = USER.panels.includes('wyceny');
+          const canWiad = USER.panels.includes('wiadomosci');
+          const alertHref = (a) => {
+            if (a.object_type === 'lead') return canCrm && LINKS.crm ? `${LINKS.crm}?lead=${encodeURIComponent(a.object_id)}` : null;
+            if (a.object_type === 'wycena') return canWyceny && LINKS.wyceny ? `${LINKS.wyceny}?id=${encodeURIComponent(a.object_id)}` : null;
+            return canWiad && LINKS.wiadomosci ? LINKS.wiadomosci : null;
+          };
+
+          // Zwijane (auto-zwinięte) — na górze widać licznik, po rozwinięciu
+          // bubble alertów. Każde bubble: klik = wejście w sprawę, × = osuń.
+          const group = document.createElement('details');
+          group.className = 'alerts-group';
+          const sum = document.createElement('summary');
+          sum.innerHTML = `🚨 Alerty — temat ucieka <span class="alert-count"></span>`;
+          const countEl = sum.querySelector('.alert-count');
           const list = document.createElement('div');
           list.className = 'today-list';
+
+          let widoczne = 0;
+          const odswiezLicznik = () => { countEl.textContent = `· ${widoczne}`; };
+
           alerty.slice(0, LIMIT_ALERTY).forEach((a) => {
             const kto = (a._obiekt && a._obiekt.imie_nazwisko)
               || (a.object_type === 'wycena' ? `Wycena #${a.object_id}` : a.object_type === 'lead' ? `Lead #${a.object_id}` : 'Wiadomości');
-            const target = a.object_type === 'wycena' ? LINKS.wyceny
-              : a.object_type === 'lead' ? LINKS.crm
-              : LINKS.wiadomosci;
-            const item = document.createElement(target ? 'a' : 'div');
-            item.className = 'today-item';
-            if (target) item.href = target;
+            const href = alertHref(a);
+            const row = document.createElement('div');
+            row.className = 'today-item alert-item';
+
+            const link = document.createElement(href ? 'a' : 'div');
+            link.className = 'alert-link';
+            if (href) { link.href = href; link.target = '_blank'; link.rel = 'noopener'; }
             const who = document.createElement('span');
             who.className = 'who';
             who.textContent = kto;
@@ -523,16 +601,40 @@
             when.className = 'when overdue';
             const d = new Date(a.due_at);
             when.textContent = `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}`;
-            item.append(who, what, when);
-            if (target) {
+            link.append(who, what, when);
+            if (href) {
               const go = document.createElement('span');
               go.className = 'go';
-              go.textContent = '→';
-              item.appendChild(go);
+              go.textContent = '↗';
+              link.appendChild(go);
             }
-            list.appendChild(item);
+            row.appendChild(link);
+
+            // × = „osuń" (ręczne zrobione): POST zamknij watch, znika z listy.
+            const x = document.createElement('button');
+            x.type = 'button';
+            x.className = 'alert-dismiss';
+            x.textContent = '×';
+            x.title = 'Osuń (temat ogarnięty)';
+            x.addEventListener('click', async (e) => {
+              e.preventDefault(); e.stopPropagation();
+              x.disabled = true;
+              try {
+                const r = await fetch(`${API_BASE}/api/watchdog/alerty/${a.id}/zamknij`, { method: 'POST' });
+                if (!r.ok) throw new Error();
+                row.remove();
+                widoczne -= 1;
+                odswiezLicznik();
+                if (widoczne <= 0) group.remove();
+              } catch (_) { x.disabled = false; x.title = 'Nie udało się osunąć — spróbuj ponownie'; }
+            });
+            row.appendChild(x);
+            list.appendChild(row);
+            widoczne += 1;
           });
-          group.append(h, list);
+          odswiezLicznik();
+
+          group.append(sum, list);
           if (alerty.length > LIMIT_ALERTY) {
             const more = document.createElement('div');
             more.className = 'today-more';

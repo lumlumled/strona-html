@@ -17,6 +17,11 @@ window.WycenyTab = (() => {
   // (typ ZAMÓWIENIE, wykluczony z tej listy), więc nie ma tu osobnego filtra
   // statusu; ta jedna oś (aktywne/stracone) zastępuje dawny selektor statusu.
   let widok = 'aktywne';
+  // Deep-link z hubu/alertu watchdoga: /wyceny/?id=1936 — otwiera KONKRETNĄ
+  // wycenę (obchodzi filtr Aktywne/Stracone, żeby zawsze się pokazała) i
+  // przewija do niej. Obsługiwany raz, po pierwszym renderze.
+  let deepLinkId = null;
+  let deepLinkHandled = false;
 
   // Źródło wyceny — "co jest gdzie" (liczone server-side, pole _zrodlo).
   const ZRODLO_LABELS = {
@@ -310,6 +315,9 @@ window.WycenyTab = (() => {
 
   // ── Lista + filtry ─────────────────────────────────────────────────────────
   function matches(wycena) {
+    // Wycena z deep-linku zawsze widoczna (nawet gdy jest Stracone / poza
+    // aktywnym filtrem), dopóki nie zostanie otwarta.
+    if (deepLinkId && !deepLinkHandled && String(wycena.id) === String(deepLinkId)) return true;
     const q = (document.getElementById('wyceny-search')?.value || '').trim().toLowerCase();
     // Oś Aktywne/Stracone zamiast selektora statusu: 'stracone' = tylko Stracone,
     // 'aktywne' = cała reszta (wszystko oprócz Stracone).
@@ -334,6 +342,16 @@ window.WycenyTab = (() => {
     const count = document.getElementById('wyceny-count');
     if (count) count.textContent = `${filtered.length} / ${all.length} wycen`;
     if (!filtered.length) cfg.listEl.innerHTML = '<p class="empty-note">Brak wycen dla tych filtrów.</p>';
+
+    // Deep-link: po renderze otwórz i przewiń do linkowanej wyceny (raz).
+    if (deepLinkId && !deepLinkHandled) {
+      const row = cfg.listEl.querySelector(`details[data-wycena-id="${deepLinkId}"]`);
+      if (row) {
+        deepLinkHandled = true;
+        row.open = true;
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
   }
 
   async function load() {
@@ -359,6 +377,10 @@ window.WycenyTab = (() => {
 
   function init(options) {
     cfg = options;
+    try {
+      const id = new URLSearchParams(window.location.search).get('id');
+      if (id && /^\d+$/.test(id)) deepLinkId = id;
+    } catch (_) { /* brak URL API — deep-link po prostu nieaktywny */ }
     buildToolbar();
   }
 

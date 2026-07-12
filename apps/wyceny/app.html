@@ -110,9 +110,12 @@
     }
     .toolbar .widok-toggle .widok-btn + .widok-btn { border-left: 1px solid var(--border); }
     .toolbar .widok-toggle .widok-btn:hover { background: var(--accent-soft); }
+    /* Aktywny segment: delikatnie jaśniejsze szare tło + jasny (biały w dark)
+       font — subtelne wyróżnienie zamiast mocnego accentu (który w dark mode
+       dawał biały font na białym tle). */
     .toolbar .widok-toggle .widok-btn.active {
-      background: var(--accent);
-      color: #fff;
+      background: var(--accent-soft);
+      color: var(--text-primary);
     }
 
     /* ── Filtr właściciela = kółeczka A/L (styl jak owner leada) ── */
