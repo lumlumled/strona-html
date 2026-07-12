@@ -11,6 +11,7 @@ window.WycenyTab = (() => {
   let all = [];
   let statusy = [];
   let typy = [];
+  let ownerFilter = ''; // '' = wszyscy; inaczej dokładna nazwa ownera
 
   const STATUS_COLORS = {
     open: '#a8c8f0',
@@ -44,6 +45,49 @@ window.WycenyTab = (() => {
     return node;
   }
 
+  // ── Właściciel wyceny (owner) ────────────────────────────────────────────────
+  // Deterministyczny odcień koloru per właściciel — ten sam człowiek zawsze ma
+  // ten sam kolor kółeczka w całej liście.
+  function ownerHue(name) {
+    let hash = 0;
+    for (const ch of String(name || 'x')) hash = (hash * 31 + ch.charCodeAt(0)) % 360;
+    return hash;
+  }
+
+  function ownerInitial(name) {
+    const n = String(name || '').trim();
+    return n ? n.charAt(0).toUpperCase() : '?';
+  }
+
+  function ownerBadge(owner) {
+    const name = String(owner || '').trim();
+    const b = h('span', 'owner-badge', ownerInitial(name));
+    b.title = name ? `Właściciel: ${name}` : 'Brak właściciela';
+    b.style.setProperty('--owner-hue', String(ownerHue(name)));
+    return b;
+  }
+
+  // Segmentowany filtr właściciela: „Wszyscy" + kółeczko na każdego autora
+  // obecnego na liście (pokazuje się dopiero, gdy właścicieli jest >1).
+  function renderOwnerFilter() {
+    const wrap = document.getElementById('wyceny-owner-filter');
+    if (!wrap) return;
+    const owners = [...new Set(all.map((w) => String(w.owner || '').trim()).filter(Boolean))].sort();
+    if (ownerFilter && !owners.includes(ownerFilter)) ownerFilter = '';
+    wrap.innerHTML = '';
+    if (owners.length < 2) return;
+    const mk = (label, value, title) => {
+      const btn = h('button', 'owner-chip' + (ownerFilter === value ? ' active' : ''), label);
+      btn.type = 'button';
+      if (title) btn.title = title;
+      if (value) btn.style.setProperty('--owner-hue', String(ownerHue(value)));
+      btn.addEventListener('click', () => { ownerFilter = value; renderOwnerFilter(); renderList(); });
+      return btn;
+    };
+    wrap.appendChild(mk('Wszyscy', ''));
+    owners.forEach((o) => wrap.appendChild(mk(ownerInitial(o), o, o)));
+  }
+
   // ── Toolbar ────────────────────────────────────────────────────────────────
   function buildToolbar() {
     cfg.toolbarEl.classList.add('toolbar');
@@ -63,6 +107,9 @@ window.WycenyTab = (() => {
     typSel.id = 'wyceny-typ-filter';
     typSel.addEventListener('change', renderList);
 
+    const ownerFilterWrap = h('div', 'owner-filter');
+    ownerFilterWrap.id = 'wyceny-owner-filter';
+
     const refresh = h('button', '', 'Odśwież');
     refresh.type = 'button';
     refresh.addEventListener('click', () => load());
@@ -70,7 +117,7 @@ window.WycenyTab = (() => {
     const count = h('span', 'count-badge');
     count.id = 'wyceny-count';
 
-    cfg.toolbarEl.append(search, statusSel, typSel, refresh, count);
+    cfg.toolbarEl.append(search, statusSel, typSel, ownerFilterWrap, refresh, count);
 
     // Szybkie dodanie (tekst -> AI -> podgląd) + pełny edytor — moduł
     // wycena-editor.js; bez niego przycisków nie ma (podgląd / stary deploy).
@@ -215,7 +262,7 @@ window.WycenyTab = (() => {
     kwota.style.fontWeight = '700';
     kwota.style.color = 'var(--text-primary)';
     const stage = WycenaKarta.utils.stageChip(wycena.process_stage);
-    rightAnchor.append(kwota, stage, buildStatusPill(wycena));
+    rightAnchor.append(ownerBadge(wycena.owner), kwota, stage, buildStatusPill(wycena));
 
     summary.append(chevron, lp, typChip, name, dash, phone, buildDates(wycena), rightAnchor);
     details.appendChild(summary);
@@ -246,6 +293,7 @@ window.WycenyTab = (() => {
     const typ = document.getElementById('wyceny-typ-filter')?.value || '';
     if (status && wycena.status !== status) return false;
     if (typ && wycena.typ !== typ) return false;
+    if (ownerFilter && String(wycena.owner || '').trim() !== ownerFilter) return false;
     if (!q) return true;
     const hay = `#${wycena.id} ${wycena.id} ${wycena.imie_nazwisko || ''} ${wycena.first_name || ''} ${wycena.last_name || ''} ${wycena.telefon_e164 || ''} ${wycena.telefon_digits || ''} ${wycena.email || ''}`.toLowerCase();
     return hay.includes(q);
@@ -280,6 +328,7 @@ window.WycenyTab = (() => {
       statusy = body.statusy || [];
       typy = body.typy || [];
       fillFilters();
+      renderOwnerFilter();
       renderList();
       loaded = true;
     } catch (err) {

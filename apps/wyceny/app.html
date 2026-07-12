@@ -98,6 +98,52 @@
     .toolbar button:hover { background: var(--accent-soft); }
     .count-badge { font-size: 0.85rem; color: var(--text-secondary); margin-left: auto; }
 
+    /* ── Filtr właściciela (Wszyscy / A / L …) ── */
+    .owner-filter { display: inline-flex; align-items: center; gap: 0.3rem; }
+    .owner-filter:empty { display: none; }
+    .owner-chip {
+      font: inherit;
+      font-size: 0.78rem;
+      font-weight: 600;
+      min-width: 1.9rem;
+      padding: 0.34rem 0.55rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface-1);
+      color: var(--text-secondary);
+      cursor: pointer;
+      line-height: 1;
+    }
+    .owner-chip:hover { background: var(--accent-soft); }
+    .owner-chip.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--accent-contrast);
+    }
+
+    /* Kółeczko właściciela na wierszu (inicjał, kolor per osoba) */
+    .owner-badge {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.4rem;
+      height: 1.4rem;
+      border-radius: 50%;
+      font-size: 0.7rem;
+      font-weight: 700;
+      background: hsl(var(--owner-hue, 210) 55% 88%);
+      color: hsl(var(--owner-hue, 210) 60% 26%);
+      border: 1px solid hsl(var(--owner-hue, 210) 45% 70%);
+    }
+    @media (prefers-color-scheme: dark) {
+      .owner-badge {
+        background: hsl(var(--owner-hue, 210) 40% 26%);
+        color: hsl(var(--owner-hue, 210) 70% 85%);
+        border-color: hsl(var(--owner-hue, 210) 40% 40%);
+      }
+    }
+
     /* ── Lista wycen (zwinięty wiersz → rozwinięta karta) ── */
     #wyceny-list { display: flex; flex-direction: column; gap: 0.4rem; }
 

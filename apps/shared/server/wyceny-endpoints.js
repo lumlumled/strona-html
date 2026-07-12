@@ -113,11 +113,18 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
     res.status(fallbackStatus).json({ error: err.message || 'Wewnętrzny błąd serwera' });
   }
 
-  // Nie-admin widzi tylko swoje wyceny (filtr w zapytaniu, nie w JS —
-  // dane innych nie opuszczają bazy).
+  // Widoczność (decyzja Antoniego 2026-07-13): SPRZEDAŻE (typ ZAMÓWIENIE) są
+  // PRYWATNE — nie-admin widzi wyłącznie swoje. WYCENY/notatki są OTWARTE —
+  // cały zespół (Antoni + Lorenzo) widzi wszystkie; kolumna owner służy tu
+  // tylko do oznaczenia autora i filtra w UI, nie ogranicza widoku. Filtr
+  // siedzi w zapytaniu (nie w JS — cudze sprzedaże nie opuszczają bazy) i
+  // działa jednakowo dla list, pojedynczego GET oraz zapisów (update … where
+  // id): nie-admin nie ruszy cudzej sprzedaży, ale wyceny są wspólne.
   function scoped(query, req) {
     if (isAdmin(req.user)) return query;
-    return query.ilike('owner', String(req.user.name || '').trim());
+    const name = String(req.user.name || '').trim();
+    if (!name) return query.neq('typ', 'ZAMÓWIENIE');
+    return query.or(`typ.neq.ZAMÓWIENIE,owner.ilike.${name}`);
   }
 
   async function fetchList(req, { typ, excludeTyp } = {}) {

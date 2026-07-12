@@ -155,6 +155,47 @@
     .toolbar button:hover { background: var(--accent-soft); }
     .count-badge { font-size: 0.85rem; color: var(--text-secondary); margin-left: auto; }
 
+    /* ── Filtr właściciela (Wszyscy / A / L …) ── */
+    .owner-filter { display: inline-flex; align-items: center; gap: 0.3rem; }
+    .owner-filter:empty { display: none; }
+    .owner-chip {
+      font: inherit;
+      font-size: 0.78rem;
+      font-weight: 600;
+      min-width: 1.9rem;
+      padding: 0.34rem 0.55rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface-1);
+      color: var(--text-secondary);
+      cursor: pointer;
+      line-height: 1;
+    }
+    .owner-chip:hover { background: var(--accent-soft); }
+    .owner-chip.active { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
+
+    .owner-badge {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.4rem;
+      height: 1.4rem;
+      border-radius: 50%;
+      font-size: 0.7rem;
+      font-weight: 700;
+      background: hsl(var(--owner-hue, 210) 55% 88%);
+      color: hsl(var(--owner-hue, 210) 60% 26%);
+      border: 1px solid hsl(var(--owner-hue, 210) 45% 70%);
+    }
+    @media (prefers-color-scheme: dark) {
+      .owner-badge {
+        background: hsl(var(--owner-hue, 210) 40% 26%);
+        color: hsl(var(--owner-hue, 210) 70% 85%);
+        border-color: hsl(var(--owner-hue, 210) 40% 40%);
+      }
+    }
+
     #list { display: flex; flex-direction: column; gap: 1.5rem; }
 
     .sale-segment { display: flex; flex-direction: column; gap: 0.4rem; }
@@ -268,6 +309,7 @@
       </details>
       <div class="toolbar">
         <input type="text" id="search" placeholder="Szukaj: imię, telefon, e-mail, numer, miasto…">
+        <div class="owner-filter" id="owner-filter"></div>
         <button id="refresh">Odśwież</button>
         <span class="count-badge" id="count"></span>
       </div>
@@ -283,12 +325,52 @@
 
     const { moneyPLN, stageChip, formatDT } = WycenaKarta.utils;
     let all = [];
+    let ownerFilter = ''; // '' = wszyscy; inaczej dokładna nazwa ownera
 
     function h(tag, className, text) {
       const node = document.createElement(tag);
       if (className) node.className = className;
       if (text !== undefined) node.textContent = text;
       return node;
+    }
+
+    // ── Właściciel sprzedaży (owner) ────────────────────────────────────────
+    function ownerHue(name) {
+      let hash = 0;
+      for (const ch of String(name || 'x')) hash = (hash * 31 + ch.charCodeAt(0)) % 360;
+      return hash;
+    }
+    function ownerInitial(name) {
+      const n = String(name || '').trim();
+      return n ? n.charAt(0).toUpperCase() : '?';
+    }
+    function ownerBadge(owner) {
+      const name = String(owner || '').trim();
+      const b = h('span', 'owner-badge', ownerInitial(name));
+      b.title = name ? `Właściciel: ${name}` : 'Brak właściciela';
+      b.style.setProperty('--owner-hue', String(ownerHue(name)));
+      return b;
+    }
+
+    // Filtr właściciela — Lorenzo i tak dostaje z serwera tylko swoje sprzedaże
+    // (prywatne per owner); dla admina (Antoni) filtr rozdziela A / L.
+    function renderOwnerFilter() {
+      const wrap = document.getElementById('owner-filter');
+      if (!wrap) return;
+      const owners = [...new Set(all.map((w) => String(w.owner || '').trim()).filter(Boolean))].sort();
+      if (ownerFilter && !owners.includes(ownerFilter)) ownerFilter = '';
+      wrap.innerHTML = '';
+      if (owners.length < 2) return;
+      const mk = (label, value, title) => {
+        const btn = h('button', 'owner-chip' + (ownerFilter === value ? ' active' : ''), label);
+        btn.type = 'button';
+        if (title) btn.title = title;
+        if (value) btn.style.setProperty('--owner-hue', String(ownerHue(value)));
+        btn.addEventListener('click', () => { ownerFilter = value; renderOwnerFilter(); renderList(); });
+        return btn;
+      };
+      wrap.appendChild(mk('Wszyscy', ''));
+      owners.forEach((o) => wrap.appendChild(mk(ownerInitial(o), o, o)));
     }
 
     // ── Statystyki: liczba i suma sprzedaży, ten vs poprzedni miesiąc ────────
@@ -359,6 +441,7 @@
 
       const rightAnchor = h('div', 'right-anchor');
       rightAnchor.append(
+        ownerBadge(w.owner),
         h('span', 'summary-date', w.created_at ? formatDT(w.created_at).slice(0, 10) : ''),
         h('span', 'summary-kwota', moneyPLN(w.kwota_sprzedazy_brutto ?? w.kwota_proponowana_brutto)),
         stageChip(w.process_stage),
@@ -390,6 +473,7 @@
     }
 
     function matches(w) {
+      if (ownerFilter && String(w.owner || '').trim() !== ownerFilter) return false;
       const q = document.getElementById('search').value.trim().toLowerCase();
       if (!q) return true;
       const hay = `${displayNo(w)} ${w.id} ${w.shopify_order_name || ''} ${w.imie_nazwisko || ''} ${w.first_name || ''} ${w.last_name || ''} ${w.telefon_e164 || ''} ${w.email || ''} ${w.ship_city || ''} ${w.punkt_odbioru || ''}`.toLowerCase();
@@ -456,6 +540,7 @@
         // zamiast po #ID, bo zamówienia sklepu dostawały ID poza kolejnością dat.
         assignShopifySeq(all);
         all.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+        renderOwnerFilter();
         renderList();
         const statsBody = await statsRes.json().catch(() => null);
         if (statsRes.ok && statsBody) renderStats(statsBody);
