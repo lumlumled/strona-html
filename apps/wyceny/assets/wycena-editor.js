@@ -37,6 +37,76 @@ window.WycenaEditor = (() => {
     return cennikCache;
   }
 
+  // Picker produktów: siatka kart (zdjęcie + nazwa + cena) z wyszukiwarką.
+  // Klik = dodaje pozycję do wyceny; picker zostaje otwarty, żeby dorzucić
+  // kolejne. Zamykasz krzyżykiem / "Gotowe" / klikiem w tło.
+  function openCatalogPicker({ apiBase, onPick }) {
+    const { modal, destroy } = openModal('Dodaj produkt z cennika');
+
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.className = 'wk-catalog-search';
+    search.placeholder = 'Szukaj produktu (nazwa / SKU)…';
+    modal.appendChild(search);
+
+    const grid = h('div', 'wk-catalog-grid');
+    grid.appendChild(h('div', 'wk-quick-hint', 'Wczytywanie cennika…'));
+    modal.appendChild(grid);
+
+    const actions = h('div', 'wk-modal-actions');
+    const done = h('button', 'wk-btn primary', 'Gotowe');
+    done.type = 'button';
+    done.addEventListener('click', destroy);
+    actions.appendChild(done);
+    modal.appendChild(actions);
+
+    function renderGrid(items) {
+      grid.innerHTML = '';
+      if (!items.length) { grid.appendChild(h('div', 'wk-quick-hint', 'Brak produktów pasujących do wyszukiwania.')); return; }
+      items.forEach((s) => {
+        const card = h('button', 'wk-catalog-card');
+        card.type = 'button';
+        const thumbSlot = h('div', 'wk-catalog-thumb');
+        if (s.image_url) {
+          const img = document.createElement('img');
+          img.loading = 'lazy';
+          img.src = s.image_url;
+          img.alt = '';
+          img.addEventListener('error', () => { thumbSlot.innerHTML = ''; thumbSlot.appendChild(h('div', 'wk-thumb-placeholder', '💡')); });
+          thumbSlot.appendChild(img);
+        } else {
+          thumbSlot.appendChild(h('div', 'wk-thumb-placeholder', '💡'));
+        }
+        card.appendChild(thumbSlot);
+        card.appendChild(h('div', 'wk-catalog-name', s.nazwa));
+        if (s.price_brutto != null && s.price_brutto !== '') {
+          card.appendChild(h('div', 'wk-catalog-price', `${moneyPLN(s.price_brutto)}/${s.unit || 'szt'}`));
+        }
+        card.addEventListener('click', () => {
+          onPick(s);
+          card.classList.add('dodano');
+          const prev = card.querySelector('.wk-catalog-added');
+          if (!prev) card.appendChild(h('div', 'wk-catalog-added', '✓ dodano'));
+        });
+        grid.appendChild(card);
+      });
+    }
+
+    fetchCennik(apiBase).then((cennik) => {
+      const all = cennik.slice();
+      const apply = () => {
+        const q = search.value.trim().toLowerCase();
+        renderGrid(!q ? all : all.filter((s) => `${s.nazwa || ''} ${s.sku || ''}`.toLowerCase().includes(q)));
+      };
+      search.addEventListener('input', apply);
+      apply();
+      search.focus();
+    }).catch((err) => {
+      grid.innerHTML = '';
+      grid.appendChild(h('div', 'wk-error', `Nie udało się wczytać cennika: ${err.message}`));
+    });
+  }
+
   function openModal(titleText) {
     const backdrop = h('div', 'wk-modal-backdrop');
     const modal = h('div', 'wk-modal');
@@ -212,32 +282,21 @@ window.WycenaEditor = (() => {
     const itemsEd = buildItemsEditor(src.items || [], () => refreshTotals());
     modal.appendChild(itemsEd.el);
 
-    // Dodawanie pozycji
+    // Dodawanie pozycji — siatka produktów ze zdjęciami (klik = dodaj).
     const addbar = h('div', 'wk-edit-addbar');
-    const skuSel = document.createElement('select');
-    skuSel.appendChild(h('option', '', '+ pozycja z cennika…'));
-    fetchCennik(apiBase).then((cennik) => {
-      cennik.forEach((s) => {
-        const o = h('option', '', `${s.nazwa} — ${moneyPLN(s.price_brutto)}/${s.unit}`);
-        o.value = s.sku;
-        skuSel.appendChild(o);
-      });
-    }).catch(() => {});
-    skuSel.addEventListener('change', () => {
-      const sku = skuSel.value;
-      const s = (cennikCache || []).find((x) => x.sku === sku);
-      if (s) {
-        itemsEd.addItem({
-          name: s.nazwa, SKU: s.sku, quantity: 1, unit: s.unit || 'szt',
-          price: String(s.price_brutto ?? ''), VAT: String(s.vat || 23), image_url: s.image_url || '',
-        });
-      }
-      skuSel.selectedIndex = 0;
-    });
+    const catalogBtn = h('button', 'wk-btn primary', '+ Dodaj produkt');
+    catalogBtn.type = 'button';
+    catalogBtn.addEventListener('click', () => openCatalogPicker({
+      apiBase,
+      onPick: (s) => itemsEd.addItem({
+        name: s.nazwa, SKU: s.sku, quantity: 1, unit: s.unit || 'szt',
+        price: String(s.price_brutto ?? ''), VAT: String(s.vat || 23), image_url: s.image_url || '',
+      }),
+    }));
     const customBtn = h('button', 'wk-btn', '+ własna pozycja');
     customBtn.type = 'button';
     customBtn.addEventListener('click', () => itemsEd.addItem({ name: '', quantity: 1, unit: 'szt', price: '', VAT: '23' }));
-    addbar.append(skuSel, customBtn);
+    addbar.append(catalogBtn, customBtn);
     modal.appendChild(addbar);
 
     // Kwoty: suma pozycji + kwota dla klienta (rabat = różnica, na żywo)
@@ -263,7 +322,14 @@ window.WycenaEditor = (() => {
     const rabat24hGrid = h('div', 'wk-form-grid');
     const rabat24hKwota = input(src.rabat24h_kwota ?? '', 'np. 100');
     rabat24hKwota.inputMode = 'decimal';
-    const rabat24hGodziny = input('24', 'np. 24', 'number');
+    // Domyślne godziny wyznaczamy z parsowanej daty ważności (24h / 72h / 7 dni),
+    // żeby pole zgadzało się z tym, co złapał parser; fallback 24.
+    const godzinyStart = (() => {
+      if (!src.rabat24h_wazny_do) return '24';
+      const diffH = Math.round((new Date(src.rabat24h_wazny_do).getTime() - Date.now()) / 3600000);
+      return diffH > 0 ? String(diffH) : '24';
+    })();
+    const rabat24hGodziny = input(godzinyStart, 'np. 24', 'number');
     rabat24hGodziny.min = '1';
     rabat24hGodziny.step = '1';
     const rabat24hDo = input('', '', 'datetime-local');

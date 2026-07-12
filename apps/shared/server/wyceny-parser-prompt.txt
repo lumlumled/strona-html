@@ -158,6 +158,7 @@ STRUKTURA WYJŚCIOWA (ZAWSZE IDENTYCZNA)
 "price_offered": null,
 "price_final": null,
 "rabat24h_kwota": null,
+"rabat_godziny": null,
 "rabat24h_wazny_do": "",
 "payment_method": "",
 "partner": "",
@@ -376,16 +377,24 @@ FEEDBACK_DATE
 * Zapisy względne typu “za 2 tygodnie” → przelicz od dzisiaj {{now}} i ustaw datę
 * Jeśli niepewne → ""
 
-RABAT 24H
+RABAT CZASOWY (rabat 24h / 72h / 7 dni)
 
-Jeśli w tekście występuje fraza "rabat24h", "rabat 24h", "24h -", "24h-" z kwotą:
+Jeśli w tekście występuje fraza "rabat24h", "rabat 24h", "rabat 72h", "rabat 7 dni",
+"rabat na 3 dni", "24h -", "24h-" itp. z kwotą — to rabat czasowy (ograniczony w czasie):
 - rabat24h_kwota = kwota (number, bez waluty)
-- rabat24h_wazny_do = formatDate(now + 24h, "DD.MM.YYYY HH:mm")
+- rabat_godziny = długość ważności rabatu W GODZINACH, wyliczona z frazy:
+  * "24h" / "1 dzień" → 24
+  * "48h" / "2 dni" → 48
+  * "72h" / "3 dni" → 72
+  * "7 dni" / "tydzień" → 168
+  * ogólnie: liczba godzin wprost, albo liczba dni × 24
+  * jeśli jest kwota rabatu, ale bez podanego czasu → rabat_godziny = 24 (domyślnie)
+- rabat24h_wazny_do = "" (datę wylicza serwer od teraz na podstawie rabat_godziny — NIE licz jej)
 
 ZASADA NADRZĘDNA:
-- "rabat24h" / "24h" NIE wpływa na price_offered / price_catalog / price_final
+- rabat czasowy ("rabat 24h/72h/7 dni") NIE wpływa na price_offered / price_catalog / price_final
 - NIE traktuj jako "po rabacie" / "po zniżce"
-- Jeśli brak frazy → rabat24h_kwota: null, rabat24h_wazny_do: ""
+- Jeśli brak frazy → rabat24h_kwota: null, rabat_godziny: null, rabat24h_wazny_do: ""
 
 CUSTOMER_NAME
 Nie parsuj. Zawsze zwracaj "".

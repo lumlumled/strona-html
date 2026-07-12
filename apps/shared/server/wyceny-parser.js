@@ -88,9 +88,11 @@ function parsedToRow(parsed, tekst) {
     prowizja_status: parsed.prowizja_status || null,
     dane_do_faktury: parsed.dane_do_faktury || null,
     rabat24h_kwota: parsed.rabat24h_kwota ?? null,
-    // Make ustawiał zawsze now+1d; u nas tylko gdy rabat faktycznie jest.
+    // Rabat czasowy: parser zwraca też długość ważności w godzinach
+    // (rabat_godziny) — "24h"→24, "72h"→72, "7 dni"→168. Brak → 24h (domyślnie
+    // jak w Make). Ważny "do" liczymy od teraz w JS (jedno źródło czasu).
     rabat24h_wazny_do: parsed.rabat24h_kwota
-      ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+      ? new Date(Date.now() + (Number(parsed.rabat_godziny) > 0 ? Number(parsed.rabat_godziny) : 24) * 60 * 60 * 1000).toISOString()
       : null,
     history_log: logLine,
   };

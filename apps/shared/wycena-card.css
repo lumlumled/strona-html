@@ -490,3 +490,116 @@
   flex-direction: column;
   gap: 0.7rem;
 }
+
+/* ── Nagłówek sekcji z akcją po prawej (Produkty → Edytuj) ── */
+.wk-section-title--row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+.wk-btn--slim {
+  padding: 0.2rem 0.55rem;
+  font-size: 0.74rem;
+  border-radius: 7px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* ── Picker produktów ze zdjęciami (edytor) ── */
+.wk-catalog-search {
+  width: 100%;
+  font: inherit;
+  font-size: 0.88rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text-primary);
+}
+.wk-catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 0.55rem;
+  max-height: 52vh;
+  overflow-y: auto;
+  padding: 0.1rem;
+}
+.wk-catalog-card {
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface-1);
+  position: relative;
+  transition: border-color 0.12s, background 0.12s;
+}
+.wk-catalog-card:hover { border-color: var(--accent); background: var(--accent-soft); }
+.wk-catalog-card.dodano { border-color: var(--good, #3f8f5b); }
+.wk-catalog-thumb {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-2, var(--accent-soft));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.wk-catalog-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.wk-catalog-name { font-size: 0.8rem; font-weight: 600; line-height: 1.25; color: var(--text-primary); }
+.wk-catalog-price { font-size: 0.75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.wk-catalog-added {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.1rem 0.35rem;
+  border-radius: 6px;
+  background: var(--good, #3f8f5b);
+  color: #fff;
+}
+
+/* ── Historia rozmów (karta) ── */
+.wk-rozmowy-list { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.55rem; }
+.wk-rozmowa {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.5rem 0.65rem;
+  background: var(--surface-1);
+}
+.wk-rozmowa-head { display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; }
+.wk-rozmowa-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--good, #3f8f5b);
+}
+.wk-rozmowa-dot.nieodebrane { background: transparent; border: 1.5px solid var(--bad, #b5433f); }
+.wk-rozmowa-time { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.wk-rozmowa-tag { color: var(--text-secondary); font-size: 0.74rem; }
+.wk-rozmowa-opis { margin-top: 0.3rem; font-size: 0.85rem; line-height: 1.35; }
+.wk-rozmowa-transkr { margin-top: 0.35rem; }
+.wk-rozmowa-transkr > summary {
+  cursor: pointer;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  list-style: none;
+}
+.wk-rozmowa-transkr > summary::-webkit-details-marker { display: none; }
+.wk-rozmowa-transkr-tresc {
+  margin-top: 0.35rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  color: var(--text-secondary);
+  border-left: 2px solid var(--border);
+  padding-left: 0.6rem;
+}

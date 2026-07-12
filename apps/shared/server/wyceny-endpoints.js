@@ -271,6 +271,30 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
     }
   });
 
+  // GET /api/wyceny/:id/rozmowy — wszystko, co wiemy o kliencie: wpisy z
+  // "Log zmian" dopasowane po numerze telefonu wyceny (rozmowy Zadarmy z
+  // transkrypcją, notatki handlowca). Najnowsze na górze. Zastępuje przycisk
+  // "Realizuj zamówienie" na karcie — handlowiec widzi kontekst, nie akcję.
+  app.get('/api/wyceny/:id(\\d+)/rozmowy', requireView, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const supabase = getClient();
+      const { data, error } = await scoped(supabase.from('wyceny').select('telefon_digits,telefon_e164'), req)
+        .eq('id', id).limit(1);
+      if (error) throw error;
+      if (!data || !data.length) return res.status(404).json({ error: 'Nie znaleziono wyceny' });
+      const digits = String(data[0].telefon_digits || String(data[0].telefon_e164 || '').replace(/\D/g, '').replace(/^48/, '')).trim();
+      if (!digits) return res.json({ rozmowy: [] });
+      const { data: log, error: logErr } = await supabase
+        .from('Log zmian').select('*').eq('telefon', digits)
+        .order('data_zmiany', { ascending: false }).limit(200);
+      if (logErr) throw logErr;
+      res.json({ rozmowy: log || [] });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
   // POST /api/wyceny — nowa wycena z panelu (edytor / szybkie dodanie /
   // przycisk na karcie leada). ID z sekwencji arkusza, owner z sesji.
   app.post('/api/wyceny', requireEdit, async (req, res) => {

@@ -126,9 +126,17 @@ window.WycenaKarta = (() => {
   }
 
   // ── Sekcja: produkty ze zdjęciami + kwoty ──────────────────────────────────
-  function buildProducts(wycena) {
+  function buildProducts(wycena, opts = {}) {
     const wrap = el('div');
-    wrap.appendChild(el('div', 'wk-section-title', 'Produkty'));
+    const title = el('div', 'wk-section-title wk-section-title--row', 'Produkty');
+    if (opts.onEdit && !opts.readOnly) {
+      const edit = el('button', 'wk-btn wk-btn--slim', '✎ Edytuj');
+      edit.type = 'button';
+      edit.title = 'Zmień ilości, barwę, dodaj lub usuń pozycję';
+      edit.addEventListener('click', (e) => { e.stopPropagation(); opts.onEdit(wycena); });
+      title.appendChild(edit);
+    }
+    wrap.appendChild(title);
     const list = el('div', 'wk-products');
 
     const items = Array.isArray(wycena.items) ? wycena.items : [];
@@ -209,8 +217,8 @@ window.WycenaKarta = (() => {
       const aktywny = wycena._rabat24h_aktywny;
       const banner = el('div', `wk-rabat24h ${aktywny ? 'aktywny' : 'wygasly'}`);
       banner.textContent = aktywny
-        ? `⏳ Rabat 24h: −${moneyPLN(wycena.rabat24h_kwota)} ważny do ${formatDT(wycena.rabat24h_wazny_do)}`
-        : `Rabat 24h (−${moneyPLN(wycena.rabat24h_kwota)}) wygasł ${formatDT(wycena.rabat24h_wazny_do)}`;
+        ? `⏳ Rabat czasowy: −${moneyPLN(wycena.rabat24h_kwota)} ważny do ${formatDT(wycena.rabat24h_wazny_do)}`
+        : `Rabat czasowy (−${moneyPLN(wycena.rabat24h_kwota)}) wygasł ${formatDT(wycena.rabat24h_wazny_do)}`;
       wrap.appendChild(banner);
     }
     return wrap;
@@ -410,32 +418,6 @@ window.WycenaKarta = (() => {
     }
     wrap.appendChild(list);
 
-    // "Realizuj zamówienie" — sprzedaż domknięta bez formularza (telefon):
-    // ten sam pipeline co submit; wymaga płatności i adresu/paczkomatu.
-    if (!opts.readOnly && opts.mode === 'crm' && wycena.form_status !== 'SUBMITTED'
-      && ['NEW', 'FORM_SENT'].includes(wycena.process_stage)) {
-      const actions = el('div', 'wk-actions');
-      const btn = el('button', 'wk-btn', '▶ Realizuj zamówienie');
-      btn.title = 'Zamyka formularz i odpala realizację (przesyłka + faktura + mail) na danych z wyceny';
-      btn.type = 'button';
-      btn.addEventListener('click', async () => {
-        if (!confirm(`Zrealizować zamówienie #${wycena.id} bez formularza?\nPłatność: ${wycena.payment_method || 'BRAK — ustaw w edycji!'}\nPipeline utworzy przesyłkę, fakturę i wyśle maila do klienta.`)) return;
-        btn.disabled = true;
-        try {
-          const res = await fetch(`${opts.apiBase}/api/wyceny/${wycena.id}/realizuj`, { method: 'POST' });
-          const body = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
-          if (opts.onChanged) opts.onChanged();
-        } catch (err) {
-          alert(`Nie udało się: ${err.message}`);
-        } finally {
-          btn.disabled = false;
-        }
-      });
-      actions.appendChild(btn);
-      wrap.appendChild(actions);
-    }
-
     // "Zamów kuriera ponownie" — dosyłka/reklamacja na te same dane, bez
     // faktury i bez zmiany statusów (panel Sprzedaże; endpoint w pipeline).
     if (opts.mode === 'sprzedaze' && !opts.readOnly && (wycena._shipments || []).length) {
@@ -502,25 +484,92 @@ window.WycenaKarta = (() => {
     return details;
   }
 
+  // ── Sekcja: Historia rozmów (telefon + notatki + transkrypcje z leada) ──────
+  // Wszystko, co wiemy o kliencie: zbiór wpisów z "Log zmian" dopasowanych po
+  // numerze telefonu wyceny (telefoniczne rozmowy Zadarmy, notatki handlowca,
+  // a w przyszłości maile). Leniwie — dociąga dopiero po rozwinięciu.
+  function callDot(row) {
+    const nieodebrane = row.disposition === 'no_answer';
+    return el('span', `wk-rozmowa-dot${nieodebrane ? ' nieodebrane' : ''}`);
+  }
+
+  function renderRozmowy(list, rozmowy) {
+    list.innerHTML = '';
+    if (!rozmowy.length) {
+      list.appendChild(el('div', 'wk-pipe-sub', 'Brak zarejestrowanych rozmów dla tego numeru.'));
+      return;
+    }
+    rozmowy.forEach((row) => {
+      const entry = el('div', 'wk-rozmowa');
+      const head = el('div', 'wk-rozmowa-head');
+      head.appendChild(callDot(row));
+      head.appendChild(el('span', 'wk-rozmowa-time', formatDT(row.data_zmiany)));
+      const jestNotatka = row.zrodlo === 'notatka_handlowca' || row.zrodlo === 'manual_akcja';
+      if (jestNotatka) {
+        head.appendChild(el('span', 'wk-rozmowa-tag', row.zrodlo === 'manual_akcja'
+          ? 'zmiana akcji'
+          : `notatka${row.handlowiec ? ` · ${row.handlowiec}` : ''}`));
+      } else if (row.czas_trwania_s) {
+        const s = Number(row.czas_trwania_s) || 0;
+        head.appendChild(el('span', 'wk-rozmowa-tag', `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`));
+      }
+      entry.appendChild(head);
+      const opis = String(row.opis || '').trim();
+      if (opis) {
+        entry.appendChild(el('div', 'wk-rozmowa-opis', opis));
+      } else if (row.disposition === 'no_answer') {
+        entry.appendChild(el('div', 'wk-rozmowa-opis wk-muted', 'Nieodebrane'));
+      }
+      const transkr = String(row.transkrypcja || '').trim();
+      if (transkr) {
+        const det = el('details', 'wk-rozmowa-transkr');
+        det.appendChild(el('summary', '', 'Transkrypcja'));
+        det.appendChild(el('div', 'wk-rozmowa-transkr-tresc', transkr));
+        entry.appendChild(det);
+      }
+      list.appendChild(entry);
+    });
+  }
+
+  function buildRozmowy(wycena, opts = {}) {
+    const wrap = el('div');
+    const details = el('details', 'wk-history wk-rozmowy');
+    const summary = el('summary', '', 'Historia rozmów');
+    details.appendChild(summary);
+    const list = el('div', 'wk-rozmowy-list');
+    details.appendChild(list);
+    wrap.appendChild(details);
+
+    let loaded = false;
+    details.addEventListener('toggle', async () => {
+      if (!details.open || loaded) return;
+      loaded = true;
+      list.appendChild(el('div', 'wk-pipe-sub', 'Wczytywanie…'));
+      try {
+        const res = await fetch(`${opts.apiBase || ''}/api/wyceny/${wycena.id}/rozmowy`);
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+        renderRozmowy(list, body.rozmowy || []);
+      } catch (err) {
+        list.innerHTML = '';
+        list.appendChild(el('div', 'wk-pipe-sub', `Błąd wczytywania: ${err.message}`));
+        loaded = false;
+      }
+    });
+    return wrap;
+  }
+
   // ── Główne API ─────────────────────────────────────────────────────────────
   // opts: { apiBase, readOnly, mode: 'crm'|'sprzedaze', onChanged, onEdit }
   function buildBody(wycena, opts = {}) {
     const body = el('div', 'wk-body');
-    body.appendChild(buildProducts(wycena));
+    body.appendChild(buildProducts(wycena, opts));
     body.appendChild(buildInfoGrid(wycena, opts));
     body.appendChild(buildFormSection(wycena, opts));
     body.appendChild(buildPipeline(wycena, opts));
+    body.appendChild(buildRozmowy(wycena, opts));
     const history = buildHistory(wycena);
     if (history) body.appendChild(history);
-
-    if (opts.onEdit && !opts.readOnly) {
-      const actions = el('div', 'wk-actions');
-      const btn = el('button', 'wk-btn primary', 'Edytuj wycenę');
-      btn.type = 'button';
-      btn.addEventListener('click', () => opts.onEdit(wycena));
-      actions.appendChild(btn);
-      body.appendChild(actions);
-    }
     return { el: body };
   }
 
