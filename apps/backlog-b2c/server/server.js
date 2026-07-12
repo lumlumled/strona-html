@@ -2076,6 +2076,9 @@ async function fetchAlertyWatchdoga(supabase) {
         owner: r.owner || '',
         watch_id: r.id,
         typ_obiektu: r.object_type,
+        // Cichy watch AI (visible=false) - lead po rozmowie bez umówionego
+        // terminu; osobna, miększa kategoria niż twarde alerty (docs §e).
+        ciche: r.visible === false,
       };
     }
     const w = wycenaById.get(r.object_id);
@@ -2111,7 +2114,11 @@ function applyAlertyWatchdoga(parsed, alertyRaw, phoneToLp, nextLp) {
     return { ...alert, lp, row_number: 0, zamkniete: 0, zadzwonil_dzis: false };
   });
   parsed.kategorie = parsed.kategorie || {};
-  parsed.kategorie.alerty_watchdoga = result;
+  // Twarde alerty (miniony umówiony termin / cisza po wysłanej wycenie /
+  // obietnice) vs miękkie ciche watche AI leadów bez umówionego terminu -
+  // osobna kategoria, żeby poranny plan nie mieszał jednego z drugim.
+  parsed.kategorie.alerty_watchdoga = result.filter((a) => !a.ciche);
+  parsed.kategorie.leady_do_odswiezenia = result.filter((a) => a.ciche);
   return next;
 }
 
