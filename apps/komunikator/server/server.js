@@ -8,8 +8,9 @@ require('dotenv').config();
 const fs = require('fs');
 const express = require('express');
 const { getClient } = require('./supabase');
-const { createAuth, clientPayload, panelLinks, PANELS, CRM_SHEETS } = require('../../shared/server/auth');
+const { createAuth, clientPayload, panelLinks, PANELS, CRM_SHEETS, isAdmin } = require('../../shared/server/auth');
 const { servePushWorker, registerPushEndpoints } = require('../../shared/server/push');
+const { registerWycenyEndpoints } = require('../../shared/server/wyceny-endpoints');
 const identity = require('./identity');
 const zernio = require('./ingest/zernio');
 const tiktok = require('./ingest/tiktok');
@@ -153,6 +154,18 @@ const auth = createAuth({
 servePushWorker(app);
 auth.register(app);
 registerPushEndpoints(app, { getClient });
+
+// Endpointy wycen (nowa tabela) — wątek klienta w komunikatorze pokazuje jego
+// wycenę/wyceny w tym samym formacie ze zdjęciami co panel Wyceny i karta leada,
+// z edycją (zapis do bazy = cross-ref). Bramka panelu już chroni; widoczność
+// per owner siedzi w endpointach (te same reguły co Backlog/CRM).
+const wycenyAllow = (req, res, next) => next();
+registerWycenyEndpoints(app, {
+  getClient,
+  requireView: wycenyAllow,
+  requireEdit: wycenyAllow,
+  isAdmin,
+});
 
 const APP_HTML = fs.readFileSync(path.join(__dirname, '..', 'app.html'), 'utf8');
 
@@ -382,6 +395,15 @@ app.get('/api/threads/:id', async (req, res) => {
 
     const sendState = computeSendState(thread, messagesRes.data || []);
 
+    // Telefon/e-mail klienta z tożsamości (kom_customer_identities: znormalizowane,
+    // telefon jako 48XXXXXXXXX, e-mail lowercase) — front dopnie po nich wycenę
+    // (GET /api/wyceny/dla-leada sam obcina 48, więc podajemy surowy value).
+    const identities = identitiesRes.data || [];
+    const firstIdentity = (type) => {
+      const match = identities.find((i) => i.type === type);
+      return match ? match.value : '';
+    };
+
     res.json({
       thread,
       customer: {
@@ -389,7 +411,9 @@ app.get('/api/threads/:id', async (req, res) => {
         public_id: customer.public_id,
         display_name: customer.display_name,
         notes: customer.notes,
-        identities: (identitiesRes.data || []).map((i) => ({ type: i.type, value: i.value, confirmed: i.confirmed })),
+        phone: firstIdentity('phone'),
+        email: firstIdentity('email'),
+        identities: identities.map((i) => ({ type: i.type, value: i.value, confirmed: i.confirmed })),
         threads: (threadsRes.data || []).map((t) => ({ id: t.id, channel: t.channel, status: t.status })),
       },
       messages: messagesRes.data || [],
