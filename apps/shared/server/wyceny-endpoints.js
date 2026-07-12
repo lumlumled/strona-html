@@ -194,15 +194,21 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
     }
   });
 
-  // GET /api/sprzedaze/stats — nagłówek panelu Sprzedaże. "Sprzedaż" =
-  // typ ZAMÓWIENIE; kwota = kwota_sprzedazy_brutto, fallback proponowana.
+  // GET /api/sprzedaze/stats[?owner=Lorenzo] — nagłówek panelu Sprzedaże.
+  // "Sprzedaż" = typ ZAMÓWIENIE; kwota = kwota_sprzedazy_brutto, fallback
+  // proponowana. Param `owner` (TYLKO admin) zawęża statystyki do jednego
+  // właściciela — przełącznik A/L w panelu przełącza też widok statystyk.
+  // Nie-admin ma scoped() do siebie, więc param i tak jest bez znaczenia.
   app.get('/api/sprzedaze/stats', requireView, async (req, res) => {
     try {
       const supabase = getClient();
-      const { data, error } = await scoped(
+      let q = scoped(
         supabase.from('wyceny').select('id,typ,created_at,kwota_sprzedazy_brutto,kwota_proponowana_brutto,paid'),
         req
       ).eq('typ', 'ZAMÓWIENIE');
+      const ownerParam = String(req.query.owner || '').trim();
+      if (ownerParam && isAdmin(req.user)) q = q.ilike('owner', ownerParam);
+      const { data, error } = await q;
       if (error) throw error;
       const rows = data || [];
       const warsaw = (d) => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Warsaw', year: 'numeric', month: '2-digit' }).format(new Date(d));

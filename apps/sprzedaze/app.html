@@ -366,11 +366,25 @@
         btn.type = 'button';
         if (title) btn.title = title;
         if (value) btn.style.setProperty('--owner-hue', String(ownerHue(value)));
-        btn.addEventListener('click', () => { ownerFilter = value; renderOwnerFilter(); renderList(); });
+        btn.addEventListener('click', () => { ownerFilter = value; renderOwnerFilter(); renderList(); loadStats(); });
         return btn;
       };
       wrap.appendChild(mk('Wszyscy', ''));
       owners.forEach((o) => wrap.appendChild(mk(ownerInitial(o), o, o)));
+    }
+
+    // Statystyki podążają za przełącznikiem właściciela: admin (Antoni) może
+    // podejrzeć statystyki Lorenzo (?owner=), Lorenzo i tak dostaje z serwera
+    // tylko swoje. Nagłówek pokazuje, czyje statystyki są na ekranie.
+    async function loadStats() {
+      try {
+        const qs = ownerFilter ? `?owner=${encodeURIComponent(ownerFilter)}` : '';
+        const res = await fetch(`${API_BASE}/api/sprzedaze/stats${qs}`);
+        const body = await res.json().catch(() => null);
+        if (res.ok && body) renderStats(body);
+        const sum = document.querySelector('#stats-panel > summary');
+        if (sum) sum.textContent = ownerFilter ? `Statystyki — ${ownerFilter}` : 'Statystyki';
+      } catch (e) { /* statystyki są opcjonalne — brak nie blokuje listy */ }
     }
 
     // ── Statystyki: liczba i suma sprzedaży, ten vs poprzedni miesiąc ────────
@@ -528,10 +542,7 @@
 
     async function load() {
       try {
-        const [listRes, statsRes] = await Promise.all([
-          fetch(`${API_BASE}/api/wyceny?typ=${encodeURIComponent('ZAMÓWIENIE')}`),
-          fetch(`${API_BASE}/api/sprzedaze/stats`),
-        ]);
+        const listRes = await fetch(`${API_BASE}/api/wyceny?typ=${encodeURIComponent('ZAMÓWIENIE')}`);
         if (listRes.status === 401) { window.location.href = `${API_BASE}/login`; return; }
         const listBody = await listRes.json();
         if (!listRes.ok) throw new Error(listBody.error || 'Błąd wczytywania');
@@ -542,8 +553,7 @@
         all.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
         renderOwnerFilter();
         renderList();
-        const statsBody = await statsRes.json().catch(() => null);
-        if (statsRes.ok && statsBody) renderStats(statsBody);
+        loadStats();
       } catch (err) {
         document.getElementById('list').innerHTML = `<p class="empty-note">Błąd wczytywania: ${err.message}</p>`;
       }
