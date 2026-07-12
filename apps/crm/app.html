@@ -417,6 +417,17 @@
 
     .summary-feedback.is-overdue { color: var(--feedback-overdue); }
 
+    .wyceny-dates {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex: 0 0 auto;
+      font-size: 0.74rem;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
     .status-wrap { position: relative; flex: 0 0 auto; }
 
     .status-tag {
@@ -491,7 +502,7 @@
       .content { padding: 1.25rem 1rem 3rem; }
       /* Zwinięty wiersz na małym ekranie: bez myślnika i daty feedbacku,
          żeby imię + telefon + status mieściły się bez ucinania. */
-      .summary-dash, .summary-feedback { display: none; }
+      .summary-dash, .summary-feedback, .wyceny-dates { display: none; }
       .summary-name { max-width: 9rem; }
     }
   </style>
@@ -562,7 +573,7 @@
 
     const NAV_SECTIONS = [
       { key: 'leady-b2c', label: 'Leady B2C' },
-      { key: 'wyceny', label: 'Wyceny' },
+      { key: 'wyceny', label: 'Wyceny B2C' },
       // Kolejne sekcje CRM (np. B2B) dochodzą tu jako kolejne wpisy.
     ].filter((s) => CRM_SHEET_LEVELS[s.key]);
 

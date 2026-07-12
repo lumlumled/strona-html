@@ -169,6 +169,28 @@ window.WycenyTab = (() => {
     return `${n.toLocaleString('pl-PL', { maximumFractionDigits: 0 })} zł`;
   }
 
+  // Data bez godziny (DD.MM.RRRR) — do zwiniętego wiersza.
+  function dateShort(value) {
+    if (!value) return '';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '';
+    const p = (x) => String(x).padStart(2, '0');
+    return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()}`;
+  }
+
+  // "Data wyceny" = created_at (Data stworzenia z arkusza). Data złożenia
+  // zamówienia celowo NIE tu — w sekcji Wyceny nie ma sensu (jest w Sprzedażach).
+  function buildDates(wycena) {
+    const wrap = h('div', 'wyceny-dates');
+    const wyc = dateShort(wycena.created_at);
+    if (wyc) {
+      const s = h('span', 'wyceny-date', `Wycena: ${wyc}`);
+      s.title = 'Data wyceny';
+      wrap.appendChild(s);
+    }
+    return wrap;
+  }
+
   function wycenaRow(wycena) {
     const details = h('details', 'lead');
     details.dataset.wycenaId = String(wycena.id);
@@ -195,7 +217,7 @@ window.WycenyTab = (() => {
     const stage = WycenaKarta.utils.stageChip(wycena.process_stage);
     rightAnchor.append(kwota, stage, buildStatusPill(wycena));
 
-    summary.append(chevron, lp, typChip, name, dash, phone, rightAnchor);
+    summary.append(chevron, lp, typChip, name, dash, phone, buildDates(wycena), rightAnchor);
     details.appendChild(summary);
 
     let bodyBuilt = false;
@@ -248,7 +270,9 @@ window.WycenyTab = (() => {
     // fetchem — renderList podmienia wiersze zachowując rozwinięte karty.
     if (!loaded) cfg.listEl.innerHTML = '<p class="empty-note">Wczytywanie…</p>';
     try {
-      const res = await fetch(`${cfg.apiBase}/api/wyceny`);
+      // Zakładka Wyceny B2C = tylko wyceny/notatki. Sprzedaże (typ
+      // ZAMÓWIENIE) mają własny panel Sprzedaże — tu ich nie ma.
+      const res = await fetch(`${cfg.apiBase}/api/wyceny?bez_typ=${encodeURIComponent('ZAMÓWIENIE')}`);
       if (res.status === 401) { window.location.href = `${cfg.apiBase}/login`; return; }
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || 'Błąd wczytywania');

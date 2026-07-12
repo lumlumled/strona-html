@@ -79,19 +79,28 @@ window.WycenaEditor = (() => {
     function render() {
       wrap.innerHTML = '';
       state.items.forEach((p, idx) => {
+        const box = h('div', 'wk-edit-item-box');
         const row = h('div', 'wk-edit-item');
 
-        if (p.image_url) {
-          const img = document.createElement('img');
-          img.className = 'wk-thumb';
-          img.style.width = '42px';
-          img.style.height = '42px';
-          img.src = p.image_url;
-          img.alt = '';
-          row.appendChild(img);
-        } else {
-          row.appendChild(h('div', 'wk-thumb-placeholder', '💡'));
+        // Miniatura (żywa — aktualizuje się po wklejeniu linku do zdjęcia).
+        const thumbSlot = h('div', 'wk-edit-thumb-slot');
+        function renderThumb() {
+          thumbSlot.innerHTML = '';
+          if (p.image_url) {
+            const img = document.createElement('img');
+            img.className = 'wk-thumb';
+            img.style.width = '42px';
+            img.style.height = '42px';
+            img.src = p.image_url;
+            img.alt = '';
+            img.addEventListener('error', () => { thumbSlot.innerHTML = ''; thumbSlot.appendChild(h('div', 'wk-thumb-placeholder', '💡')); });
+            thumbSlot.appendChild(img);
+          } else {
+            thumbSlot.appendChild(h('div', 'wk-thumb-placeholder', '💡'));
+          }
         }
+        renderThumb();
+        row.appendChild(thumbSlot);
 
         const name = input(p.name, 'Nazwa produktu');
         name.addEventListener('input', () => { p.name = name.value; onChange(); });
@@ -123,13 +132,24 @@ window.WycenaEditor = (() => {
           onChange();
         });
         row.appendChild(remove);
+        box.appendChild(row);
+
+        // Druga linia: SKU (opcjonalny) + link do zdjęcia. Pozycja z linkiem
+        // jest zapisywana do cennika przy zapisie wyceny (serwer, dedupe).
+        const extra = h('div', 'wk-edit-item-extra');
+        const sku = input(p.SKU || '', 'SKU (opcjonalny)');
+        sku.addEventListener('input', () => { p.SKU = sku.value.trim(); onChange(); });
+        const imgUrl = input(p.image_url || '', 'link do zdjęcia (https://…)');
+        imgUrl.addEventListener('input', () => { p.image_url = imgUrl.value.trim(); renderThumb(); onChange(); });
+        extra.append(sku, imgUrl);
+        box.appendChild(extra);
 
         function update() {
           total.textContent = moneyPLN(money(p.price) * (money(p.quantity) || 0));
           onChange();
         }
         update();
-        wrap.appendChild(row);
+        wrap.appendChild(box);
       });
       if (!state.items.length) wrap.appendChild(h('div', 'wk-quick-hint', 'Brak pozycji — dodaj z cennika albo własną.'));
     }
@@ -163,24 +183,27 @@ window.WycenaEditor = (() => {
     const telefon = input(src.telefon_e164, 'np. 48513141389');
     const email = input(src.email, 'adres@klienta.pl');
     const opis = input(src.opis_zamowienia, 'krótki opis (opcjonalnie)');
-    const typSel = document.createElement('select');
-    ['WYCENA', 'ZAMÓWIENIE', 'NOTATKA'].forEach((t) => {
-      const o = h('option', '', t);
-      o.value = t;
-      if ((src.typ || 'WYCENA') === t) o.selected = true;
-      typSel.appendChild(o);
-    });
+    // Komentarz do wyceny — pokazuje się przy realizacji (np. "dodaj 1 czujnik
+    // więcej"). Typ celowo usunięty: dopóki nie zrealizowana, to wycena.
+    const komentarz = document.createElement('textarea');
+    komentarz.className = 'wk-quick-textarea';
+    komentarz.rows = 2;
+    komentarz.style.minHeight = '3.2rem';
+    komentarz.placeholder = 'np. dodać 1 czujnik więcej, zapakować na prezent…';
+    komentarz.value = src.komentarz || '';
 
     const grid = h('div', 'wk-form-grid');
     grid.append(
       field('Imię i nazwisko', imie),
       field('Telefon', telefon),
       field('E-mail', email),
-      field('Typ', typSel),
     );
     const opisWrap = field('Opis', opis);
     opisWrap.style.gridColumn = '1 / -1';
     grid.appendChild(opisWrap);
+    const komWrap = field('Komentarz (widoczny przy realizacji)', komentarz);
+    komWrap.style.gridColumn = '1 / -1';
+    grid.appendChild(komWrap);
     modal.appendChild(grid);
 
     // Pozycje
@@ -234,11 +257,23 @@ window.WycenaEditor = (() => {
     summary.append(sumaRow, rabatRow, kwotaRow);
     modal.appendChild(summary);
 
-    // Rabat 24h
+    // Rabat czasowy — kwota + ile godzin ważny. Godziny liczą "ważny do" od
+    // teraz; pole "ważny do" można też nadpisać ręcznie. Pipeline faktur i tak
+    // stosuje ten rabat, dopóki termin nie minął (wyceny-pipeline.js).
     const rabat24hGrid = h('div', 'wk-form-grid');
     const rabat24hKwota = input(src.rabat24h_kwota ?? '', 'np. 100');
     rabat24hKwota.inputMode = 'decimal';
+    const rabat24hGodziny = input('24', 'np. 24', 'number');
+    rabat24hGodziny.min = '1';
+    rabat24hGodziny.step = '1';
     const rabat24hDo = input('', '', 'datetime-local');
+    const setDoFromHours = () => {
+      const hrs = money(rabat24hGodziny.value);
+      if (!hrs) return;
+      const d = new Date(Date.now() + hrs * 60 * 60 * 1000);
+      const p = (x) => String(x).padStart(2, '0');
+      rabat24hDo.value = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+    };
     if (src.rabat24h_wazny_do) {
       const d = new Date(src.rabat24h_wazny_do);
       if (!Number.isNaN(d.getTime())) {
@@ -246,14 +281,13 @@ window.WycenaEditor = (() => {
         rabat24hDo.value = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
       }
     }
-    rabat24hKwota.addEventListener('input', () => {
-      if (rabat24hKwota.value && !rabat24hDo.value) {
-        const d = new Date(Date.now() + 24 * 60 * 60 * 1000);
-        const p = (x) => String(x).padStart(2, '0');
-        rabat24hDo.value = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-      }
-    });
-    rabat24hGrid.append(field('Rabat 24h — kwota (zł)', rabat24hKwota), field('Rabat 24h — ważny do', rabat24hDo));
+    rabat24hGodziny.addEventListener('input', () => { if (rabat24hKwota.value) setDoFromHours(); });
+    rabat24hKwota.addEventListener('input', () => { if (rabat24hKwota.value && !rabat24hDo.value) setDoFromHours(); });
+    rabat24hGrid.append(
+      field('Rabat czasowy — kwota (zł)', rabat24hKwota),
+      field('Ważny przez (godziny)', rabat24hGodziny),
+      field('Ważny do', rabat24hDo),
+    );
     modal.appendChild(rabat24hGrid);
 
     function refreshTotals() {
@@ -275,11 +309,11 @@ window.WycenaEditor = (() => {
     save.addEventListener('click', async () => {
       errEl.textContent = '';
       const body = {
-        typ: typSel.value,
         imie_nazwisko: imie.value.trim() || null,
         telefon_e164: telefon.value.replace(/\D/g, '') || null,
         email: email.value.trim().toLowerCase() || null,
         opis_zamowienia: opis.value.trim() || null,
+        komentarz: komentarz.value.trim() || null,
         items: itemsEd.getItems(),
         kwota_proponowana_brutto: kwotaInput.value ? money(kwotaInput.value) : null,
         rabat24h_kwota: rabat24hKwota.value ? money(rabat24hKwota.value) : null,

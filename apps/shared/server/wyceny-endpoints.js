@@ -53,6 +53,40 @@ function decorate(wycena) {
   };
 }
 
+// Pozycja z linkiem do zdjęcia trafia do cennika (baza SKU) — decyzja
+// Antoniego: własna pozycja z linkiem dopisuje się do bazy. Idempotentne i
+// nienadpisujące: znany SKU zostawiamy w spokoju (nie psujemy ceny w cenniku),
+// brak SKU dopasowujemy po nazwie, a dopiero nowość dostaje wygenerowany SKU.
+async function syncItemsToCennik(supabase, items) {
+  if (!Array.isArray(items) || !items.length) return items;
+  for (const p of items) {
+    const nazwa = String(p.name || '').trim();
+    const image = String(p.image_url || '').trim();
+    if (!nazwa || !image) continue; // tylko pozycje z linkiem do zdjęcia
+    let sku = String(p.SKU || '').trim();
+    if (sku) {
+      const { data: ex } = await supabase.from('sku_cennik').select('sku').eq('sku', sku).limit(1);
+      if (ex && ex.length) continue; // znany produkt — nie nadpisujemy cennika
+    } else {
+      const { data: ex } = await supabase.from('sku_cennik').select('sku').ilike('nazwa', nazwa).limit(1);
+      if (ex && ex.length) { p.SKU = ex[0].sku; continue; }
+      sku = `C-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`.toUpperCase();
+      p.SKU = sku;
+    }
+    const { error } = await supabase.from('sku_cennik').insert({
+      sku,
+      nazwa,
+      price_brutto: p.price !== undefined && p.price !== '' ? num(p.price) : null,
+      vat: Number.parseInt(p.VAT, 10) || 23,
+      unit: p.unit || 'szt',
+      image_url: image,
+      active: true,
+    });
+    if (error) console.error(`Cennik insert (${sku}) błąd:`, error.message);
+  }
+  return items;
+}
+
 async function logEvent(supabase, wycenaId, kind, payload) {
   const { error } = await supabase
     .from('wyceny_events')
@@ -86,10 +120,11 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
     return query.ilike('owner', String(req.user.name || '').trim());
   }
 
-  async function fetchList(req, { typ } = {}) {
+  async function fetchList(req, { typ, excludeTyp } = {}) {
     const supabase = getClient();
     let q = scoped(supabase.from('wyceny').select('*'), req).order('id', { ascending: false });
     if (typ) q = q.eq('typ', typ);
+    if (excludeTyp) q = q.neq('typ', excludeTyp);
     const { data: wyceny, error } = await q;
     if (error) throw error;
 
@@ -122,12 +157,16 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
     }));
   }
 
-  // GET /api/wyceny[?typ=ZAMÓWIENIE] — lista z przesyłkami/fakturami.
+  // GET /api/wyceny[?typ=ZAMÓWIENIE][?bez_typ=ZAMÓWIENIE] — lista z
+  // przesyłkami/fakturami. `bez_typ` wyklucza dany typ (zakładka Wyceny B2C
+  // woła ?bez_typ=ZAMÓWIENIE — sprzedaże mają własny panel Sprzedaże).
   app.get('/api/wyceny', requireView, async (req, res) => {
     try {
       const typ = WYCENY_TYPY.includes(req.query.typ) ? req.query.typ : undefined;
-      const data = await fetchList(req, { typ });
-      res.json({ data, statusy: WYCENY_STATUSY, typy: WYCENY_TYPY, editableFields: EDITABLE_WYCENA_FIELDS });
+      const excludeTyp = WYCENY_TYPY.includes(req.query.bez_typ) ? req.query.bez_typ : undefined;
+      const data = await fetchList(req, { typ, excludeTyp });
+      const typy = excludeTyp ? WYCENY_TYPY.filter((t) => t !== excludeTyp) : WYCENY_TYPY;
+      res.json({ data, statusy: WYCENY_STATUSY, typy, editableFields: EDITABLE_WYCENA_FIELDS });
     } catch (err) {
       handleError(res, err, 502);
     }
@@ -219,6 +258,7 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
         return res.status(400).json({ error: 'Wycena wymaga telefonu lub e-maila (albo podpięcia pod leada)' });
       }
       if (patch.telefon_e164) patch.telefon_digits = String(patch.telefon_e164).replace(/\D/g, '').replace(/^48/, '');
+      if (patch.items) await syncItemsToCennik(supabase, patch.items);
       const { data: idData, error: idErr } = await supabase.rpc('wyceny_next_id');
       if (idErr) throw idErr;
       const id = idData;
@@ -255,6 +295,7 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       }
       if (patch.typ && !WYCENY_TYPY.includes(patch.typ)) delete patch.typ;
       if (!Object.keys(patch).length) return res.status(400).json({ error: 'Brak zmian do zapisania' });
+      if (patch.items) await syncItemsToCennik(supabase, patch.items);
       patch.updated_at = new Date().toISOString();
 
       const { data, error } = await scoped(supabase.from('wyceny').update(patch), req)
@@ -357,6 +398,7 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       EDITABLE_WYCENA_FIELDS.forEach((f) => { if (row[f] !== undefined) insert[f] = row[f]; });
       insert.status = row.status || 'Open';
       insert.history_log = row.history_log || null;
+      if (insert.items) await syncItemsToCennik(supabase, insert.items);
       if (insert.telefon_e164) insert.telefon_digits = String(insert.telefon_e164).replace(/\D/g, '').replace(/^48/, '');
       const { data, error } = await supabase.from('wyceny').insert(insert).select('*');
       if (error) throw error;

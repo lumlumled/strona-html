@@ -132,7 +132,36 @@
     .toolbar button:hover { background: var(--accent-soft); }
     .count-badge { font-size: 0.85rem; color: var(--text-secondary); margin-left: auto; }
 
-    #list { display: flex; flex-direction: column; gap: 0.4rem; }
+    #list { display: flex; flex-direction: column; gap: 1.5rem; }
+
+    .sale-segment { display: flex; flex-direction: column; gap: 0.4rem; }
+
+    .segment-head {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0 0.15rem 0.15rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 0.25rem;
+    }
+
+    .segment-title {
+      font-size: 0.82rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+    }
+
+    .segment-count {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      background: var(--accent-soft);
+      border-radius: 999px;
+      padding: 0.05rem 0.5rem;
+      font-variant-numeric: tabular-nums;
+    }
 
     .sale {
       background: var(--surface-1);
@@ -320,18 +349,50 @@
       return hay.includes(q);
     }
 
+    // Segmenty sprzedaży: Do wysłania (jeszcze nienadane) → Wysłane (nadane /
+    // dostarczone) → Zamknięte (status Closed). Docelowo "wysłane→dostarczone"
+    // ma sprawdzać się samo z trackingu; póki co dostarczone = wysłane.
+    function bucketOf(w) {
+      if (String(w.status || '').toLowerCase() === 'closed') return 'zamkniete';
+      const shipped = ['SHIPPED', 'DELIVERED', 'INVOICED'].includes(w.process_stage)
+        || (w._shipments || []).some((s) => ['sent', 'delivered'].includes(String(s.status)) || s.delivered_at || s.nadana_at);
+      return shipped ? 'wyslane' : 'dowyslania';
+    }
+
+    const SEGMENTS = [
+      ['dowyslania', 'Do wysłania'],
+      ['wyslane', 'Wysłane'],
+      ['zamkniete', 'Zamknięte'],
+    ];
+
     function renderList() {
       const openIds = new Set([...document.querySelectorAll('#list details[open]')].map((d) => d.dataset.wycenaId));
       const list = document.getElementById('list');
       const filtered = all.filter(matches);
       list.innerHTML = '';
-      filtered.forEach((w) => {
-        const row = saleRow(w);
-        if (openIds.has(String(w.id))) row.open = true;
-        list.appendChild(row);
+
+      const groups = { dowyslania: [], wyslane: [], zamkniete: [] };
+      filtered.forEach((w) => { groups[bucketOf(w)].push(w); });
+
+      SEGMENTS.forEach(([key, label]) => {
+        const rows = groups[key];
+        const section = h('section', 'sale-segment');
+        const head = h('div', 'segment-head');
+        head.append(h('span', 'segment-title', label), h('span', 'segment-count', String(rows.length)));
+        section.appendChild(head);
+        if (!rows.length) {
+          section.appendChild(h('p', 'empty-note', 'Nic tutaj.'));
+        } else {
+          rows.forEach((w) => {
+            const row = saleRow(w);
+            if (openIds.has(String(w.id))) row.open = true;
+            section.appendChild(row);
+          });
+        }
+        list.appendChild(section);
       });
+
       document.getElementById('count').textContent = `${filtered.length} / ${all.length} sprzedaży`;
-      if (!filtered.length) list.innerHTML = '<p class="empty-note">Brak sprzedaży dla tego filtra.</p>';
     }
 
     async function load() {

@@ -217,7 +217,7 @@ window.WycenaKarta = (() => {
   }
 
   // ── Sekcja: kontakt + dostawa/płatność ─────────────────────────────────────
-  function buildInfoGrid(wycena) {
+  function buildInfoGrid(wycena, opts = {}) {
     const grid = el('div', 'wk-grid');
 
     const kontakt = el('div');
@@ -231,6 +231,11 @@ window.WycenaKarta = (() => {
     if (wycena.opis_zamowienia) kv1.appendChild(kvRow('Opis', wycena.opis_zamowienia));
     if (wycena.komentarz) kv1.appendChild(kvRow('Komentarz', wycena.komentarz));
     if (wycena.partner) kv1.appendChild(kvRow('Partner', wycena.partner));
+    kv1.appendChild(kvRow('Data wyceny', formatDT(wycena.created_at), { muted: true }));
+    // Data złożenia zamówienia tylko w panelu Sprzedaże — w Wycenach zbędna.
+    if (opts.mode === 'sprzedaze' && wycena.form_submitted_at) {
+      kv1.appendChild(kvRow('Data złożenia zamówienia', formatDT(wycena.form_submitted_at), { muted: true }));
+    }
     kontakt.appendChild(kv1);
     grid.appendChild(kontakt);
 
@@ -325,6 +330,14 @@ window.WycenaKarta = (() => {
       title.appendChild(paidChip);
     }
     wrap.appendChild(title);
+
+    // Komentarz do wyceny widoczny przy realizacji (np. "dodaj 1 czujnik
+    // więcej") — pakujący/realizujący musi go zobaczyć.
+    if (wycena.komentarz && String(wycena.komentarz).trim()) {
+      const note = el('div', 'wk-komentarz');
+      note.append(el('span', 'wk-komentarz-ico', '📝'), el('span', '', String(wycena.komentarz).trim()));
+      wrap.appendChild(note);
+    }
 
     const list = el('div', 'wk-pipeline');
 
@@ -494,7 +507,7 @@ window.WycenaKarta = (() => {
   function buildBody(wycena, opts = {}) {
     const body = el('div', 'wk-body');
     body.appendChild(buildProducts(wycena));
-    body.appendChild(buildInfoGrid(wycena));
+    body.appendChild(buildInfoGrid(wycena, opts));
     body.appendChild(buildFormSection(wycena, opts));
     body.appendChild(buildPipeline(wycena, opts));
     const history = buildHistory(wycena);
