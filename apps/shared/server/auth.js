@@ -66,6 +66,27 @@ function verifyPassword(password, stored) {
   return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(hash));
 }
 
+// Hasło może być nadpisane z env per użytkownik: LOGIN_PASSWORD_<LOGIN>
+// (login = kolumna `name`, wielkimi literami, bez znaków spoza A-Z0-9). Gdy taka
+// zmienna istnieje, wygrywa nad password_hash w bazie — dzięki temu Antoni może
+// zmienić hasło komuś (np. Lorenzo) samą edycją env na Vercelu, bez ruszania
+// bazy. Puste/brak zmiennej = normalna weryfikacja po haszu.
+function envPasswordKey(login) {
+  const slug = String(login || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return slug ? `LOGIN_PASSWORD_${slug}` : null;
+}
+
+function checkPassword(password, user) {
+  const key = envPasswordKey(user && user.name);
+  const envPass = key ? process.env[key] : null;
+  if (envPass) {
+    const a = Buffer.from(String(password));
+    const b = Buffer.from(String(envPass));
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  }
+  return verifyPassword(password, user && user.password_hash);
+}
+
 // ── Uprawnienia ──────────────────────────────────────────────────────────────
 
 function isAdmin(user) {
@@ -239,13 +260,19 @@ function createAuth({ getClient, panelKey = null, publicPrefixes = [], loginTitl
     return user;
   }
 
-  async function findUserByEmail(email) {
-    const { data, error } = await getClient()
-      .from(USERS_TABLE)
-      .select('*')
-      .ilike('email', String(email || '').trim())
-      .limit(1);
+  // Logowanie po LOGINIE (kolumna `name`, np. "Antoni"/"Lorenzo"). Dla
+  // wygody wpisania starego adresu — fallback po `email`. Oba jako wartość
+  // parametryzowana (ilike), więc bezpieczne na wstrzyknięcie filtra.
+  async function findUserByLogin(login) {
+    const q = String(login || '').trim();
+    if (!q) return null;
+    const client = getClient();
+    let { data, error } = await client.from(USERS_TABLE).select('*').ilike('name', q).limit(1);
     if (error) throw error;
+    if (!data || !data.length) {
+      ({ data, error } = await client.from(USERS_TABLE).select('*').ilike('email', q).limit(1));
+      if (error) throw error;
+    }
     return (data && data[0]) || null;
   }
 
@@ -263,10 +290,10 @@ function createAuth({ getClient, panelKey = null, publicPrefixes = [], loginTitl
 
   async function loginSubmit(req, res) {
     try {
-      const email = String(req.body?.email || '').trim();
+      const login = String(req.body?.login || req.body?.email || '').trim();
       const password = String(req.body?.password || '');
-      const user = email && password ? await findUserByEmail(email) : null;
-      if (user && user.active !== false && verifyPassword(password, user.password_hash)) {
+      const user = login && password ? await findUserByLogin(login) : null;
+      if (user && user.active !== false && checkPassword(password, user)) {
         setSessionCookie(res, createSessionToken(user.id));
         return res.redirect(`${req.baseUrl}/`);
       }
