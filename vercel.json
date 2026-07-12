@@ -24,6 +24,10 @@
     "api/sprzedaze.js": {
       "includeFiles": "{apps/sprzedaze/app.html,apps/sprzedaze/assets/**,apps/shared/**}",
       "maxDuration": 180
+    },
+    "api/formularz.js": {
+      "includeFiles": "{apps/formularz/**,apps/shared/**}",
+      "maxDuration": 180
     }
   },
   "crons": [
@@ -46,6 +50,7 @@
     { "source": "/crm/:path*", "destination": "/api/crm" },
     { "source": "/sprzedaze/", "destination": "/api/sprzedaze" },
     { "source": "/sprzedaze/:path*", "destination": "/api/sprzedaze" },
+    { "source": "/formularz/:path*", "destination": "/api/formularz" },
     { "source": "/wiadomosci/", "destination": "/api/komunikator" },
     { "source": "/wiadomosci/:path*", "destination": "/api/komunikator" },
     { "source": "/wiedza/", "destination": "/api/wiedza" },

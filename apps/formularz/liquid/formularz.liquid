@@ -1,0 +1,2619 @@
+<section class="lumlum-orderfill" data-lumlum-orderfill>
+  <div class="lumlum-orderfill__wrap">
+    <!-- Alerts -->
+    <div class="lumlum-orderfill__alerts" aria-live="polite" aria-atomic="true"></div>
+
+    <!-- Layout -->
+    <div class="lumlum-orderfill__container">
+      <div class="lumlum-orderfill__grid">
+
+        <!-- LEFT: Form -->
+        <div class="lumlum-orderfill__col lumlum-orderfill__col--left">
+
+          <!-- Mobile: summary accordion (collapsed by default) -->
+          <div class="lumlum-orderfill__mobile-summary" data-mobile-summary>
+            <button
+              class="lumlum-orderfill__accordion-btn"
+              type="button"
+              aria-expanded="false"
+              aria-controls="lumlum-orderfill-summary-panel"
+            >
+              <div class="lumlum-orderfill__accordion-title">Podsumowanie zamówienia</div>
+
+              <div class="lumlum-orderfill__accordion-right">
+                <div class="lumlum-orderfill__accordion-total" data-total-inline>—</div>
+                <span class="lumlum-orderfill__chev" aria-hidden="true"></span>
+              </div>
+            </button>
+
+            <div class="lumlum-orderfill__accordion-panel is-hidden" id="lumlum-orderfill-summary-panel">
+              <div class="lumlum-orderfill__summary-card lumlum-orderfill__summary-card--mobile" data-summary-card-mobile></div>
+            </div>
+          </div>
+
+          <div class="lumlum-orderfill__form-card is-hidden" data-form-card>
+            <div class="lumlum-orderfill__section-head">
+              <div class="lumlum-title-sub" role="heading" aria-level="2">Uzupełnij dane do zamówienia</div>
+              <div class="lumlum-orderfill__hint" data-order-id-line>—</div>
+            </div>
+
+            <form class="lumlum-orderfill__form" novalidate data-form>
+
+              <!-- Dane klienta -->
+              <div class="lumlum-orderfill__block">
+                <div class="lumlum-orderfill__block-title" role="heading" aria-level="3">Dane klienta</div>
+
+                <div class="lumlum-orderfill__row lumlum-orderfill__row--2">
+                  <div class="lumlum-orderfill__field">
+                    <label class="lumlum-orderfill__label" for="lumlum-first-name">Imię <span class="lumlum-orderfill__req" aria-hidden="true">*</span></label>
+                    <input class="lumlum-orderfill__input" id="lumlum-first-name" name="first_name" autocomplete="given-name" />
+                    <div class="lumlum-orderfill__field-error" data-err-for="first_name"></div>
+                  </div>
+                  <div class="lumlum-orderfill__field">
+                    <label class="lumlum-orderfill__label" for="lumlum-last-name">Nazwisko <span class="lumlum-orderfill__req" aria-hidden="true">*</span></label>
+                    <input class="lumlum-orderfill__input" id="lumlum-last-name" name="last_name" autocomplete="family-name" />
+                    <div class="lumlum-orderfill__field-error" data-err-for="last_name"></div>
+                  </div>
+                </div>
+
+<div class="lumlum-orderfill__row lumlum-orderfill__row--2">
+  <div class="lumlum-orderfill__field">
+    <label class="lumlum-orderfill__label" for="lumlum-email">
+      Email <span class="lumlum-orderfill__req" aria-hidden="true">*</span>
+    </label>
+<input
+  class="lumlum-orderfill__input"
+  id="lumlum-email"
+  name="email"
+  type="email"
+  autocomplete="email"
+  inputmode="email"
+  placeholder="np. kontakt@lumlum.co"
+/>
+    <div class="lumlum-orderfill__field-error" data-err-for="email"></div>
+  </div>
+
+                  <!-- Telefon: prefix + numer (osobne parametry) -->
+                  <div class="lumlum-orderfill__field">
+                    <label class="lumlum-orderfill__label" for="lumlum-phone-number">Telefon <span class="lumlum-orderfill__req" aria-hidden="true">*</span></label>
+
+                    <div class="lumlum-orderfill__phone">
+                      <select
+                        class="lumlum-orderfill__input lumlum-orderfill__select lumlum-orderfill__phone-prefix"
+                        id="lumlum-phone-prefix"
+                        name="phone_prefix"
+                        autocomplete="tel-country-code"
+                      >
+                        <option value="+48" selected>+48</option>
+                        <option value="+49">+49</option>
+                        <option value="+420">+420</option>
+                        <option value="+421">+421</option>
+                        <option value="+43">+43</option>
+                        <option value="+31">+31</option>
+                        <option value="+32">+32</option>
+                        <option value="+33">+33</option>
+                        <option value="+46">+46</option>
+                        <option value="+47">+47</option>
+                        <option value="+45">+45</option>
+                        <option value="+358">+358</option>
+                        <option value="+353">+353</option>
+                        <option value="+39">+39</option>
+                        <option value="+34">+34</option>
+                        <option value="+351">+351</option>
+                        <option value="+41">+41</option>
+                        <option value="+44">+44</option>
+                        <option value="+1">+1</option>
+                      </select>
+
+<input
+  class="lumlum-orderfill__input lumlum-orderfill__phone-number"
+  id="lumlum-phone-number"
+  name="phone_number"
+  type="tel"
+  autocomplete="tel-national"
+  inputmode="numeric"
+  placeholder="np. 606463940"
+  maxlength="15"
+/>
+                    </div>
+
+                    <div class="lumlum-orderfill__field-error" data-err-for="phone_number"></div>
+                  </div>
+                </div>
+
+              
+              </div>
+
+              <!-- Adres wysyłki -->
+              <div class="lumlum-orderfill__block">
+                <div class="lumlum-orderfill__block-title" role="heading" aria-level="3">Adres wysyłki</div>
+
+                <div class="lumlum-orderfill__row lumlum-orderfill__row--address">
+                  <div class="lumlum-orderfill__field lumlum-orderfill__field--street">
+                    <label class="lumlum-orderfill__label" for="lumlum-ship-street">Ulica <span class="lumlum-orderfill__req" aria-hidden="true">*</span></label>
+                    <input class="lumlum-orderfill__input" id="lumlum-ship-street" name="ship_street" autocomplete="address-line1" />
+                    <div class="lumlum-orderfill__field-error" data-err-for="ship_street"></div>
+                  </div>
+
+                  <div class="lumlum-orderfill__field lumlum-orderfill__field--house">
+                    <label class="lumlum-orderfill__label" for="lumlum-ship-house">Nr domu <span class="lumlum-orderfill__req" aria-hidden="true">*</span></label>
+                    <input class="lumlum-orderfill__input" id="lumlum-ship-house" name="ship_house_no" />
+                    <div class="lumlum-orderfill__field-error" data-err-for="ship_house_no"></div>
+                  </div>
+
+                  <div class="lumlum-orderfill__field lumlum-orderfill__field--flat">
+                    <label class="lumlum-orderfill__label" for="lumlum-ship-flat">Nr lokalu</label>
+                    <input class="lumlum-orderfill__input" id="lumlum-ship-flat" name="ship_flat_no" />
+                    <div class="lumlum-orderfill__field-error" data-err-for="ship_flat_no"></div>
+                  </div>
+                </div>
+
+                <div class="lumlum-orderfill__row lumlum-orderfill__row--3">
+                  <div class="lumlum-orderfill__field">
+                    <label class="lumlum-orderfill__label" for="lumlum-ship-postcode">Kod pocztowy <span class="lumlum-orderfill__req" aria-hidden="true">*</span></label>
+                    <input class="lumlum-orderfill__input" id="lumlum-ship-postcode" name="ship_postcode" autocomplete="postal-code" />
+                    <div class="lumlum-orderfill__field-error" data-err-for="ship_postcode"></div>
+                  </div>
+                  <div class="lumlum-orderfill__field">
+                    <label class="lumlum-orderfill__label" for="lumlum-ship-city">Miasto <span class="lumlum-orderfill__req" aria-hidden="true">*</span></label>
+                    <input class="lumlum-orderfill__input" id="lumlum-ship-city" name="ship_city" autocomplete="address-level2" />
+                    <div class="lumlum-orderfill__field-error" data-err-for="ship_city"></div>
+                  </div>
+                  <div class="lumlum-orderfill__field">
+                    <label class="lumlum-orderfill__label" for="lumlum-ship-country">Kraj <span class="lumlum-orderfill__req" aria-hidden="true">*</span></label>
+                    <select class="lumlum-orderfill__input lumlum-orderfill__select" id="lumlum-ship-country" name="ship_country" autocomplete="country">
+                      <option value="PL">PL</option>
+                      <option value="DE">DE</option>
+                      <option value="CZ">CZ</option>
+                      <option value="SK">SK</option>
+                      <option value="AT">AT</option>
+                      <option value="NL">NL</option>
+                      <option value="BE">BE</option>
+                      <option value="FR">FR</option>
+                      <option value="SE">SE</option>
+                      <option value="NO">NO</option>
+                      <option value="DK">DK</option>
+                      <option value="FI">FI</option>
+                      <option value="IE">IE</option>
+                      <option value="IT">IT</option>
+                      <option value="ES">ES</option>
+                      <option value="PT">PT</option>
+                      <option value="CH">CH</option>
+                      <option value="GB">GB</option>
+                      <option value="US">US</option>
+                      <option value="OTHER">Inny</option>
+                    </select>
+                    <div class="lumlum-orderfill__field-error" data-err-for="ship_country"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Metoda dostawy -->
+              <div class="lumlum-orderfill__block">
+                <div class="lumlum-orderfill__block-title" role="heading" aria-level="3">Metoda dostawy</div>
+                <div class="lumlum-orderfill__choice">
+                  <label class="lumlum-orderfill__radio">
+                    <input type="radio" name="delivery_method" value="COURIER" />
+                    <span class="lumlum-orderfill__radio-ui" aria-hidden="true"></span>
+                    <span class="lumlum-orderfill__radio-text">Kurier InPost</span>
+                  </label>
+                  <label class="lumlum-orderfill__radio">
+                    <input type="radio" name="delivery_method" value="INPOST_LOCKER" />
+                    <span class="lumlum-orderfill__radio-ui" aria-hidden="true"></span>
+                    <span class="lumlum-orderfill__radio-text">Paczkomat</span>
+                  </label>
+                </div>
+                <div class="lumlum-orderfill__field-error" data-err-for="delivery_method"></div>
+
+<div class="lumlum-orderfill__field lumlum-orderfill__locker is-hidden" data-locker-wrap>
+  <div class="lumlum-orderfill__label">
+    Wybierz paczkomat <span class="lumlum-orderfill__req" aria-hidden="true">*</span>
+  </div>
+
+<input type="hidden" name="punkt_odbioru_ID" id="lumlum-locker-id" />
+<input type="hidden" name="punkt_odbioru_adres" id="lumlum-locker-adres" />
+
+<!-- opcjonalnie legacy, jeśli Make jeszcze tego używa -->
+<input type="hidden" name="punkt_odbioru" id="lumlum-locker-legacy" />
+
+
+  <!-- STAN: wybrane -->
+  <div class="lumlum-locker-selected is-hidden" data-locker-selected>
+    <div class="lumlum-locker-bubble" data-locker-bubble>
+      <div class="lumlum-locker-bubble__title">Wybrany paczkomat</div>
+      <div class="lumlum-locker-bubble__value" data-locker-value>—</div>
+    </div>
+
+    <button class="lumlum-locker-change" type="button" data-locker-change>
+      Zmień
+    </button>
+  </div>
+
+  <!-- STAN: wybieranie -->
+  <div class="lumlum-locker-picker" data-locker-picker>
+    <div class="lumlum-geowidget-wrap">
+      <inpost-geowidget
+        id="lumlum-geowidget"
+        onpoint="lumlumOnPointSelect"
+        token="eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJzQlpXVzFNZzVlQnpDYU1XU3JvTlBjRWFveFpXcW9Ua2FuZVB3X291LWxvIn0.eyJleHAiOjIwODU1OTcyMzYsImlhdCI6MTc3MDIzNzIzNiwianRpIjoiMzc1YmRkZTUtMmM0ZS00NmJhLWJkZjQtODA4Y2MzNTJkZmU1IiwiaXNzIjoiaHR0cHM6Ly9sb2dpbi5pbnBvc3QucGwvYXV0aC9yZWFsbXMvZXh0ZXJuYWwiLCJzdWIiOiJmOjEyNDc1MDUxLTFjMDMtNGU1OS1iYTBjLTJiNDU2OTVlZjUzNTpDNkVwdlJLVDVpLVoxckM1VVlKcTZoV21xaUZDREsyNjNVa0hOZ1dUOTZRIiwidHlwIjoiQmVhcmVyIiwiYXpwIjoic2hpcHgiLCJzZXNzaW9uX3N0YXRlIjoiYWMxY2FkYzAtZWVmYi00N2JiLTkyNDMtZWRmZGU3Nzk0YjUxIiwic2NvcGUiOiJvcGVuaWQgYXBpOmFwaXBvaW50cyIsInNpZCI6ImFjMWNhZGMwLWVlZmItNDdiYi05MjQzLWVkZmRlNzc5NGI1MSIsImFsbG93ZWRfcmVmZXJyZXJzIjoibHVtbHVtLmNvIiwidXVpZCI6IjFhNDU2MjAxLWQ3MTYtNDZmYi05NTg4LTQxOTFmNGU4ZGZjMyJ9.h-WdDUkcCF3aZO0d_KWwpjZh-AqGuTHnMIgo1-wFNGQ6T1GO1ggoHg7gZ_bcyvdliCPimNYcm_hJfcNYvdElzDNWemWq5WqCJF5q3yHzhqUjsRtlTTiOrMNkHdVwNQ7JUtoZQSwx5v0boA0F1sboALPdXF9cbUXIbXhk641MujCnYWD5he-t4iJtFILH_esHjRgRXsuxUX9-rkS7yJs0HBTBOTGbQsngLBRskY8KkLvZqc7b1JjLHvw0jm1EditJoUxDY9oV2m5znTiBon8z57CTM7nahUhGkjL3pl8nSrHIVUznhO7kMQZQVsKRDyWhAKdV5l7GiJpWzMeE0UmrBg"
+        language="pl"
+        config="parcelcollect"
+      ></inpost-geowidget>
+    </div>
+  </div>
+
+  <div class="lumlum-orderfill__field-error" data-err-for="punkt_odbioru_ID"></div>
+
+</div>
+
+              </div>
+
+              <!-- Metoda płatności -->
+              <div class="lumlum-orderfill__block">
+                <div class="lumlum-orderfill__block-title" role="heading" aria-level="3">Metoda płatności</div>
+                <div class="lumlum-orderfill__choice">
+                  <label class="lumlum-orderfill__radio">
+                    <input type="radio" name="payment_method" value="transfer" />
+                    <span class="lumlum-orderfill__radio-ui" aria-hidden="true"></span>
+                    <span class="lumlum-orderfill__radio-text">Blik/Przelew</span>
+                  </label>
+                  <label class="lumlum-orderfill__radio">
+                    <input type="radio" name="payment_method" value="cod" />
+                    <span class="lumlum-orderfill__radio-ui" aria-hidden="true"></span>
+                    <span class="lumlum-orderfill__radio-text">Pobranie</span>
+                  </label>
+                </div>
+                <div class="lumlum-orderfill__field-error" data-err-for="payment_method"></div>
+              </div>
+
+<!-- Faktura -->
+<div class="lumlum-orderfill__block">
+  <div class="lumlum-orderfill__block-title" role="heading" aria-level="3">Faktura</div>
+
+  <!-- Faktura na firmę -->
+  <label class="lumlum-orderfill__check">
+    <input type="checkbox" name="invoice_enabled" value="1" />
+    <span class="lumlum-orderfill__check-ui" aria-hidden="true"></span>
+    <span class="lumlum-orderfill__check-text">Faktura na firmę</span>
+  </label>
+
+<div class="lumlum-orderfill__invoice is-hidden" data-invoice-company-wrap>
+  <div class="lumlum-orderfill__row lumlum-orderfill__row--2">
+    <div class="lumlum-orderfill__field">
+      <label class="lumlum-orderfill__label" for="lumlum-inv-nip">NIP <span class="lumlum-orderfill__req" aria-hidden="true">*</span></label>
+      <input class="lumlum-orderfill__input" id="lumlum-inv-nip" name="invoice_company_nip" inputmode="numeric" />
+      <div class="lumlum-orderfill__field-error" data-err-for="invoice_company_nip"></div>
+    </div>
+
+    <div class="lumlum-orderfill__field">
+      <label class="lumlum-orderfill__label" for="lumlum-inv-name">Nazwa firmy <span class="lumlum-orderfill__req" aria-hidden="true">*</span></label>
+      <input class="lumlum-orderfill__input" id="lumlum-inv-name" name="invoice_company_name" />
+      <div class="lumlum-orderfill__field-error" data-err-for="invoice_company_name"></div>
+    </div>
+  </div>
+
+  <!-- Przycisk: wklej adres dostawy -->
+  <button
+    type="button"
+    class="lumlum-locker-change"
+    style="margin-top:10px;"
+    data-copy-ship-to-inv-company
+  >
+    Wklej adres dostawy
+  </button>
+
+  <!-- Ostrzeżenie: tylko gdy ktoś użył "wklej adres dostawy" -->
+  <div class="lumlum-orderfill__inv-warning is-hidden" data-inv-ship-warning style="margin-top:10px;">
+    Uwaga: zmieniłeś adres dostawy po wklejeniu. Sprawdź, czy adres firmy na fakturze nadal ma być taki sam jak dostawa.
+  </div>
+
+  <!-- Adres firmy: jak adres wysyłki -->
+  <div class="lumlum-orderfill__row lumlum-orderfill__row--address" style="margin-top:10px;">
+    <div class="lumlum-orderfill__field lumlum-orderfill__field--street">
+      <label class="lumlum-orderfill__label" for="lumlum-inv-c-street">Ulica <span class="lumlum-orderfill__req" aria-hidden="true">*</span></label>
+      <input class="lumlum-orderfill__input" id="lumlum-inv-c-street" name="invoice_company_street" autocomplete="address-line1" />
+      <div class="lumlum-orderfill__field-error" data-err-for="invoice_company_street"></div>
+    </div>
+
+    <div class="lumlum-orderfill__field lumlum-orderfill__field--house">
+      <label class="lumlum-orderfill__label" for="lumlum-inv-c-house">Nr domu <span class="lumlum-orderfill__req" aria-hidden="true">*</span></label>
+      <input class="lumlum-orderfill__input" id="lumlum-inv-c-house" name="invoice_company_house_no" />
+      <div class="lumlum-orderfill__field-error" data-err-for="invoice_company_house_no"></div>
+    </div>
+
+    <div class="lumlum-orderfill__field lumlum-orderfill__field--flat">
+      <label class="lumlum-orderfill__label" for="lumlum-inv-c-flat">Nr lokalu</label>
+      <input class="lumlum-orderfill__input" id="lumlum-inv-c-flat" name="invoice_company_flat_no" />
+      <div class="lumlum-orderfill__field-error" data-err-for="invoice_company_flat_no"></div>
+    </div>
+  </div>
+
+  <div class="lumlum-orderfill__row lumlum-orderfill__row--3">
+    <div class="lumlum-orderfill__field">
+      <label class="lumlum-orderfill__label" for="lumlum-inv-c-postcode">Kod pocztowy <span class="lumlum-orderfill__req" aria-hidden="true">*</span></label>
+      <input class="lumlum-orderfill__input" id="lumlum-inv-c-postcode" name="invoice_company_postcode" autocomplete="postal-code" />
+      <div class="lumlum-orderfill__field-error" data-err-for="invoice_company_postcode"></div>
+    </div>
+
+    <div class="lumlum-orderfill__field">
+      <label class="lumlum-orderfill__label" for="lumlum-inv-c-city">Miasto <span class="lumlum-orderfill__req" aria-hidden="true">*</span></label>
+      <input class="lumlum-orderfill__input" id="lumlum-inv-c-city" name="invoice_company_city" autocomplete="address-level2" />
+      <div class="lumlum-orderfill__field-error" data-err-for="invoice_company_city"></div>
+    </div>
+
+    <div class="lumlum-orderfill__field">
+      <label class="lumlum-orderfill__label" for="lumlum-inv-c-country">Kraj <span class="lumlum-orderfill__req" aria-hidden="true">*</span></label>
+      <select class="lumlum-orderfill__input lumlum-orderfill__select" id="lumlum-inv-c-country" name="invoice_company_country" autocomplete="country">
+        <option value="PL">PL</option>
+        <option value="DE">DE</option>
+        <option value="CZ">CZ</option>
+        <option value="SK">SK</option>
+        <option value="AT">AT</option>
+        <option value="NL">NL</option>
+        <option value="BE">BE</option>
+        <option value="FR">FR</option>
+        <option value="SE">SE</option>
+        <option value="NO">NO</option>
+        <option value="DK">DK</option>
+        <option value="FI">FI</option>
+        <option value="IE">IE</option>
+        <option value="IT">IT</option>
+        <option value="ES">ES</option>
+        <option value="PT">PT</option>
+        <option value="CH">CH</option>
+        <option value="GB">GB</option>
+        <option value="US">US</option>
+        <option value="OTHER">Inny</option>
+      </select>
+      <div class="lumlum-orderfill__field-error" data-err-for="invoice_company_country"></div>
+    </div>
+  </div>
+</div>
+
+
+ <!-- Inne dane do faktury (osoba prywatna) -->
+<label class="lumlum-orderfill__check" style="margin-top:10px;">
+  <input type="checkbox" name="invoice_private_different" value="1" />
+  <span class="lumlum-orderfill__check-ui" aria-hidden="true"></span>
+  <span class="lumlum-orderfill__check-text">Inne dane do faktury (osoba prywatna)</span>
+</label>
+
+<div class="lumlum-orderfill__invoice is-hidden" data-invoice-private-wrap style="margin-top:10px;">
+  <div class="lumlum-orderfill__row lumlum-orderfill__row--2">
+    <div class="lumlum-orderfill__field">
+      <label class="lumlum-orderfill__label" for="lumlum-inv-p-first">
+        Imię <span class="lumlum-orderfill__req" aria-hidden="true">*</span>
+      </label>
+      <input
+        class="lumlum-orderfill__input"
+        id="lumlum-inv-p-first"
+        name="invoice_private_first_name"
+        autocomplete="given-name"
+      />
+      <div class="lumlum-orderfill__field-error" data-err-for="invoice_private_first_name"></div>
+    </div>
+
+    <div class="lumlum-orderfill__field">
+      <label class="lumlum-orderfill__label" for="lumlum-inv-p-last">
+        Nazwisko <span class="lumlum-orderfill__req" aria-hidden="true">*</span>
+      </label>
+      <input
+        class="lumlum-orderfill__input"
+        id="lumlum-inv-p-last"
+        name="invoice_private_last_name"
+        autocomplete="family-name"
+      />
+      <div class="lumlum-orderfill__field-error" data-err-for="invoice_private_last_name"></div>
+    </div>
+  </div>
+
+  <div class="lumlum-orderfill__row lumlum-orderfill__row--address">
+    <div class="lumlum-orderfill__field lumlum-orderfill__field--street">
+      <label class="lumlum-orderfill__label" for="lumlum-inv-p-street">Ulica</label>
+      <input
+        class="lumlum-orderfill__input"
+        id="lumlum-inv-p-street"
+        name="invoice_private_street"
+        autocomplete="address-line1"
+      />
+      <div class="lumlum-orderfill__field-error" data-err-for="invoice_private_street"></div>
+    </div>
+
+    <div class="lumlum-orderfill__field lumlum-orderfill__field--house">
+      <label class="lumlum-orderfill__label" for="lumlum-inv-p-house">Nr domu</label>
+      <input
+        class="lumlum-orderfill__input"
+        id="lumlum-inv-p-house"
+        name="invoice_private_house_no"
+      />
+      <div class="lumlum-orderfill__field-error" data-err-for="invoice_private_house_no"></div>
+    </div>
+
+    <div class="lumlum-orderfill__field lumlum-orderfill__field--flat">
+      <label class="lumlum-orderfill__label" for="lumlum-inv-p-flat">Nr lokalu</label>
+      <input
+        class="lumlum-orderfill__input"
+        id="lumlum-inv-p-flat"
+        name="invoice_private_flat_no"
+      />
+      <div class="lumlum-orderfill__field-error" data-err-for="invoice_private_flat_no"></div>
+    </div>
+  </div>
+
+  <div class="lumlum-orderfill__row lumlum-orderfill__row--3">
+    <div class="lumlum-orderfill__field">
+      <label class="lumlum-orderfill__label" for="lumlum-inv-p-postcode">Kod pocztowy</label>
+      <input
+        class="lumlum-orderfill__input"
+        id="lumlum-inv-p-postcode"
+        name="invoice_private_postcode"
+        autocomplete="postal-code"
+      />
+      <div class="lumlum-orderfill__field-error" data-err-for="invoice_private_postcode"></div>
+    </div>
+
+    <div class="lumlum-orderfill__field">
+      <label class="lumlum-orderfill__label" for="lumlum-inv-p-city">Miasto</label>
+      <input
+        class="lumlum-orderfill__input"
+        id="lumlum-inv-p-city"
+        name="invoice_private_city"
+        autocomplete="address-level2"
+      />
+      <div class="lumlum-orderfill__field-error" data-err-for="invoice_private_city"></div>
+    </div>
+
+    <div class="lumlum-orderfill__field">
+      <label class="lumlum-orderfill__label" for="lumlum-inv-p-country">Kraj</label>
+      <select
+        class="lumlum-orderfill__input lumlum-orderfill__select"
+        id="lumlum-inv-p-country"
+        name="invoice_private_country"
+        autocomplete="country"
+      >
+        <option value="PL">PL</option>
+        <option value="DE">DE</option>
+        <option value="CZ">CZ</option>
+        <option value="SK">SK</option>
+        <option value="AT">AT</option>
+        <option value="NL">NL</option>
+        <option value="BE">BE</option>
+        <option value="FR">FR</option>
+        <option value="SE">SE</option>
+        <option value="NO">NO</option>
+        <option value="DK">DK</option>
+        <option value="FI">FI</option>
+        <option value="IE">IE</option>
+        <option value="IT">IT</option>
+        <option value="ES">ES</option>
+        <option value="PT">PT</option>
+        <option value="CH">CH</option>
+        <option value="GB">GB</option>
+        <option value="US">US</option>
+        <option value="OTHER">Inny</option>
+      </select>
+      <div class="lumlum-orderfill__field-error" data-err-for="invoice_private_country"></div>
+    </div>
+  </div>
+
+  <div class="lumlum-orderfill__micro" style="margin-top:8px;">
+    Pola adresowe są opcjonalne i służą wyłącznie do danych na fakturze.
+  </div>
+</div>
+</div>
+
+
+              <!-- Submit -->
+              <div class="lumlum-orderfill__actions">
+                <button class="lumlum-orderfill__cta" type="submit" data-submit>Wyślij dane</button>
+                <div class="lumlum-orderfill__substatus" data-substatus></div>
+              </div>
+            </form>
+          </div>
+
+          <!-- Skeleton (Left) -->
+          <div class="lumlum-orderfill__skeleton lumlum-orderfill__skeleton--left" data-skel-left>
+            <div class="lumlum-orderfill__skel-block">
+              <div class="lumlum-orderfill__skel-line lumlum-orderfill__skel-line--title"></div>
+              <div class="lumlum-orderfill__skel-line lumlum-orderfill__skel-line--small"></div>
+
+              <div class="lumlum-orderfill__skel-row lumlum-orderfill__skel-row--3">
+                <div class="lumlum-orderfill__skel-box"></div>
+                <div class="lumlum-orderfill__skel-box"></div>
+                <div class="lumlum-orderfill__skel-box"></div>
+              </div>
+
+              <div class="lumlum-orderfill__skel-divider"></div>
+
+              <div class="lumlum-orderfill__skel-line lumlum-orderfill__skel-line--small"></div>
+              <div class="lumlum-orderfill__skel-line"></div>
+              <div class="lumlum-orderfill__skel-line"></div>
+
+              <div class="lumlum-orderfill__skel-divider"></div>
+
+              <div class="lumlum-orderfill__skel-line lumlum-orderfill__skel-line--small"></div>
+              <div class="lumlum-orderfill__skel-line"></div>
+              <div class="lumlum-orderfill__skel-line"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT: Summary (desktop) -->
+        <div class="lumlum-orderfill__col lumlum-orderfill__col--right">
+          <div class="lumlum-orderfill__summary-card lumlum-orderfill__summary-card--desktop" data-summary-card-desktop></div>
+
+          <!-- Skeleton (Right) -->
+          <div class="lumlum-orderfill__skeleton lumlum-orderfill__skeleton--right" data-skel-right>
+            <div class="lumlum-orderfill__skel-sum">
+              <div class="lumlum-orderfill__skel-product">
+                <div class="lumlum-orderfill__skel-thumb"></div>
+                <div class="lumlum-orderfill__skel-pinfo">
+                  <div class="lumlum-orderfill__skel-line lumlum-orderfill__skel-line--mid"></div>
+                  <div class="lumlum-orderfill__skel-line lumlum-orderfill__skel-line--small"></div>
+                </div>
+                <div class="lumlum-orderfill__skel-price"></div>
+              </div>
+
+              <div class="lumlum-orderfill__skel-product">
+                <div class="lumlum-orderfill__skel-thumb"></div>
+                <div class="lumlum-orderfill__skel-pinfo">
+                  <div class="lumlum-orderfill__skel-line lumlum-orderfill__skel-line--mid"></div>
+                  <div class="lumlum-orderfill__skel-line lumlum-orderfill__skel-line--small"></div>
+                </div>
+                <div class="lumlum-orderfill__skel-price"></div>
+              </div>
+
+              <div class="lumlum-orderfill__skel-divider"></div>
+
+              <div class="lumlum-orderfill__skel-totals">
+                <div class="lumlum-orderfill__skel-line lumlum-orderfill__skel-line--wide"></div>
+                <div class="lumlum-orderfill__skel-line lumlum-orderfill__skel-line--wide"></div>
+                <div class="lumlum-orderfill__skel-line lumlum-orderfill__skel-line--wide"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /grid -->
+    </div><!-- /container -->
+
+    <!-- Templates -->
+    <template data-summary-template>
+      <div class="lumlum-orderfill__summary-inner">
+        <div class="lumlum-orderfill__summary-head">
+          <div class="lumlum-orderfill__summary-title" role="heading" aria-level="3">Podsumowanie</div>
+        </div>
+
+        <div class="lumlum-orderfill__products" data-products></div>
+
+        <div class="lumlum-orderfill__sum">
+          <div class="lumlum-orderfill__sum-row is-hidden" data-subtotal-row>
+            <div class="lumlum-orderfill__sum-label">Suma częściowa</div>
+            <div class="lumlum-orderfill__sum-val" data-subtotal>—</div>
+          </div>
+
+          <div class="lumlum-orderfill__sum-row is-hidden" data-discount-row>
+            <div class="lumlum-orderfill__sum-label">Rabat</div>
+            <div class="lumlum-orderfill__sum-val lumlum-orderfill__sum-val--neg" data-discount>—</div>
+          </div>
+
+          <div class="lumlum-orderfill__sum-row lumlum-orderfill__sum-row--total">
+            <div class="lumlum-orderfill__sum-label">Suma końcowa</div>
+            <div class="lumlum-orderfill__sum-val lumlum-orderfill__sum-val--total" data-total>—</div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <template data-product-row-template>
+      <div class="lumlum-orderfill__product">
+        <div class="lumlum-orderfill__thumb">
+          <img class="lumlum-orderfill__thumb-img"
+               data-thumb
+               data-asset="PRODUCT_PLACEHOLDER"
+               alt=""
+               loading="lazy"
+               decoding="async"
+               src="https://cdn.shopify.com/s/files/1/0878/3223/2259/files/IMG_6707_9ee02422-084a-4bc6-9aaa-17848eb6cd35.jpg?v=1758889679">
+        </div>
+        <div class="lumlum-orderfill__pmeta">
+          <div class="lumlum-orderfill__pname" data-name>—</div>
+          <div class="lumlum-orderfill__pqty" data-qty>—</div>
+        </div>
+        <div class="lumlum-orderfill__pline is-hidden" data-line>
+          <div class="lumlum-orderfill__pline-val" data-lineval>—</div>
+        </div>
+      </div>
+    </template>
+
+  </div>
+
+
+  <style>
+    /* LumLum – typografia bez globali, zgodna z base.css */
+    .lumlum-title-main {
+      font-size: 4.5rem;
+      font-weight: 500;
+      margin-top: 0;
+      margin-bottom: 0.9em;
+      line-height: 1.083;
+      letter-spacing: -0.003em;
+    }
+    .lumlum-title-sub {
+      font-size: 2.5rem;
+      font-weight: 400;
+      margin-top: 0;
+      margin-bottom: 0.8em;
+      line-height: 1.10;
+      letter-spacing: 0em;
+    }
+    .lumlum-paragraph {
+      font-size: 2.25rem;
+      font-weight: 300;
+      margin-top: 0;
+      margin-bottom: 1em;
+      line-height: 1.47;
+      letter-spacing: -0.022em;
+    }
+
+    @media screen and (max-width: 1068px) {
+      .lumlum-title-main { font-size: 4rem; margin-bottom: 0.85em; line-height: 1.10; letter-spacing: -0.003em; }
+      .lumlum-title-sub  { font-size: 2rem; margin-bottom: 0.75em; line-height: 1.10; letter-spacing: 0em; }
+      .lumlum-paragraph  { font-size: 1.75rem; margin-bottom: 0.95em; line-height: 1.47; letter-spacing: -0.022em; }
+    }
+    @media screen and (max-width: 834px) {
+      .lumlum-title-main { font-size: 3.5rem; margin-bottom: 0.8em; line-height: 1.115; letter-spacing: 0em; }
+      .lumlum-title-sub  { font-size: 1.75rem; margin-bottom: 0.7em; line-height: 1.12; letter-spacing: 0em; }
+      .lumlum-paragraph  { font-size: 1.7rem; margin-bottom: 0.9em; line-height: 1.47; letter-spacing: -0.022em; }
+    }
+    @media screen and (max-width: 430px) {
+      .lumlum-title-main { font-size: 2.75rem; margin-bottom: 0.7em; line-height: 1.125; letter-spacing: 0.004em; }
+      .lumlum-title-sub  { font-size: 1.5rem; margin-bottom: 0.6em; line-height: 1.125; letter-spacing: 0.004em; }
+      .lumlum-paragraph  { font-size: 1.25rem; margin-bottom: 0.85em; line-height: 1.47; letter-spacing: -0.022em; }
+    }
+    @media screen and (max-width: 375px) {
+      .lumlum-title-main { font-size: 2.5rem; margin-bottom: 0.65em; line-height: 1.14; letter-spacing: 0.004em; }
+      .lumlum-title-sub  { font-size: 1.375rem; margin-bottom: 0.55em; line-height: 1.14; letter-spacing: 0.004em; }
+      .lumlum-paragraph  { font-size: 0.875rem; margin-bottom: 0.8em; line-height: 1.43; letter-spacing: -0.016em; }
+    }
+
+    /* ===== LumLum Order Fill (no globals) ===== */
+    .lumlum-orderfill {
+      background: #000;
+      color: rgba(255,255,255,.92);
+      min-height: 100vh;
+      scroll-margin-top: 120px;
+    }
+
+    .lumlum-orderfill__wrap {
+      width: 100%;
+      margin-top: 8rem;
+    }
+
+    .lumlum-orderfill__alerts {
+      width: min(1200px, 92%);
+      margin: 0 auto;
+      padding: 16px 0 0;
+    }
+
+    .lumlum-orderfill__alert {
+      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(255,255,255,.06);
+      border-radius: 14px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .lumlum-orderfill__alert.is-error { border-color: rgba(255,255,255,.14); background: rgba(255,255,255,.05); }
+    .lumlum-orderfill__alert.is-success { border-color: rgba(255,255,255,.18); background: rgba(255,255,255,.07); }
+
+    .lumlum-orderfill__container {
+      width: min(1200px, 92%);
+      margin: 0 auto;
+      padding: 22px 0 60px;
+    }
+
+    .lumlum-orderfill__grid {
+      display: grid;
+      grid-template-columns: 1fr 420px;
+      gap: 24px;
+      align-items: start;
+    }
+
+    .lumlum-orderfill__col--right {
+      position: sticky;
+      top: 24px;
+      align-self: start;
+    }
+
+    .lumlum-orderfill__form-card,
+    .lumlum-orderfill__summary-card {
+      border: 1px solid rgba(255,255,255,.10);
+      background: #0a0a0a;
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.45);
+      overflow: hidden;
+    }
+
+    .lumlum-orderfill__form-card {
+      padding: 20px;
+      transition: transform .18s ease, border-color .18s ease;
+    }
+    .lumlum-orderfill__form-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(255,255,255,.20);
+    }
+
+    .lumlum-orderfill__section-head {
+      padding-bottom: 14px;
+      border-bottom: 1px solid rgba(255,255,255,.08);
+      margin-bottom: 16px;
+    }
+    .lumlum-orderfill__hint { margin-top: 6px; font-size: 13px; color: rgba(255,255,255,.72); }
+
+    .lumlum-orderfill__block {
+      padding: 16px 0;
+      border-bottom: 1px solid rgba(255,255,255,.08);
+    }
+    .lumlum-orderfill__block:last-of-type { border-bottom: 0; }
+
+    .lumlum-orderfill__block-title {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: .02em;
+      color: rgba(255,255,255,.86);
+      margin-bottom: 12px;
+    }
+
+    .lumlum-orderfill__row {
+      display: grid;
+      gap: 14px;
+      margin-bottom: 12px;
+    }
+    .lumlum-orderfill__row--2 { grid-template-columns: 1fr 1fr; }
+    .lumlum-orderfill__row--3 { grid-template-columns: 1fr 1fr 1fr; }
+    .lumlum-orderfill__row--address { grid-template-columns: 1.6fr .6fr .6fr; align-items: end; }
+
+    .lumlum-orderfill__label {
+      display: block;
+      font-size: 12px;
+      color: rgba(255,255,255,.76);
+      margin-bottom: 1rem;
+      margin-top: 1rem;
+    }
+    .lumlum-orderfill__req { color: rgba(255,255,255,.86); }
+
+    .lumlum-orderfill__input {
+      width: 100%;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 14px;
+      padding: 12px 12px;
+      color: rgba(255,255,255,.92);
+      outline: none;
+      transition: border-color .16s ease, background .16s ease;
+      font-size: 14px;
+      line-height: 1.2;
+      box-sizing: border-box;
+    }
+    .lumlum-orderfill__input::placeholder { color: rgba(255,255,255,.38); }
+    .lumlum-orderfill__input:focus { border-color: rgba(255,255,255,.28); background: rgba(255,255,255,.06); }
+
+    .lumlum-orderfill__select {
+      appearance: none;
+      background-image:
+        linear-gradient(45deg, transparent 50%, rgba(255,255,255,.55) 50%),
+        linear-gradient(135deg, rgba(255,255,255,.55) 50%, transparent 50%);
+      background-position:
+        calc(100% - 18px) calc(50% - 2px),
+        calc(100% - 12px) calc(50% - 2px);
+      background-size: 6px 6px, 6px 6px;
+      background-repeat: no-repeat;
+      padding-right: 34px;
+    }
+
+    .lumlum-orderfill__field-error {
+      min-height: 16px;
+      font-size: 12px;
+      color: rgba(255,255,255,.72);
+      margin-top: 6px;
+    }
+    .lumlum-orderfill__field-error.is-visible { color: rgba(255,255,255,.86); }
+
+    .lumlum-orderfill__choice { display: grid; gap: 10px; margin: 6px 0 0; }
+
+    .lumlum-orderfill__radio {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.03);
+      border-radius: 14px;
+      padding: 12px 12px;
+      cursor: pointer;
+      transition: border-color .16s ease, transform .16s ease, background .16s ease;
+      position: relative;
+    }
+    .lumlum-orderfill__radio:hover { transform: translateY(-2px); border-color: rgba(255,255,255,.20); background: rgba(255,255,255,.04); }
+    .lumlum-orderfill__radio input { position: absolute; opacity: 0; pointer-events: none; }
+    .lumlum-orderfill__radio-ui {
+      width: 16px; height: 16px; border-radius: 999px;
+      border: 1px solid rgba(255,255,255,.28);
+      background: rgba(0,0,0,.25);
+      display: inline-flex; align-items: center; justify-content: center;
+      flex: 0 0 auto;
+    }
+    .lumlum-orderfill__radio-ui::after {
+      content: "";
+      width: 8px; height: 8px; border-radius: 999px;
+      background: rgba(255,255,255,.92);
+      transform: scale(0);
+      transition: transform .14s ease;
+    }
+    .lumlum-orderfill__radio input:checked + .lumlum-orderfill__radio-ui::after { transform: scale(1); }
+    .lumlum-orderfill__radio-text { color: rgba(255,255,255,.86); font-size: 14px; }
+
+    .lumlum-orderfill__check {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.03);
+      border-radius: 14px;
+      padding: 12px 12px;
+      cursor: pointer;
+      width: fit-content;
+      transition: border-color .16s ease, transform .16s ease, background .16s ease;
+      position: relative;
+    }
+    .lumlum-orderfill__check:hover { transform: translateY(-2px); border-color: rgba(255,255,255,.20); background: rgba(255,255,255,.04); }
+    .lumlum-orderfill__check input { position: absolute; opacity: 0; pointer-events: none; }
+
+    .lumlum-orderfill__check-ui {
+      width: 16px; height: 16px; border-radius: 6px;
+      border: 1px solid rgba(255,255,255,.28);
+      background: rgba(0,0,0,.25);
+      display: inline-flex; align-items: center; justify-content: center;
+      flex: 0 0 auto;
+    }
+    .lumlum-orderfill__check-ui::after {
+      content: "";
+      width: 10px; height: 10px; border-radius: 4px;
+      background: rgba(255,255,255,.92);
+      transform: scale(0);
+      transition: transform .14s ease;
+    }
+    .lumlum-orderfill__check input:checked + .lumlum-orderfill__check-ui::after { transform: scale(1); }
+    .lumlum-orderfill__check-text { color: rgba(255,255,255,.86); font-size: 14px; }
+
+    .lumlum-orderfill__micro { font-size: 12px; color: rgba(255,255,255,.62); margin-top: 8px; }
+
+    .lumlum-orderfill__actions { padding-top: 16px; display: grid; gap: 10px; }
+
+    .lumlum-orderfill__cta {
+      width: 100%;
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.92);
+      color: rgba(0,0,0,.92);
+      border-radius: 16px;
+      padding: 14px 14px;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: .02em;
+      cursor: pointer;
+      transition: transform .18s ease, filter .18s ease, opacity .18s ease;
+    }
+    .lumlum-orderfill__cta:hover { transform: translateY(-2px); filter: brightness(0.96); }
+    .lumlum-orderfill__cta:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+
+    .lumlum-orderfill__substatus { min-height: 16px; font-size: 12px; color: rgba(255,255,255,.72); }
+
+    /* Summary */
+    .lumlum-orderfill__summary-card--desktop {
+      padding: 18px;
+      transition: transform .18s ease, border-color .18s ease;
+    }
+    .lumlum-orderfill__summary-card--desktop:hover { transform: translateY(-2px); border-color: rgba(255,255,255,.20); }
+
+    .lumlum-orderfill__summary-card--mobile {
+      padding: 14px;
+      border-radius: 14px;
+      box-shadow: none;
+      margin-top: 12px;
+    }
+
+    .lumlum-orderfill__summary-title { font-size: 14px; font-weight: 700; color: rgba(255,255,255,.86); margin-bottom: 12px; }
+
+    .lumlum-orderfill__products {
+      display: grid;
+      gap: 12px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid rgba(255,255,255,.08);
+    }
+
+    .lumlum-orderfill__product {
+      display: grid;
+      grid-template-columns: 54px 1fr auto;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .lumlum-orderfill__thumb {
+      width: 54px;
+      height: 54px;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.03);
+      flex: 0 0 auto;
+    }
+    .lumlum-orderfill__thumb-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+    .lumlum-orderfill__pname { font-size: 13px; color: rgba(255,255,255,.88); line-height: 1.3; }
+    .lumlum-orderfill__pqty { margin-top: 4px; font-size: 12px; color: rgba(255,255,255,.62); }
+
+    .lumlum-orderfill__pline { font-size: 13px; color: rgba(255,255,255,.80); padding-left: 10px; white-space: nowrap; }
+    .lumlum-orderfill__sum { padding-top: 14px; display: grid; gap: 8px; }
+
+    .lumlum-orderfill__sum-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 13px;
+      color: rgba(255,255,255,.78);
+    }
+
+    .lumlum-orderfill__sum-row--total {
+      padding-top: 10px;
+      border-top: 1px solid rgba(255,255,255,.08);
+      margin-top: 6px;
+      color: rgba(255,255,255,.90);
+      font-weight: 700;
+    }
+
+    .lumlum-orderfill__sum-val--neg { color: rgba(255,255,255,.86); }
+    .lumlum-orderfill__sum-val--total { font-size: 14px; letter-spacing: .01em; }
+
+    /* Mobile accordion */
+    .lumlum-orderfill__mobile-summary { display: none; margin-bottom: 16px; }
+
+    .lumlum-orderfill__accordion-btn {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border: 1px solid rgba(255,255,255,.10);
+      background: #0a0a0a;
+      border-radius: 16px;
+      padding: 14px 14px;
+      color: rgba(255,255,255,.92);
+      cursor: pointer;
+      transition: transform .18s ease, border-color .18s ease;
+    }
+    .lumlum-orderfill__accordion-btn:hover { transform: translateY(-2px); border-color: rgba(255,255,255,.20); }
+
+    .lumlum-orderfill__accordion-title { font-size: 13px; font-weight: 700; color: rgba(255,255,255,.86); }
+    .lumlum-orderfill__accordion-right { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+    .lumlum-orderfill__accordion-total { font-size: 13px; color: rgba(255,255,255,.86); white-space: nowrap; }
+
+    .lumlum-orderfill__chev {
+      display: inline-block;
+      flex: 0 0 auto;
+      box-sizing: border-box;
+      width: 10px;
+      height: 10px;
+      border-right: 2px solid rgba(255,255,255,.72);
+      border-bottom: 2px solid rgba(255,255,255,.72);
+      transform: rotate(45deg);
+      transition: transform .16s ease;
+      margin-top: 3px;
+      opacity: 1;
+      visibility: visible;
+    }
+    .lumlum-orderfill__accordion-btn[aria-expanded="true"] .lumlum-orderfill__chev { transform: rotate(-135deg); margin-top: 3px; }
+    .lumlum-orderfill__accordion-btn[aria-expanded="true"] .lumlum-orderfill__accordion-total { display: none; }
+
+    /* Skeleton */
+    .lumlum-orderfill__skeleton {
+      border: 1px solid rgba(255,255,255,.10);
+      background: #0a0a0a;
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.45);
+      overflow: hidden;
+      position: relative;
+    }
+    .lumlum-orderfill__skeleton--left { padding: 20px; }
+    .lumlum-orderfill__skeleton--right { padding: 18px; }
+
+    .lumlum-orderfill__skel-block { display: grid; gap: 12px; }
+    .lumlum-orderfill__skel-row { display: grid; gap: 12px; }
+    .lumlum-orderfill__skel-row--3 { grid-template-columns: 1fr 1fr 1fr; }
+
+    .lumlum-orderfill__skel-box,
+    .lumlum-orderfill__skel-line,
+    .lumlum-orderfill__skel-thumb,
+    .lumlum-orderfill__skel-price {
+      background: rgba(255,255,255,.14);
+      border-radius: 10px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .lumlum-orderfill__skel-line { height: 12px; }
+    .lumlum-orderfill__skel-line--title { height: 18px; width: 62%; border-radius: 12px; }
+    .lumlum-orderfill__skel-line--small { height: 10px; width: 28%; opacity: .9; }
+    .lumlum-orderfill__skel-line--mid { height: 12px; width: 72%; }
+    .lumlum-orderfill__skel-line--wide { height: 12px; width: 100%; }
+    .lumlum-orderfill__skel-box { height: 44px; border-radius: 14px; }
+
+    .lumlum-orderfill__skel-divider {
+      height: 1px;
+      background: rgba(255,255,255,.08);
+      border-radius: 999px;
+      margin: 6px 0;
+    }
+
+    .lumlum-orderfill__skel-sum { display: grid; gap: 14px; }
+    .lumlum-orderfill__skel-product {
+      display: grid;
+      grid-template-columns: 54px 1fr 72px;
+      gap: 12px;
+      align-items: center;
+    }
+    .lumlum-orderfill__skel-thumb { width: 54px; height: 54px; border-radius: 14px; background: rgba(255,255,255,.14); }
+    .lumlum-orderfill__skel-pinfo { display: grid; gap: 8px; }
+    .lumlum-orderfill__skel-price { height: 12px; border-radius: 10px; }
+
+    /* Domyślny shimmer (nadpiszemy w JS na pionowy) */
+    .lumlum-orderfill__skel-box::after,
+    .lumlum-orderfill__skel-line::after,
+    .lumlum-orderfill__skel-thumb::after,
+    .lumlum-orderfill__skel-price::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: -120%;
+      width: 120%;
+      height: 100%;
+      background: linear-gradient(
+        90deg,
+        rgba(255,255,255,0) 0%,
+        rgba(255,255,255,.18) 50%,
+        rgba(255,255,255,0) 100%
+      );
+      animation: lumlum-orderfill-shimmer 1.15s ease-in-out infinite;
+      opacity: .65;
+    }
+    @keyframes lumlum-orderfill-shimmer {
+      0% { transform: translateX(0); }
+      100% { transform: translateX(200%); }
+    }
+
+    /* Helpers */
+    .is-hidden { display: none !important; }
+    .is-disabled { pointer-events: none; opacity: .70; }
+
+    /* Responsive */
+    @media screen and (max-width: 990px) {
+      .lumlum-orderfill__grid { grid-template-columns: 1fr; gap: 18px; }
+      .lumlum-orderfill__col--right { display: none; }
+      .lumlum-orderfill__mobile-summary { display: block; }
+
+      .lumlum-orderfill__row--3 { grid-template-columns: 1fr; }
+      .lumlum-orderfill__row--2 { grid-template-columns: 1fr; }
+      .lumlum-orderfill__row--address { grid-template-columns: 1fr; }
+
+      .lumlum-orderfill__accordion-panel { margin-top: 10px; }
+    }
+
+    /* Offset tylko po scrollu */
+    .lumlum-orderfill.is-offset .lumlum-orderfill__wrap { margin-top: 10rem !important; }
+
+    @media screen and (min-width: 990px) {
+      .lumlum-orderfill__col--right {
+        position: sticky;
+        top: calc(var(--header-height, 0px) + 1rem);
+        align-self: start;
+      }
+    }
+
+    .lumlum-geowidget-wrap {
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.03);
+      border-radius: 16px;
+      padding: 10px;
+      overflow: hidden;
+    }
+
+    #lumlum-geowidget {
+      display: block;
+      width: 100%;
+      min-height: 520px;
+    }
+    @media screen and (max-width: 990px) { #lumlum-geowidget { min-height: 520px; } }
+
+    .lumlum-orderfill__grid,
+    .lumlum-orderfill__container,
+    .lumlum-orderfill__wrap { overflow: visible !important; }
+
+    .lumlum-orderfill__col--right {
+      position: sticky;
+      top: calc(var(--header-height, 0px) + 16px);
+      z-index: 999;
+      align-self: start;
+    }
+    .lumlum-orderfill__summary-card--desktop { position: relative; z-index: 1000; min-height: 140px; }
+    .lumlum-orderfill__col--right { z-index: 5; }
+
+    .lumlum-orderfill__locker { width: 100%; }
+    .lumlum-orderfill__locker inpost-geowidget,
+    .lumlum-orderfill__locker .inpost-geowidget,
+    .lumlum-orderfill__locker iframe { display: block; width: 100%; }
+
+    .lumlum-orderfill__locker inpost-geowidget,
+    .lumlum-orderfill__locker .inpost-geowidget {
+      height: 560px;
+      min-height: 560px;
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    .lumlum-orderfill__locker iframe { height: 100%; min-height: 560px; border: 0; }
+
+    /* Telefon: prefix + numer */
+    .lumlum-orderfill__phone {
+      display: grid;
+      grid-template-columns: 110px 1fr;
+      gap: 10px;
+      align-items: center;
+    }
+    .lumlum-orderfill__phone-prefix { min-width: 110px; }
+    .lumlum-orderfill__phone-number { width: 100%; }
+
+    /* Rabat jako wiersz tekstowy (bez obrazka i bez szt.) */
+    .lumlum-orderfill__product--discount {
+      grid-template-columns: 1fr auto !important;
+    }
+    .lumlum-orderfill__product--discount .lumlum-orderfill__pline {
+      padding-left: 0 !important;
+    }
+    .lumlum-locker-selected {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.lumlum-locker-bubble {
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.05);
+  border-radius: 16px;
+  padding: 12px 12px;
+}
+
+.lumlum-locker-bubble__title {
+  font-size: 12px;
+  color: rgba(255,255,255,.68);
+  margin-bottom: 6px;
+}
+
+.lumlum-locker-bubble__value {
+  font-size: 14px;
+  color: rgba(255,255,255,.92);
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.lumlum-locker-change {
+  width: fit-content;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.92);
+  color: rgba(0,0,0,.92);
+  border-radius: 14px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform .18s ease, filter .18s ease;
+}
+
+.lumlum-locker-change:hover {
+  transform: translateY(-2px);
+  filter: brightness(0.96);
+}
+.lumlum-orderfill__inv-warning{
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,180,80,.10);
+  color: rgba(255,255,255,.90);
+  border-radius: 14px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+  </style>
+
+<script>
+(function(){
+  var root = document.querySelector('[data-lumlum-orderfill]');
+  if (!root) return;
+
+  /* === KONFIG: WEBHOOKI MAKE === */
+  var ORDER_GET  = 'https://lumlum.dev/formularz/api/dane';
+  var ORDER_POST = 'https://lumlum.dev/formularz/api/zapis';
+
+  /* === KONFIG: DANE DO PRZELEWU (UI) === */
+  var BANK = {
+    name: 'PKO BP',
+    account: '73 1020 3466 0000 9902 0225                                         5784',
+    receiver: 'LumLum'
+  };
+
+  /* =========================================================
+     Elements
+     ========================================================= */
+  var els = {
+    alerts: root.querySelector('.lumlum-orderfill__alerts'),
+    skelLeft: root.querySelector('[data-skel-left]'),
+    skelRight: root.querySelector('[data-skel-right]'),
+    formCard: root.querySelector('[data-form-card]'),
+    summaryDesktop: root.querySelector('[data-summary-card-desktop]'),
+    summaryMobile: root.querySelector('[data-summary-card-mobile]'),
+    totalInline: root.querySelector('[data-total-inline]'),
+    orderIdLine: root.querySelector('[data-order-id-line]'),
+    form: root.querySelector('[data-form]'),
+    submit: root.querySelector('[data-submit]'),
+    substatus: root.querySelector('[data-substatus]'),
+    lockerWrap: root.querySelector('[data-locker-wrap]'),
+    lockerPicker: root.querySelector('[data-locker-picker]'),
+    lockerSelected: root.querySelector('[data-locker-selected]'),
+    lockerValue: root.querySelector('[data-locker-value]'),
+    lockerChangeBtn: root.querySelector('[data-locker-change]'),
+    invoiceCompanyWrap: root.querySelector('[data-invoice-company-wrap]'),
+    invoicePrivateWrap: root.querySelector('[data-invoice-private-wrap]'),
+    accBtn: root.querySelector('.lumlum-orderfill__accordion-btn'),
+    accPanel: root.querySelector('#lumlum-orderfill-summary-panel'),
+    tplSummary: root.querySelector('[data-summary-template]'),
+    tplRow: root.querySelector('[data-product-row-template]'),
+
+    // NEW: invoice company copy + warning
+    copyShipToInvCompanyBtn: root.querySelector('[data-copy-ship-to-inv-company]'),
+    invShipWarning: root.querySelector('[data-inv-ship-warning]')
+  };
+
+  var state = {
+    cleanId: null,
+    canSubmit: false,
+    locked: false,
+    payload: null,
+    ty: null,
+
+    // NEW: to activate warning only if user used copy button
+    invCompanyAddressCopiedOnce: false,
+    invCompanyShipSnapshot: null
+  };
+
+  /* =========================================================
+     Inject minimal styles (validation + overlay)
+     ========================================================= */
+  (function injectStyles(){
+    var css = `
+      .lumlum-orderfill__field.is-invalid .lumlum-orderfill__label { color: rgba(255,80,80,.95) !important; }
+      .lumlum-orderfill__field.is-invalid .lumlum-orderfill__input { border-color: rgba(255,80,80,.9) !important; background: rgba(255,80,80,.06) !important; }
+      .lumlum-orderfill__field-error.is-visible { color: rgba(255,120,120,.95) !important; }
+
+      .lumlum-ty{position:fixed; inset:0; display:none; align-items:center; justify-content:center; padding:18px; z-index:99999; background:rgba(0,0,0,.72); backdrop-filter: blur(6px);}
+      .lumlum-ty.is-open{display:flex;}
+      .lumlum-ty__card{width:min(720px, 96vw); border:1px solid rgba(255,255,255,.12); background:#0a0a0a; color:rgba(255,255,255,.92); border-radius:18px; box-shadow:0 22px 70px rgba(0,0,0,.55); overflow:hidden;}
+      .lumlum-ty__head{padding:18px 18px 12px; border-bottom:1px solid rgba(255,255,255,.08);}
+      .lumlum-ty__title{font-size:16px; font-weight:800; letter-spacing:.01em;}
+      .lumlum-ty__sub{display:flex; flex-wrap:wrap; gap:8px; margin-top:10px;}
+      .lumlum-ty__pill{border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.04); border-radius:999px; padding:8px 10px; font-size:12px; color:rgba(255,255,255,.82);}
+      .lumlum-ty__body{padding:14px 18px 6px;}
+      .lumlum-ty__block{border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.03); border-radius:16px; padding:12px;}
+      .lumlum-ty__block-title{font-size:12px; font-weight:800; letter-spacing:.02em; color:rgba(255,255,255,.86); margin-bottom:10px;}
+      .lumlum-ty__row{display:grid; gap:10px;}
+      .lumlum-ty__kv{display:flex; align-items:center; justify-content:space-between; gap:12px; border:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.03); border-radius:14px; padding:10px;}
+      .lumlum-ty__k{font-size:11px; color:rgba(255,255,255,.62); margin-bottom:4px;}
+      .lumlum-ty__v{font-size:13px; color:rgba(255,255,255,.92); word-break:break-word;}
+      .lumlum-ty__copy{border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.92); color:rgba(0,0,0,.92); border-radius:12px; padding:8px 10px; font-size:12px; font-weight:800; cursor:pointer;}
+      .lumlum-ty__hint{margin-top:10px; font-size:12px; color:rgba(255,255,255,.72); line-height:1.45;}
+      .lumlum-ty__footer{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px 18px 18px;}
+      .lumlum-ty__status{font-size:12px; color:rgba(255,255,255,.86); font-weight:700;}
+      .lumlum-ty__close{border:1px solid rgba(255,255,255,.10); background:transparent; color:rgba(255,255,255,.92); border-radius:12px; padding:10px 12px; font-size:12px; font-weight:800; cursor:pointer;}
+    `;
+    var style = document.createElement('style');
+    style.textContent = css;
+    document.head.appendChild(style);
+  })();
+/* =========================================================
+     Rabat 24H
+     ========================================================= */
+  function renderRabat24h(data) {
+    // Usuń poprzedni baner jeśli istnieje
+    var stary = document.getElementById('lumlum-rabat24h-baner');
+    if (stary) stary.remove();
+
+    var kwota = data.rabat24h_kwota ? Number(data.rabat24h_kwota) : 0;
+    var waznyStr = data.rabat24h_wazny_do ? String(data.rabat24h_wazny_do).trim() : '';
+
+    if (!kwota || !waznyStr) return;
+
+    // Parsuj datę z formatu DD.MM.YYYY HH:mm
+    var czesci = waznyStr.match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})$/);
+    if (!czesci) return;
+    var dataWaznosci = new Date(
+      parseInt(czesci[3]),     // rok
+      parseInt(czesci[2]) - 1, // miesiąc (0-indexed)
+      parseInt(czesci[1]),     // dzień
+      parseInt(czesci[4]),     // godzina
+      parseInt(czesci[5])      // minuta
+    );
+
+    // Sprawdź czy rabat jeszcze aktywny
+    if (dataWaznosci <= new Date()) return;
+
+    var cenaKat = data.kwota_proponowana_brutto ? Number(data.kwota_proponowana_brutto) : 0;
+    var cenaPoRabacie = cenaKat - kwota;
+
+    var baner = document.createElement('div');
+    baner.id = 'lumlum-rabat24h-baner';
+    baner.style.cssText = [
+      'border:1px solid rgba(255,255,255,.22)',
+      'background:rgba(255,255,255,.05)',
+      'border-radius:16px',
+      'padding:14px 16px',
+      'margin-bottom:18px',
+      'display:grid',
+      'gap:8px'
+    ].join(';');
+
+    var etykieta = document.createElement('div');
+    etykieta.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:.06em;color:rgba(255,255,255,.55);text-transform:uppercase;';
+    etykieta.textContent = 'Oferta specjalna';
+
+    var waznoscWrap = document.createElement('div');
+    waznoscWrap.style.cssText = 'font-size:13px;color:rgba(255,255,255,.72);';
+    waznoscWrap.textContent = 'Ważna do: ' + waznyStr;
+
+    var cenyWrap = document.createElement('div');
+    cenyWrap.style.cssText = 'display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-top:2px;';
+
+    var cenaStara = document.createElement('span');
+    cenaStara.style.cssText = 'font-size:13px;color:rgba(255,255,255,.40);text-decoration:line-through;';
+    cenaStara.textContent = moneyPLN(cenaKat);
+
+    var rabatBadge = document.createElement('span');
+    rabatBadge.style.cssText = 'font-size:12px;color:rgba(255,255,255,.60);';
+    rabatBadge.textContent = '-' + moneyPLN(kwota);
+
+    var cenaNowa = document.createElement('span');
+    cenaNowa.style.cssText = 'font-size:16px;font-weight:800;color:rgba(255,255,255,.95);';
+    cenaNowa.textContent = moneyPLN(cenaPoRabacie);
+
+    cenyWrap.appendChild(cenaStara);
+    cenyWrap.appendChild(rabatBadge);
+    cenyWrap.appendChild(cenaNowa);
+
+    baner.appendChild(etykieta);
+    baner.appendChild(waznoscWrap);
+    baner.appendChild(cenyWrap);
+
+    // Wstaw przed kartą formularza
+    var formCard = root.querySelector('[data-form-card]');
+    if (formCard && formCard.parentNode) {
+      formCard.parentNode.insertBefore(baner, formCard);
+    }
+  }
+  function renderZlozone(){
+    state.locked = true;
+    if (els.formCard) els.formCard.classList.add('is-hidden');
+    if (els.summaryDesktop) els.summaryDesktop.classList.add('is-hidden');
+    if (els.summaryMobile) els.summaryMobile.classList.add('is-hidden');
+    var istnieje = document.getElementById('lumlum-zlozone');
+    if (istnieje) return;
+    var box = document.createElement('div');
+    box.id = 'lumlum-zlozone';
+    box.style.cssText = 'border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.05);border-radius:16px;padding:32px 24px;text-align:center;display:grid;gap:10px;';
+    var h = document.createElement('div');
+    h.style.cssText = 'font-size:19px;font-weight:800;color:rgba(255,255,255,.95);';
+    h.textContent = 'Zamówienie zostało już złożone';
+    var p = document.createElement('div');
+    p.style.cssText = 'font-size:14px;color:rgba(255,255,255,.72);line-height:1.55;';
+    p.textContent = 'Ten formularz został już wypełniony i został zamknięty. Jeśli chcesz coś zmienić w zamówieniu, po prostu nam odpisz — otworzymy go ponownie.';
+    box.appendChild(h);
+    box.appendChild(p);
+    var formCard = root.querySelector('[data-form-card]');
+    if (formCard && formCard.parentNode) formCard.parentNode.insertBefore(box, formCard);
+  }
+
+  /* =========================================================
+     Helpers
+     ========================================================= */
+  function clearAlerts(){ if (els.alerts) els.alerts.innerHTML = ''; }
+
+  function addAlert(type, text){
+    if (!els.alerts) return;
+    var d = document.createElement('div');
+    d.className = 'lumlum-orderfill__alert ' + (type === 'success' ? 'is-success':'is-error');
+    d.textContent = text;
+    els.alerts.appendChild(d);
+  }
+
+  function setLoading(on){
+    if (els.skelLeft) els.skelLeft.classList.toggle('is-hidden', !on);
+    if (els.skelRight) els.skelRight.classList.toggle('is-hidden', !on);
+    if (els.formCard) els.formCard.classList.toggle('is-hidden', on);
+    if (els.summaryDesktop) els.summaryDesktop.classList.toggle('is-hidden', on);
+    if (on){
+      if (els.skelLeft) void els.skelLeft.offsetHeight;
+      if (els.skelRight) void els.skelRight.offsetHeight;
+    }
+  }
+
+  function parseMoney(val){
+    if (val == null) return NaN;
+    var s = String(val).trim();
+    if (!s) return NaN;
+    s = s.replace(/[^\d\-,.]/g, '').replace(/\s/g,'');
+    var hasDot = s.indexOf('.') !== -1;
+    var hasComma = s.indexOf(',') !== -1;
+    if (hasDot && hasComma){
+      s = s.replace(/\./g,'').replace(',', '.');
+    } else {
+      s = s.replace(',', '.');
+    }
+    var n = Number(s);
+    return isFinite(n) ? n : NaN;
+  }
+
+  function moneyPLN(v){
+    var n = parseMoney(v);
+    if (!isFinite(n)) return '—';
+    return new Intl.NumberFormat('pl-PL',{style:'currency',currency:'PLN'}).format(n);
+  }
+
+  function normalizeId(raw){
+    if (raw == null) return '';
+    var s = String(raw).trim();
+    s = s.replace(/^#/, '');
+    return s;
+  }
+
+  function isBlank(v){ return !v || String(v).trim() === ''; }
+
+  function normalizeEmail(email){
+    return String(email || '').trim().toLowerCase();
+  }
+
+  function isValidEmail(email){
+    var e = normalizeEmail(email);
+    return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e);
+  }
+
+  function normalizePhoneNumber(raw){
+    return String(raw || '').replace(/\D/g, '');
+  }
+
+  function getExpectedPhoneLength(prefix){
+    var map = {
+      '+48': 9,
+      '+49': [10,11,12],
+      '+420': 9,
+      '+421': 9,
+      '+43': [10,11,12,13],
+      '+31': 9,
+      '+32': 9,
+      '+33': 9,
+      '+46': [7,8,9],
+      '+47': 8,
+      '+45': 8,
+      '+358': [9,10,11,12],
+      '+353': [9,10],
+      '+39': [9,10,11],
+      '+34': 9,
+      '+351': 9,
+      '+41': 9,
+      '+44': [10,11],
+      '+1': 10
+    };
+    return map[prefix] || { min: 6, max: 15 };
+  }
+
+  function isValidPhone(prefix, raw){
+    var digits = normalizePhoneNumber(raw);
+    var rule = getExpectedPhoneLength(prefix);
+
+    if (!digits) return false;
+
+    if (Array.isArray(rule)) {
+      return rule.indexOf(digits.length) !== -1;
+    }
+
+    if (typeof rule === 'number') {
+      return digits.length === rule;
+    }
+
+    if (typeof rule === 'object' && rule.min && rule.max) {
+      return digits.length >= rule.min && digits.length <= rule.max;
+    }
+
+    return digits.length >= 6 && digits.length <= 15;
+  }
+
+  function setSubmitEnabled(v){
+    state.canSubmit = !!v;
+    if (els.submit) els.submit.disabled = !v;
+  }
+
+  function setSubmitLoading(isLoading, text){
+    if (!els.submit) return;
+    if (isLoading){
+      els.submit.classList.add('is-loading');
+      els.submit.textContent = text || 'Zapisywanie…';
+    } else {
+      els.submit.classList.remove('is-loading');
+      els.submit.textContent = 'Wyślij dane';
+    }
+  }
+
+  function toggleAccordion(force){
+    if (!els.accBtn || !els.accPanel) return;
+    var open = els.accBtn.getAttribute('aria-expanded') === 'true';
+    var next = (typeof force === 'boolean') ? force : !open;
+    els.accBtn.setAttribute('aria-expanded', next ? 'true':'false');
+    els.accPanel.classList.toggle('is-hidden', !next);
+  }
+
+  function bindPhoneSanitizer(){
+    var phoneInput = document.getElementById('lumlum-phone-number');
+    if (!phoneInput) return;
+
+    phoneInput.addEventListener('input', function(){
+      phoneInput.value = normalizePhoneNumber(phoneInput.value);
+    });
+  }
+
+  /* =========================================================
+     Field validation UI
+     ========================================================= */
+  function resetFieldErrors(){
+    if (!els.form) return;
+    var fields = els.form.querySelectorAll('.lumlum-orderfill__field');
+    for (var i=0;i<fields.length;i++) fields[i].classList.remove('is-invalid');
+
+    var errs = els.form.querySelectorAll('.lumlum-orderfill__field-error');
+    for (var j=0;j<errs.length;j++){
+      errs[j].classList.remove('is-visible');
+      errs[j].textContent = '';
+    }
+  }
+
+  function setFieldError(name, msg){
+    if (!els.form) return;
+    var input = els.form.querySelector('[name="'+name+'"]');
+    var field = input ? input.closest('.lumlum-orderfill__field') : null;
+    if (field) field.classList.add('is-invalid');
+
+    var err = els.form.querySelector('[data-err-for="'+name+'"]');
+    if (err){
+      err.textContent = msg || 'To pole jest wymagane.';
+      err.classList.add('is-visible');
+    }
+  }
+
+  function scrollToFirstInvalid(){
+    if (!els.form) return;
+    var first = els.form.querySelector('.lumlum-orderfill__field.is-invalid');
+    if (!first) return;
+    first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  /* =========================================================
+     Inject note under "Dane klienta"
+     ========================================================= */
+  function injectRequiredNote(){
+    var blocks = els.form ? els.form.querySelectorAll('.lumlum-orderfill__block') : null;
+    if (!blocks || !blocks.length) return;
+
+    var clientBlock = blocks[0];
+    if (!clientBlock) return;
+
+    if (clientBlock.querySelector('[data-required-note]')) return;
+
+    var note = document.createElement('div');
+    note.className = 'lumlum-orderfill__micro';
+    note.setAttribute('data-required-note','1');
+    note.textContent = '* Oznacza obowiązkowe dane';
+
+    var title = clientBlock.querySelector('.lumlum-orderfill__block-title');
+    if (title && title.nextSibling){
+      title.parentNode.insertBefore(note, title.nextSibling);
+    } else {
+      clientBlock.appendChild(note);
+    }
+  }
+
+  /* =========================================================
+     Postal code formatting (PL only)
+     ========================================================= */
+  function formatPLPostcode(raw){
+    var digits = String(raw || '').replace(/\D/g,'').slice(0,5);
+    if (digits.length <= 2) return digits;
+    return digits.slice(0,2) + '-' + digits.slice(2);
+  }
+
+  function bindPostcodeAutoFormat(inputEl, countryEl){
+    if (!inputEl || !countryEl) return;
+
+    function handle(){
+      if (countryEl.value !== 'PL') return;
+
+      var before = inputEl.value;
+      var start = inputEl.selectionStart;
+      var end = inputEl.selectionEnd;
+
+      var formatted = formatPLPostcode(before);
+      inputEl.value = formatted;
+
+      if (typeof start === 'number' && typeof end === 'number'){
+        if (end === before.length){
+          inputEl.setSelectionRange(formatted.length, formatted.length);
+        } else {
+          var delta = formatted.length - before.length;
+          var ns = Math.max(0, start + delta);
+          var ne = Math.max(0, end + delta);
+          inputEl.setSelectionRange(ns, ne);
+        }
+      }
+    }
+
+    inputEl.addEventListener('input', handle);
+
+    countryEl.addEventListener('change', function(){
+      if (countryEl.value === 'PL'){
+        inputEl.value = formatPLPostcode(inputEl.value);
+      }
+    });
+  }
+
+  function initPostcodeFormatting(){
+    var shipPost = document.getElementById('lumlum-ship-postcode');
+    var shipCountry = document.getElementById('lumlum-ship-country');
+    bindPostcodeAutoFormat(shipPost, shipCountry);
+
+    var invPost = document.getElementById('lumlum-inv-p-postcode');
+    var invCountry = document.getElementById('lumlum-inv-p-country');
+    bindPostcodeAutoFormat(invPost, invCountry);
+
+    // NEW: invoice company postcode
+    var invCPost = document.getElementById('lumlum-inv-c-postcode');
+    var invCCountry = document.getElementById('lumlum-inv-c-country');
+    bindPostcodeAutoFormat(invCPost, invCCountry);
+  }
+
+  /* =========================================================
+     COD rule: if shipping country != PL → remove COD option
+     ========================================================= */
+  function setCodAvailabilityByCountry(){
+    if (!els.form) return;
+
+    var countryEl = document.getElementById('lumlum-ship-country');
+    var country = countryEl ? String(countryEl.value || 'PL') : 'PL';
+    var isPL = (country === 'PL');
+
+    var codInput = els.form.querySelector('input[name="payment_method"][value="cod"]');
+    var codLabel = codInput ? codInput.closest('label') : null;
+
+    if (codLabel){
+      codLabel.classList.toggle('is-hidden', !isPL);
+    }
+
+    // If COD was selected and country changed to non-PL → switch to transfer
+    if (!isPL){
+      var selected = els.form.querySelector('input[name="payment_method"]:checked');
+      if (selected && selected.value === 'cod'){
+        var transfer = els.form.querySelector('input[name="payment_method"][value="transfer"]');
+        if (transfer) transfer.checked = true;
+
+        // clear potential payment error display
+        var err = els.form.querySelector('[data-err-for="payment_method"]');
+        if (err){
+          err.classList.remove('is-visible');
+          err.textContent = '';
+        }
+      }
+    }
+  }
+
+  /* =========================================================
+     Invoice company address copy + warning logic
+     ========================================================= */
+  function getShipAddressSnapshot(){
+    return {
+      ship_street: (document.getElementById('lumlum-ship-street') || {}).value || '',
+      ship_house_no: (document.getElementById('lumlum-ship-house') || {}).value || '',
+      ship_flat_no: (document.getElementById('lumlum-ship-flat') || {}).value || '',
+      ship_postcode: (document.getElementById('lumlum-ship-postcode') || {}).value || '',
+      ship_city: (document.getElementById('lumlum-ship-city') || {}).value || '',
+      ship_country: (document.getElementById('lumlum-ship-country') || {}).value || 'PL'
+    };
+  }
+
+  function getInvCompanyAddressSnapshot(){
+    return {
+      invoice_company_street: (document.getElementById('lumlum-inv-c-street') || {}).value || '',
+      invoice_company_house_no: (document.getElementById('lumlum-inv-c-house') || {}).value || '',
+      invoice_company_flat_no: (document.getElementById('lumlum-inv-c-flat') || {}).value || '',
+      invoice_company_postcode: (document.getElementById('lumlum-inv-c-postcode') || {}).value || '',
+      invoice_company_city: (document.getElementById('lumlum-inv-c-city') || {}).value || '',
+      invoice_company_country: (document.getElementById('lumlum-inv-c-country') || {}).value || 'PL'
+    };
+  }
+
+  function showInvShipWarning(on){
+    if (!els.invShipWarning) return;
+    els.invShipWarning.classList.toggle('is-hidden', !on);
+  }
+
+  function addressesMatchShipVsInvCompany(ship, inv){
+    // compare normalized
+    function n(s){ return String(s || '').trim(); }
+    return (
+      n(ship.ship_street) === n(inv.invoice_company_street) &&
+      n(ship.ship_house_no) === n(inv.invoice_company_house_no) &&
+      n(ship.ship_flat_no) === n(inv.invoice_company_flat_no) &&
+      n(ship.ship_postcode) === n(inv.invoice_company_postcode) &&
+      n(ship.ship_city) === n(inv.invoice_company_city) &&
+      n(ship.ship_country) === n(inv.invoice_company_country)
+    );
+  }
+
+  function evaluateInvShipWarning(){
+    if (!state.invCompanyAddressCopiedOnce) {
+      showInvShipWarning(false);
+      return;
+    }
+
+    var shipNow = getShipAddressSnapshot();
+    var invNow = getInvCompanyAddressSnapshot();
+
+    // warning should trigger only if:
+    // - shipping changed vs snapshot taken at copy time
+    // - and invoice company address does NOT match current shipping (otherwise it is in sync)
+    var shipChanged =
+      JSON.stringify(shipNow) !== JSON.stringify(state.invCompanyShipSnapshot || {});
+
+    var invMatchesCurrentShip = addressesMatchShipVsInvCompany(shipNow, invNow);
+
+    // if user re-copied or manually matched invoice to current ship, warning off
+    if (invMatchesCurrentShip){
+      showInvShipWarning(false);
+      return;
+    }
+
+    showInvShipWarning(!!shipChanged);
+  }
+
+  function copyShippingToCompanyInvoiceAddress(){
+    var ship = {
+      street: document.getElementById('lumlum-ship-street'),
+      house: document.getElementById('lumlum-ship-house'),
+      flat: document.getElementById('lumlum-ship-flat'),
+      post: document.getElementById('lumlum-ship-postcode'),
+      city: document.getElementById('lumlum-ship-city'),
+      country: document.getElementById('lumlum-ship-country')
+    };
+
+    var inv = {
+      street: document.getElementById('lumlum-inv-c-street'),
+      house: document.getElementById('lumlum-inv-c-house'),
+      flat: document.getElementById('lumlum-inv-c-flat'),
+      post: document.getElementById('lumlum-inv-c-postcode'),
+      city: document.getElementById('lumlum-inv-c-city'),
+      country: document.getElementById('lumlum-inv-c-country')
+    };
+
+    if (!ship.street || !inv.street) return;
+
+    inv.street.value  = ship.street.value || '';
+    inv.house.value   = ship.house.value || '';
+    inv.flat.value    = ship.flat.value || '';
+    inv.post.value    = ship.post.value || '';
+    inv.city.value    = ship.city.value || '';
+    inv.country.value = ship.country ? (ship.country.value || 'PL') : 'PL';
+
+    if (inv.country.value === 'PL'){
+      inv.post.value = formatPLPostcode(inv.post.value);
+    }
+
+    // mark that user used copy at least once + snapshot shipping at copy time
+    state.invCompanyAddressCopiedOnce = true;
+    state.invCompanyShipSnapshot = getShipAddressSnapshot();
+
+    // After copy, warning should be OFF (they are in sync)
+    evaluateInvShipWarning();
+
+    // clear validation errors for invoice company address fields (optional)
+    ['invoice_company_street','invoice_company_house_no','invoice_company_postcode','invoice_company_city','invoice_company_country']
+      .forEach(function(nm){
+        var err = els.form ? els.form.querySelector('[data-err-for="'+nm+'"]') : null;
+        if (err){ err.classList.remove('is-visible'); err.textContent=''; }
+      });
+  }
+
+  function bindInvCompanyCopyAndWarning(){
+    if (els.copyShipToInvCompanyBtn){
+      els.copyShipToInvCompanyBtn.addEventListener('click', function(){
+        copyShippingToCompanyInvoiceAddress();
+      });
+    }
+
+    // Listen changes on shipping fields - but warning is only active if user used copy once
+    var shipFields = [
+      document.getElementById('lumlum-ship-street'),
+      document.getElementById('lumlum-ship-house'),
+      document.getElementById('lumlum-ship-flat'),
+      document.getElementById('lumlum-ship-postcode'),
+      document.getElementById('lumlum-ship-city'),
+      document.getElementById('lumlum-ship-country')
+    ].filter(Boolean);
+
+    shipFields.forEach(function(elm){
+      elm.addEventListener('input', evaluateInvShipWarning);
+      elm.addEventListener('change', function(){
+        evaluateInvShipWarning();
+        // also re-evaluate COD availability when country changes
+        if (elm.id === 'lumlum-ship-country') setCodAvailabilityByCountry();
+      });
+    });
+
+    // Also listen changes on invoice company address fields so warning can turn off if user fixes it
+    var invFields = [
+      document.getElementById('lumlum-inv-c-street'),
+      document.getElementById('lumlum-inv-c-house'),
+      document.getElementById('lumlum-inv-c-flat'),
+      document.getElementById('lumlum-inv-c-postcode'),
+      document.getElementById('lumlum-inv-c-city'),
+      document.getElementById('lumlum-inv-c-country')
+    ].filter(Boolean);
+
+    invFields.forEach(function(elm){
+      elm.addEventListener('input', evaluateInvShipWarning);
+      elm.addEventListener('change', evaluateInvShipWarning);
+    });
+  }
+
+  /* =========================================================
+     Read form
+     ========================================================= */
+  function readForm(){
+    var o = {};
+    new FormData(els.form).forEach(function(v,k){ o[k]=v; });
+
+    var invCompany = els.form.querySelector('[name="invoice_enabled"]');
+    var invPrivate = els.form.querySelector('[name="invoice_private_different"]');
+
+    o.invoice_enabled = !!(invCompany && invCompany.checked);
+    o.invoice_private_different = !!(invPrivate && invPrivate.checked);
+
+    o.email = normalizeEmail(o.email);
+
+    var prefix = (o.phone_prefix || '').trim();
+    var number = normalizePhoneNumber(o.phone_number);
+
+    o.phone_number = number;
+
+    if (prefix && number){
+      o.phone = prefix + number;
+      o.phone_e164 = prefix + number;
+    }
+
+    if (String(o.ship_country || '') === 'PL'){
+      o.ship_postcode = formatPLPostcode(o.ship_postcode);
+    }
+    if (String(o.invoice_private_country || '') === 'PL'){
+      o.invoice_private_postcode = formatPLPostcode(o.invoice_private_postcode);
+    }
+    if (String(o.invoice_company_country || '') === 'PL'){
+      o.invoice_company_postcode = formatPLPostcode(o.invoice_company_postcode);
+    }
+
+    return o;
+  }
+
+  function validate(obj){
+    clearAlerts();
+    resetFieldErrors();
+
+    var ok = true;
+    function req(name, msg){
+      if (isBlank(obj[name])){
+        ok = false;
+        setFieldError(name, msg || 'To pole jest wymagane.');
+      }
+    }
+
+    // Dane klienta
+    req('first_name','Wpisz imię.');
+    req('last_name','Wpisz nazwisko.');
+    req('email','Wpisz e-mail.');
+    req('phone_prefix','Wybierz prefix.');
+    req('phone_number','Wpisz numer telefonu.');
+
+    if (!isBlank(obj.email) && !isValidEmail(obj.email)){
+      ok = false;
+      setFieldError('email','Wpisz poprawny adres e-mail.');
+    }
+
+    if (!isBlank(obj.phone_number) && !isValidPhone(obj.phone_prefix, obj.phone_number)){
+      ok = false;
+      if (obj.phone_prefix === '+48'){
+        setFieldError('phone_number','Wpisz poprawny numer telefonu (9 cyfr).');
+      } else {
+        setFieldError('phone_number','Wpisz poprawny numer telefonu.');
+      }
+    }
+
+    // Adres wysyłki
+    req('ship_street','Wpisz ulicę.');
+    req('ship_house_no','Wpisz numer domu.');
+    req('ship_postcode','Wpisz kod pocztowy.');
+    req('ship_city','Wpisz miasto.');
+    req('ship_country','Wybierz kraj.');
+
+    // Metody
+    req('delivery_method','Wybierz metodę dostawy.');
+    req('payment_method','Wybierz metodę płatności.');
+
+    // Paczkomat
+    if (String(obj.delivery_method || '') === 'INPOST_LOCKER'){
+      if (isBlank(obj.punkt_odbioru_ID)){
+        ok = false;
+        setFieldError('punkt_odbioru_ID','Wybierz paczkomat.');
+      }
+    }
+
+    // Payment method sanity + country rule
+    var pm = String(obj.payment_method || '').toLowerCase().trim();
+    var ctry = String(obj.ship_country || 'PL').trim();
+
+    if (pm !== 'transfer' && pm !== 'cod'){
+      ok = false;
+      setFieldError('payment_method','Wybierz: Przelew lub Pobranie.');
+    }
+
+    if (ctry !== 'PL' && pm === 'cod'){
+      ok = false;
+      setFieldError('payment_method','Pobranie dostępne jest tylko dla dostaw w Polsce.');
+    }
+
+    // Faktura: wykluczające się checkboksy
+    if (obj.invoice_enabled && obj.invoice_private_different){
+      ok = false;
+      addAlert('error','Wybierz tylko jedną opcję faktury: firmę albo inne dane (osoba prywatna).');
+    }
+
+    // Faktura na firmę (wymagane)
+    if (obj.invoice_enabled){
+      req('invoice_company_nip','Wpisz NIP.');
+      req('invoice_company_name','Wpisz nazwę firmy.');
+
+      // NEW: address required (like shipping)
+      req('invoice_company_street','Wpisz ulicę (firma).');
+      req('invoice_company_house_no','Wpisz numer domu (firma).');
+      req('invoice_company_postcode','Wpisz kod pocztowy (firma).');
+      req('invoice_company_city','Wpisz miasto (firma).');
+      req('invoice_company_country','Wybierz kraj (firma).');
+    }
+
+    // Inne dane do faktury (osoba prywatna) – required only name/surname
+    if (obj.invoice_private_different){
+      req('invoice_private_first_name','Wpisz imię do faktury.');
+      req('invoice_private_last_name','Wpisz nazwisko do faktury.');
+    }
+
+    if (!ok){
+      if (!els.alerts || !els.alerts.children.length) addAlert('error','Uzupełnij wymagane pola.');
+      scrollToFirstInvalid();
+    }
+    return ok;
+  }
+
+  /* =========================================================
+     Summary
+     ========================================================= */
+  function getDiscountNumber(data){
+    var cand = [
+      data && data.rabat,
+      data && data.discount,
+      data && data.discount_amount,
+      data && data.znizka_kwota,
+      data && data.znizka
+    ];
+    for (var i=0;i<cand.length;i++){
+      var n = parseMoney(cand[i]);
+      if (isFinite(n) && n !== 0) return n;
+    }
+    return 0;
+  }
+
+  function buildSummaryInto(targetEl, data){
+    if (!targetEl || !els.tplSummary || !els.tplRow) return;
+
+    targetEl.innerHTML = '';
+    var sum = els.tplSummary.content.cloneNode(true);
+    var productsWrap = sum.querySelector('[data-products]');
+
+    var products = Array.isArray(data && data.produkty) ? data.produkty : [];
+    products.forEach(function(p){
+      var row = els.tplRow.content.cloneNode(true);
+
+      var nameEl = row.querySelector('[data-name]');
+      var qtyEl  = row.querySelector('[data-qty]');
+      var imgEl  = row.querySelector('[data-thumb]');
+      var lineWrap = row.querySelector('[data-line]');
+      var lineVal  = row.querySelector('[data-lineval]');
+
+      var pName = (p && p.name) ? String(p.name) : 'Produkt';
+
+      var qtyVal =
+        (p && p.quantity != null && String(p.quantity) !== '') ? p.quantity :
+        (p && p.qty != null && String(p.qty) !== '') ? p.qty : 1;
+
+      var qtyNum = parseMoney(qtyVal);
+      if (!isFinite(qtyNum) || qtyNum <= 0) qtyNum = 1;
+
+      var unit = (p && p.unit) ? String(p.unit) : 'szt.';
+
+      if (nameEl) nameEl.textContent = pName;
+      if (qtyEl)  qtyEl.textContent  = String(qtyNum) + ' ' + unit;
+
+      var img = (p && p.image_url) ? String(p.image_url) : '';
+      if (img && imgEl){
+        imgEl.removeAttribute('data-asset');
+        imgEl.src = img;
+      }
+
+      var lineTotal = null;
+      if (p && p.line_total != null && String(p.line_total) !== '') {
+        lineTotal = p.line_total;
+      } else {
+        var priceRaw = (p && p.price != null && String(p.price) !== '') ? p.price : null;
+        if (priceRaw !== null){
+          var priceNum = parseMoney(priceRaw);
+          if (isFinite(priceNum)) lineTotal = priceNum * qtyNum;
+        }
+      }
+
+      if (lineWrap && lineVal){
+        if (lineTotal != null && String(lineTotal) !== ''){
+          lineWrap.classList.remove('is-hidden');
+          lineVal.textContent = moneyPLN(lineTotal);
+        } else {
+          lineWrap.classList.add('is-hidden');
+        }
+      }
+
+      productsWrap.appendChild(row);
+    });
+
+    var disc = getDiscountNumber(data);
+    if (isFinite(disc) && disc < 0){
+      var drow = document.createElement('div');
+      drow.className = 'lumlum-orderfill__product lumlum-orderfill__product--discount';
+      var meta = document.createElement('div');
+      meta.className = 'lumlum-orderfill__pmeta';
+      var nm = document.createElement('div');
+      nm.className = 'lumlum-orderfill__pname';
+      nm.textContent = 'Rabat';
+      meta.appendChild(nm);
+      var line = document.createElement('div');
+      line.className = 'lumlum-orderfill__pline';
+      var lv = document.createElement('div');
+      lv.className = 'lumlum-orderfill__pline-val';
+      lv.textContent = moneyPLN(disc);
+      line.appendChild(lv);
+      drow.appendChild(document.createElement('div'));
+      drow.appendChild(meta);
+      drow.appendChild(line);
+      productsWrap.appendChild(drow);
+    }
+
+    var totalEl = sum.querySelector('[data-total]');
+    if (totalEl) totalEl.textContent = moneyPLN(data && data.kwota_proponowana_brutto);
+
+    targetEl.appendChild(sum);
+  }
+
+  function renderAll(data){
+    if (els.totalInline) els.totalInline.textContent = moneyPLN(data && data.kwota_proponowana_brutto);
+    buildSummaryInto(els.summaryDesktop, data || {});
+    buildSummaryInto(els.summaryMobile, data || {});
+  }
+
+  /* =========================================================
+     Fetch order initial data (GET by id)
+     ========================================================= */
+  async function fetchOrder(){
+    setLoading(true);
+    try{
+      var res = await fetch(ORDER_GET+'?id='+encodeURIComponent(state.cleanId)+(state.formToken ? '&t='+encodeURIComponent(state.formToken) : ''), { cache: 'no-store' });
+      var data = await res.json();
+      state.payload = data;
+
+      // Formularz jednorazowy: prawdziwy form_status z bazy — po zlozeniu
+      // zamowienia link pokazuje ekran informacyjny zamiast formularza.
+      if (data && data.form_status && data.form_status !== 'NEW'){
+        setLoading(false);
+        if (els.orderIdLine) els.orderIdLine.textContent = 'Zamówienie: #' + state.cleanId;
+        renderZlozone();
+        return;
+      }
+
+      if (els.orderIdLine) els.orderIdLine.textContent = 'Zamówienie: #' + state.cleanId;
+
+      setLoading(false);
+      renderAll(data || {});
+
+      if (els.formCard) els.formCard.classList.remove('is-hidden');
+      if (els.summaryDesktop) els.summaryDesktop.classList.remove('is-hidden');
+
+      setSubmitEnabled(true);
+
+    // NEW: apply COD visibility after load
+    setCodAvailabilityByCountry();
+    // Rabat 24H
+    renderRabat24h(data || {});
+    }catch(e){
+      setLoading(false);
+      addAlert('error','Błąd ładowania danych.');
+    }
+  }
+
+  /* =========================================================
+     POST form → Make webhook
+     ========================================================= */
+  async function postForm(payload){
+    var res = await fetch(ORDER_POST,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    return { ok: res.ok, status: res.status };
+  }
+
+  /* =========================================================
+     Thank you overlay
+     ========================================================= */
+  function copyToClipboard(text){
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function(resolve){
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch(_) {}
+      document.body.removeChild(ta);
+      resolve();
+    });
+  }
+
+  function ensureThankYouOverlay(){
+    if (state.ty) return state.ty;
+
+    var wrap = document.createElement('div');
+    wrap.className = 'lumlum-ty';
+    wrap.innerHTML = `
+      <div class="lumlum-ty__card" role="dialog" aria-modal="true" aria-label="Podsumowanie zamówienia">
+        <div class="lumlum-ty__head">
+          <div class="lumlum-ty__title">Dziękujemy za zamówienie</div>
+          <div class="lumlum-ty__sub">
+            <span class="lumlum-ty__pill">Zamówienie: <strong data-ty-order>—</strong></span>
+            <span class="lumlum-ty__pill">Suma: <strong data-ty-total>—</strong></span>
+            <span class="lumlum-ty__pill">Płatność: <strong data-ty-paymethod>—</strong></span>
+          </div>
+        </div>
+
+        <div class="lumlum-ty__body">
+          <div class="lumlum-ty__block">
+            <div class="lumlum-ty__block-title">Dalsze kroki</div>
+            <div class="lumlum-ty__row">
+              <div class="lumlum-ty__hint" data-ty-hint>—</div>
+            </div>
+          </div>
+
+          <div class="lumlum-ty__block" data-ty-transfer style="display:none; margin-top:12px;">
+            <div class="lumlum-ty__block-title">Dane do przelewu</div>
+            <div class="lumlum-ty__row">
+              <div class="lumlum-ty__kv">
+                <div>
+                  <div class="lumlum-ty__k">Odbiorca</div>
+                  <div class="lumlum-ty__v" data-ty-receiver>—</div>
+                </div>
+              </div>
+              <div class="lumlum-ty__kv">
+                <div>
+                  <div class="lumlum-ty__k">Bank</div>
+                  <div class="lumlum-ty__v" data-ty-bank>—</div>
+                </div>
+              </div>
+              <div class="lumlum-ty__kv">
+                <div>
+                  <div class="lumlum-ty__k">Numer konta</div>
+                  <div class="lumlum-ty__v" data-ty-account>—</div>
+                </div>
+                <button class="lumlum-ty__copy" type="button" data-copy="account">Kopiuj</button>
+              </div>
+              <div class="lumlum-ty__kv">
+                <div>
+                  <div class="lumlum-ty__k">Kwota</div>
+                  <div class="lumlum-ty__v" data-ty-amount>—</div>
+                </div>
+              </div>
+              <div class="lumlum-ty__kv">
+                <div>
+                  <div class="lumlum-ty__k">Tytuł przelewu</div>
+                  <div class="lumlum-ty__v" data-ty-title>—</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="lumlum-ty__footer">
+          <div class="lumlum-ty__status" data-ty-status>—</div>
+          <button class="lumlum-ty__close" type="button" data-ty-close>Zamknij</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(wrap);
+
+    wrap.querySelector('[data-ty-close]').addEventListener('click', function(){
+      wrap.classList.remove('is-open');
+    });
+
+    wrap.addEventListener('click', function(e){
+      var btn = e.target && e.target.closest ? e.target.closest('[data-copy]') : null;
+      if (!btn) return;
+      var key = btn.getAttribute('data-copy');
+      if (key !== 'account') return;
+
+      var val = state.ty && state.ty.copyMap ? state.ty.copyMap.account : '';
+      if (!val) return;
+
+      copyToClipboard(val).then(function(){
+        btn.textContent = 'Skopiowano';
+        setTimeout(function(){ btn.textContent = 'Kopiuj'; }, 1200);
+      });
+    });
+
+    state.ty = {
+      wrap: wrap,
+      orderEl: wrap.querySelector('[data-ty-order]'),
+      totalEl: wrap.querySelector('[data-ty-total]'),
+      paymethodEl: wrap.querySelector('[data-ty-paymethod]'),
+      hintEl: wrap.querySelector('[data-ty-hint]'),
+      statusEl: wrap.querySelector('[data-ty-status]'),
+
+      transferBlock: wrap.querySelector('[data-ty-transfer]'),
+      receiverEl: wrap.querySelector('[data-ty-receiver]'),
+      bankEl: wrap.querySelector('[data-ty-bank]'),
+      accountEl: wrap.querySelector('[data-ty-account]'),
+      amountEl: wrap.querySelector('[data-ty-amount]'),
+      titleEl: wrap.querySelector('[data-ty-title]'),
+
+      copyMap: { account: '' }
+    };
+
+    return state.ty;
+  }
+
+  function showThankYouOverlayEmailOnly(formObj){
+    var ty = ensureThankYouOverlay();
+
+    var orderLabel = '#' + state.cleanId;
+    var totalValue = state.payload && state.payload.kwota_proponowana_brutto;
+
+    var pm = String(formObj.payment_method || '').toLowerCase().trim();
+    if (pm !== 'transfer' && pm !== 'cod') pm = 'transfer';
+
+    ty.orderEl.textContent = orderLabel;
+    ty.totalEl.textContent = moneyPLN(totalValue);
+    ty.paymethodEl.textContent = (pm === 'cod') ? 'Pobranie' : 'Przelew';
+
+    var email = (formObj.email || '').trim();
+    if (!email) email = 'podany adres e-mail';
+
+    ty.statusEl.textContent = 'Dane zostały zapisane.';
+
+    if (pm === 'transfer'){
+      ty.transferBlock.style.display = '';
+      ty.receiverEl.textContent = BANK.receiver;
+      ty.bankEl.textContent = BANK.name;
+      ty.accountEl.textContent = BANK.account;
+      ty.amountEl.textContent = moneyPLN(totalValue);
+      ty.titleEl.textContent = 'Zamówienie ' + orderLabel;
+      ty.copyMap.account = BANK.account.replace(/\s+/g,'');
+
+      ty.hintEl.textContent =
+        'Na podany adres e-mail ('+email+') wysłaliśmy wiadomość z dalszymi krokami oraz fakturą proforma. ' +
+        'Na twojego maila wysłaliśmy link do szybkich płatności InFact. Jeśli chcesz wygodnie zapłacić Blikiem lub przelewem, wejdź na maila i kliknij w link. ' +
+        'Po opłaceniu zamówienia przygotujemy wysyłkę. Jeśli nie widzisz wiadomości, sprawdź folder spam.';
+    } else {
+      ty.transferBlock.style.display = 'none';
+      ty.hintEl.textContent =
+        'Na podany adres e-mail ('+email+') wysłaliśmy wiadomość z dalszymi krokami oraz fakturą proforma. ' +
+        'Po przygotowaniu zamówienia prześlemy szczegóły wysyłki. Jeśli nie widzisz wiadomości, sprawdź folder spam.';
+    }
+
+    ty.wrap.classList.add('is-open');
+  }
+
+  /* =========================================================
+     InPost GeoWidget selection handler (global callback)
+     ========================================================= */
+  function extractLockerData(p){
+    if (!p) return { id: '', address: '', legacy: '' };
+
+    var id =
+      (p.name && String(p.name)) ||
+      (p.id && String(p.id)) ||
+      (p.pointName && String(p.pointName)) ||
+      (p.pointId && String(p.pointId)) ||
+      '';
+
+    var street = '';
+    var city = '';
+    var postcode = '';
+
+    if (p.address && typeof p.address === 'object'){
+      street = p.address.line1 || p.address.street || p.address.streetName || '';
+      city = p.address.city || '';
+      postcode = p.address.postCode || p.address.postcode || '';
+    }
+
+    var flatAddress =
+      (p.addressDetails && String(p.addressDetails)) ||
+      (p.locationDescription && String(p.locationDescription)) ||
+      (p.location && String(p.location)) ||
+      '';
+
+    var address = '';
+    if (street || city || postcode){
+      address = [street, (postcode || city) ? ((postcode ? (postcode + ' ') : '') + (city || '')) : '']
+        .filter(Boolean).join(', ');
+    } else if (flatAddress){
+      address = flatAddress;
+    } else if (p.address && typeof p.address === 'string'){
+      address = p.address;
+    }
+
+    address = String(address || '').trim();
+    var legacy = (id && address) ? (id + ' — ' + address) : (id || address || '');
+
+    return {
+      id: String(id || '').trim(),
+      address: address,
+      legacy: String(legacy || '').trim()
+    };
+  }
+
+  function applyLockerSelection(data){
+    var idInput = document.getElementById('lumlum-locker-id');
+    var adrInput = document.getElementById('lumlum-locker-adres');
+    var legacy  = document.getElementById('lumlum-locker-legacy');
+
+    if (idInput) idInput.value = data.id || '';
+    if (adrInput) adrInput.value = data.address || '';
+    if (legacy)  legacy.value  = data.legacy || '';
+
+    if (els.lockerValue){
+      els.lockerValue.textContent = data.legacy || data.id || '—';
+    }
+
+    if (els.lockerPicker) els.lockerPicker.classList.add('is-hidden');
+    if (els.lockerSelected) els.lockerSelected.classList.remove('is-hidden');
+
+    var err = els.form ? els.form.querySelector('[data-err-for="punkt_odbioru_ID"]') : null;
+    if (err){
+      err.classList.remove('is-visible');
+      err.textContent = '';
+    }
+
+    setTimeout(function(){ window.dispatchEvent(new Event('resize')); }, 200);
+  }
+
+  window.lumlumOnPointSelect = function(point){
+    try{
+      var p = point && point.detail ? point.detail : point;
+      var data = extractLockerData(p);
+      if (!data.id){
+        addAlert('error','Nie udało się odczytać punktu paczkomatu. Wybierz ponownie.');
+        return;
+      }
+      applyLockerSelection(data);
+    } catch (e){
+      addAlert('error','Wystąpił błąd przy wyborze paczkomatu. Spróbuj ponownie.');
+    }
+  };
+
+  /* =========================================================
+     Toggles + reset paczkomatu
+     ========================================================= */
+  function resetLockerUI(){
+    var idInput = document.getElementById('lumlum-locker-id');
+    var adrInput = document.getElementById('lumlum-locker-adres');
+    var legacy = document.getElementById('lumlum-locker-legacy');
+
+    if (idInput) idInput.value = '';
+    if (adrInput) adrInput.value = '';
+    if (legacy) legacy.value = '';
+
+    if (els.lockerSelected) els.lockerSelected.classList.add('is-hidden');
+    if (els.lockerPicker) els.lockerPicker.classList.remove('is-hidden');
+  }
+
+  function toggleInvoiceCompany(on){
+    if (!els.invoiceCompanyWrap) return;
+    els.invoiceCompanyWrap.classList.toggle('is-hidden', !on);
+
+    // when hiding company invoice, hide warning
+    if (!on) showInvShipWarning(false);
+  }
+
+  function toggleInvoicePrivate(on){
+    if (!els.invoicePrivateWrap) return;
+    els.invoicePrivateWrap.classList.toggle('is-hidden', !on);
+  }
+
+  function bindToggles(){
+    if (els.accBtn){
+      els.accBtn.addEventListener('click', function(){ toggleAccordion(); });
+    }
+
+    if (els.lockerChangeBtn){
+      els.lockerChangeBtn.addEventListener('click', function(){
+        resetLockerUI();
+        setTimeout(function(){ window.dispatchEvent(new Event('resize')); }, 200);
+      });
+    }
+
+    root.addEventListener('change', function(e){
+      var t = e.target;
+      if (!t) return;
+
+      if (t.name === 'delivery_method'){
+        var isLocker = t.value === 'INPOST_LOCKER';
+        if (els.lockerWrap){
+          els.lockerWrap.classList.toggle('is-hidden', !isLocker);
+          if (!isLocker){
+            resetLockerUI();
+          } else {
+            if (els.lockerPicker) els.lockerPicker.classList.remove('is-hidden');
+            if (els.lockerSelected) els.lockerSelected.classList.add('is-hidden');
+            setTimeout(function(){ window.dispatchEvent(new Event('resize')); }, 200);
+          }
+        }
+      }
+
+      if (t.name === 'invoice_enabled'){
+        var invPrivate = els.form.querySelector('[name="invoice_private_different"]');
+        if (t.checked && invPrivate && invPrivate.checked){
+          invPrivate.checked = false;
+          toggleInvoicePrivate(false);
+        }
+        toggleInvoiceCompany(!!t.checked);
+      }
+
+      if (t.name === 'invoice_private_different'){
+        var invCompany = els.form.querySelector('[name="invoice_enabled"]');
+        if (t.checked && invCompany && invCompany.checked){
+          invCompany.checked = false;
+          toggleInvoiceCompany(false);
+        }
+        toggleInvoicePrivate(!!t.checked);
+      }
+
+      // NEW: country change → COD rule
+      if (t.name === 'ship_country'){
+        setCodAvailabilityByCountry();
+      }
+    });
+
+    var invCompanyInit = els.form.querySelector('[name="invoice_enabled"]');
+    var invPrivateInit = els.form.querySelector('[name="invoice_private_different"]');
+    toggleInvoiceCompany(!!(invCompanyInit && invCompanyInit.checked));
+    toggleInvoicePrivate(!!(invPrivateInit && invPrivateInit.checked));
+  }
+
+  /* =========================================================
+     Submit handler
+     ========================================================= */
+  function attachSubmit(){
+    els.form.addEventListener('submit', async function(e){
+      e.preventDefault();
+      if (state.locked || !state.canSubmit) return;
+
+      var obj = readForm();
+      if (!validate(obj)) return;
+
+      setSubmitEnabled(false);
+      setSubmitLoading(true, 'Zapisywanie…');
+      if (els.substatus) els.substatus.textContent = '';
+
+      obj.id = state.cleanId;
+      if (state.formToken) obj.t = state.formToken;
+      obj.form_status = 'SUBMITTED';
+      obj.form_submitted_at = new Date().toISOString();
+
+      try{
+        var resp = await postForm(obj);
+        if (!resp.ok){
+          setSubmitEnabled(true);
+          setSubmitLoading(false);
+          if (resp.status === 409){ renderZlozone(); return; }
+          addAlert('error','Nie udało się zapisać.');
+          return;
+        }
+
+        state.locked = true;
+        setSubmitLoading(true, 'Zapisano');
+        els.submit.disabled = true;
+
+        if (els.formCard) els.formCard.classList.add('is-hidden');
+        showThankYouOverlayEmailOnly(obj);
+      }catch(err){
+        setSubmitEnabled(true);
+        setSubmitLoading(false);
+        addAlert('error','Wystąpił błąd połączenia. Spróbuj ponownie.');
+      }
+    });
+  }
+
+  /* =========================================================
+     Init
+     ========================================================= */
+  function init(){
+    bindToggles();
+    attachSubmit();
+
+    injectRequiredNote();
+    initPostcodeFormatting();
+    bindPhoneSanitizer();
+
+    // NEW: bind copy+warning + COD on country
+    bindInvCompanyCopyAndWarning();
+    setCodAvailabilityByCountry();
+
+    var id = new URLSearchParams(location.search).get('id');
+    if (!id){
+      addAlert('error','Brak ID zamówienia.');
+      return;
+    }
+
+    state.cleanId = normalizeId(id);
+    state.formToken = new URLSearchParams(location.search).get('t') || '';
+    toggleAccordion(false);
+    fetchOrder();
+  }
+
+  init();
+})();
+</script>
+
+
+  {% schema %}
+  {
+    "name": "Formularz",
+    "settings": [],
+    "presets": [{ "name": "Formularz" }]
+  }
+  {% endschema %}
+</section>
