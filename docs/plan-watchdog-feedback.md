@@ -1,8 +1,14 @@
 # Plan: systemowy watchdog "temat ucieka" (wyceny / leady / wiadomości)
 
-Stan: ZATWIERDZONY (2026-07-12, Antoni potwierdził decyzje z §10: feedback_watch +
-kom_commitments w unii, push inline notifyUser, nowa kategoria alerty_watchdoga,
-dispatcher co 30 min 8-20, cichy termin 2-21 dni)
+Stan: WDROŻONE NA PROD (2026-07-12). Etapy a-e zbudowane i zweryfikowane:
+migracje 003+004 (+ kom 009) na bazie, backfill 118 wycen + 3 leady (przyszłe
+daty), pg_cron `watchdog_feedback` (*/30 6-18 UTC -> /backlog-b2c/api/cron/
+watchdog), push przetestowany na żywo. ŚWIADOMIE ODŁOŻONE: cichy watch AI dla
+leadów bez żadnej daty (duży koszt/szum - do decyzji Antoniego), eskalacja
+po N dniach od alertu (v2), Backlog B2B (backlog_target='b2b' tylko logowany).
+Decyzje z §10 potwierdzone przez Antoniego: feedback_watch + kom_commitments
+w unii, push inline notifyUser, kategoria alerty_watchdoga, co 30 min 8-20,
+cichy termin 2-21 dni.
 Zależności: docs/plan-powiadomienia-push.md (kanał push), docs/plan-komunikator-followupy.md (kom_commitments), docs/plan-wlasnosc-zasobow.md (owner)
 
 ## 1. Po co
