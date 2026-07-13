@@ -73,6 +73,7 @@ app.get('/api/stats/outreach', requireToken, machine((db, req) => Q.outreach(db,
 })));
 app.get('/api/stats/leady', requireToken, machine((db) => Q.leady(db)));
 app.get('/api/stats/close-rate', requireToken, machine((db) => Q.closeRate(db)));
+app.get('/api/stats/organik', requireToken, machine((db) => Q.organik(db)));
 
 // ── Bramka sesji huba (ciasteczko Path=/) ────────────────────────────────────
 const auth = createAuth({ getClient, panelKey: 'statystyki', loginTitle: 'Statystyki' });
@@ -96,6 +97,12 @@ app.get('/api/snapshot', async (req, res) => {
     const owner = isAdmin(req.user) ? undefined : (req.user && req.user.name);
     res.json(await Q.snapshot(getClient(), { owner }));
   } catch (err) { console.error('snapshot error:', err.message); res.status(502).json({ error: err.message }); }
+});
+
+// Marketing/Organik (grupa F) — firmowy widok (bez scope per owner: to social całej firmy).
+app.get('/api/organik', async (req, res) => {
+  try { res.json(await Q.organik(getClient())); }
+  catch (err) { console.error('organik error:', err.message); res.status(502).json({ error: err.message }); }
 });
 
 // Doradca — czat SSE. ADMIN-only: system prompt (docs/fable-doradca-lumlum.md)

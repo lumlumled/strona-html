@@ -383,4 +383,55 @@ async function snapshot(db, { owner } = {}) {
   };
 }
 
-module.exports = { sprzedaz, pipeline, outreach, leady, closeRate, snapshot };
+// ── F. ORGANIK (marketing organiczny: FB + IG + TikTok) ──────────────────────
+// Źródło: marketing_organic_daily (FB+TikTok dzienne) + marketing_organic_posts
+// (IG+TikTok per-post). Rok z eksportów Meta/TikTok. migracja 006.
+async function organik(db) {
+  const [dRes, pRes] = await Promise.all([
+    db.from('marketing_organic_daily').select('platform,date,metrics'),
+    db.from('marketing_organic_posts').select('platform,post_id,title,url,published_at,views,likes,comments,shares,saves'),
+  ]);
+  if (dRes.error) throw dRes.error;
+  if (pRes.error) throw pRes.error;
+  const daily = dRes.data || [];
+  const posts = pRes.data || [];
+  const sumM = (rows, key) => rows.reduce((a, r) => a + (Number(r.metrics && r.metrics[key]) || 0), 0);
+  const fbD = daily.filter((r) => r.platform === 'facebook');
+  const ttD = daily.filter((r) => r.platform === 'tiktok');
+  const igP = posts.filter((r) => r.platform === 'instagram');
+  const ttP = posts.filter((r) => r.platform === 'tiktok');
+  const sumP = (rows, key) => rows.reduce((a, r) => a + (Number(r[key]) || 0), 0);
+
+  // Sumy per platforma (FB z daily; IG z postów; TikTok z daily + liczba filmów z postów)
+  const platformy = {
+    facebook: { wyswietlenia: sumM(fbD, 'views'), interakcje: sumM(fbD, 'interactions'), nowi_obserwatorzy: sumM(fbD, 'new_followers'), klikniecia_link: sumM(fbD, 'link_clicks'), postow: null },
+    instagram: { wyswietlenia: sumP(igP, 'views'), polubienia: sumP(igP, 'likes'), udostepnienia: sumP(igP, 'shares'), zapisania: sumP(igP, 'saves'), komentarze: sumP(igP, 'comments'), postow: igP.length },
+    tiktok: { wyswietlenia: sumM(ttD, 'views'), polubienia: sumM(ttD, 'likes'), udostepnienia: sumM(ttD, 'shares'), nowi_obserwatorzy: sumM(ttD, 'new_followers'), leady: sumM(ttD, 'leads'), klikniecia_strona: sumM(ttD, 'website_clicks'), filmow: ttP.length },
+  };
+  const razem_wyswietlenia = platformy.facebook.wyswietlenia + platformy.instagram.wyswietlenia + platformy.tiktok.wyswietlenia;
+
+  // Miesięczny szereg wyświetleń per platforma (FB+TikTok z daily po dacie; IG z postów po dacie publikacji).
+  const months = new Map(); // 'YYYY-MM' → {facebook, instagram, tiktok}
+  const bump = (ym, plat, v) => { if (!ym) return; const m = months.get(ym) || { facebook: 0, instagram: 0, tiktok: 0 }; m[plat] += v || 0; months.set(ym, m); };
+  fbD.forEach((r) => bump(String(r.date).slice(0, 7), 'facebook', Number(r.metrics && r.metrics.views) || 0));
+  ttD.forEach((r) => bump(String(r.date).slice(0, 7), 'tiktok', Number(r.metrics && r.metrics.views) || 0));
+  igP.forEach((r) => bump(r.published_at ? String(r.published_at).slice(0, 7) : null, 'instagram', Number(r.views) || 0));
+  const szereg = [...months.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([month, m]) => ({ month, ...m }));
+
+  // Top posty (IG + TikTok) po wyświetleniach.
+  const top_posty = [...igP, ...ttP]
+    .sort((a, b) => (Number(b.views) || 0) - (Number(a.views) || 0))
+    .slice(0, 12)
+    .map((r) => ({ platform: r.platform, title: r.title, url: r.url, views: Number(r.views) || 0, likes: Number(r.likes) || 0, published_at: r.published_at }));
+
+  const daty = daily.map((r) => r.date).filter(Boolean).sort();
+  return {
+    zakres: { od: daty[0] || null, do: daty[daty.length - 1] || null },
+    razem_wyswietlenia,
+    platformy,
+    szereg_miesieczny: szereg,
+    top_posty,
+  };
+}
+
+module.exports = { sprzedaz, pipeline, outreach, leady, closeRate, snapshot, organik };
