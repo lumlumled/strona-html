@@ -1067,6 +1067,19 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       }
     }
 
+    // Kto dzwonił (atrybucja handlowca) — pole `handlowiec` w Log zmian było
+    // dotąd niezasilane, więc statystyki per-osoba nie miały historii. Reguła
+    // (numer Zadarmy Lorenza w env LORENZO_ZADARMA_NUMBER): jeśli jego numer
+    // występuje na którejkolwiek nodze połączenia (dzwonił z niego LUB
+    // dzwoniono do niego) → 'Lorenzo'. Jawny `call.pracownik` z Make ma
+    // pierwszeństwo; brak env/dopasowania → DEFAULT_HANDLOWIEC (na razie Antoni).
+    const lorenzoNum = normalizePhoneDigits(process.env.LORENZO_ZADARMA_NUMBER);
+    const legs = [call.caller_id, call.called_did, call.dst].map(normalizePhoneDigits).filter(Boolean);
+    const handlowiec = call.pracownik
+      || (lorenzoNum && legs.includes(lorenzoNum) ? 'Lorenzo' : null)
+      || process.env.DEFAULT_HANDLOWIEC
+      || null;
+
     const { error: insertErr } = await supabase.from(LOG_ZMIAN_TABLE).insert({
       zrodlo: 'zadarma_webhook',
       telefon: customerDigits || null,
@@ -1084,10 +1097,9 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       // wydarzyło bez klikania w każdy case osobno.
       zamkniete_dzis: Boolean(analysis?.zamkniete_dzis),
       transkrypcja: transcript || null,
-      // `pracownik` w payloadzie (wpisany ręcznie w Make, per scenariusz/osoba)
-      // ma pierwszeństwo nad DEFAULT_HANDLOWIEC — ten drugi zostaje jako
-      // fallback dla webhooka prosto z Zadarmy, zanim dojdzie SIP-lookup.
-      handlowiec: call.pracownik || process.env.DEFAULT_HANDLOWIEC || null,
+      // Atrybucja handlowca policzona wyżej: call.pracownik (Make) → numer
+      // Lorenza (LORENZO_ZADARMA_NUMBER) → DEFAULT_HANDLOWIEC → null.
+      handlowiec,
       czas_trwania_s: Number(call.duration) || 0,
       disposition: label,
       pbx_call_id: call.pbx_call_id || null,
