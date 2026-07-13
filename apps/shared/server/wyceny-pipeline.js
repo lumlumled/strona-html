@@ -281,7 +281,10 @@ async function startPipeline(db, wycenaId) {
       return { skipped: 'not-submitted' };
     }
     const { kwotaFinalna, rabatLaczny } = policzKwoty(wycena);
-    const services = infakt.buildServices(wycena.items, rabatLaczny);
+    // Dopłata do wysyłki zagranicznej (PL=0, Europa=50, poza=100) doliczana do
+    // faktury — ta sama reguła, którą klient widzi w formularzu.
+    const doplataWysylka = infakt.shippingSurchargePLN(wycena.ship_country);
+    const services = infakt.buildServices(wycena.items, rabatLaczny, doplataWysylka);
     const isCod = String(wycena.payment_method || '').toLowerCase() !== 'transfer';
     const zagranica = jestZagranica(wycena);
 

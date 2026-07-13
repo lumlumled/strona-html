@@ -29,8 +29,10 @@ async function shipxFetch(pathname, { method = 'get', body } = {}) {
   try { return JSON.parse(raw); } catch (_) { return raw; }
 }
 
-// Nadawca 1:1 z Make (działa w prod od miesięcy — nie poprawiamy literówki
-// w nazwie ulicy, InPost ma ją w każdej dotychczasowej przesyłce).
+// Nadawca = Wrocław (2026-07-13, decyzja Antoniego — spójnie z kontem Furgonetki
+// „dane odbioru w Furgonetce"). Adres nadawcy jest WYMAGANY w payloadzie ShipX
+// (bez niego 400) i InPost drukuje go na etykiecie jako adres zwrotny — nie ma
+// flagi API, żeby go ukryć; dlatego musi być poprawny (a nie ukryty).
 const SENDER = {
   company_name: 'LumLum',
   first_name: 'first_name',
@@ -38,10 +40,10 @@ const SENDER = {
   email: 'kontakt@lumlum.co',
   phone: '604650590',
   address: {
-    street: 'Kościelsika',
-    building_number: '11B',
-    city: 'Zakopane',
-    post_code: '34-500',
+    street: 'Walońska',
+    building_number: '7/84',
+    city: 'Wrocław',
+    post_code: '50-418',
     country_code: 'PL',
   },
 };

@@ -83,11 +83,29 @@ function grosze(zl) {
   return Math.round(Number(zl) * 100);
 }
 
-// services: pozycje wyceny + ujemna pozycja "Rabat" (zawsze kwotowa —
-// decyzja Antoniego 2026-07-11). gross_price to ŁĄCZNA kwota pozycji
-// w groszach (jak w Make: quantity × price_brutto × 100). rabatLaczny
-// (ujemny, zł) = (kwota_proponowana − suma pozycji) − aktywny rabat 24h.
-function buildServices(items, rabatLaczny) {
+// Dopłata do wysyłki zagranicznej (flat, brutto — decyzja Antoniego 2026-07-13):
+// PL/pusty = 0 (darmowa), Europa = 50 zł, poza Europą = 100 zł. Ta sama reguła
+// pokazuje się klientowi w formularzu (formularz.liquid) — trzymać zgodnie.
+// EUROPA = EU27 + EEA (IS/LI/NO) + UK + CH + mikropaństwa + Bałkany + UA/MD/BY.
+const EUROPA_CC = new Set([
+  'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU',
+  'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES',
+  'SE', 'IS', 'LI', 'NO', 'CH', 'GB', 'UA', 'MD', 'BY', 'RS', 'BA', 'ME', 'MK',
+  'AL', 'XK', 'AD', 'MC', 'SM', 'VA', 'GI', 'FO',
+]);
+function shippingSurchargePLN(country) {
+  const cc = String(country || '').trim().toUpperCase();
+  if (!cc || cc === 'PL') return 0;
+  return EUROPA_CC.has(cc) ? 50 : 100;
+}
+
+// services: pozycje wyceny + dopłata do wysyłki zagranicznej (jeśli > 0) +
+// ujemna pozycja "Rabat" (zawsze kwotowa — decyzja Antoniego 2026-07-11).
+// gross_price to ŁĄCZNA kwota pozycji w groszach (jak w Make: quantity ×
+// price_brutto × 100). rabatLaczny (ujemny, zł) = (kwota_proponowana − suma
+// pozycji) − aktywny rabat 24h. shippingSurcharge (zł, brutto) doliczany OSOBNO
+// (nie jest reconcilowany rabatem) → podnosi sumę faktury o 50/100.
+function buildServices(items, rabatLaczny, shippingSurcharge = 0) {
   const services = (items || []).map((p) => ({
     name: p.name,
     unit: 'szt.',
@@ -95,6 +113,9 @@ function buildServices(items, rabatLaczny) {
     tax_symbol: String(p.VAT || '23'),
     gross_price: grosze((Number(String(p.price).replace(',', '.')) || 0) * (Number(p.quantity) || 1)),
   }));
+  if (shippingSurcharge && shippingSurcharge > 0) {
+    services.push({ name: 'Wysyłka zagraniczna', unit: 'szt.', quantity: 1, tax_symbol: '23', gross_price: grosze(shippingSurcharge) });
+  }
   if (rabatLaczny && rabatLaczny < 0) {
     services.push({ name: 'Rabat', unit: 'szt.', quantity: 1, tax_symbol: '23', gross_price: grosze(rabatLaczny) });
   }
@@ -185,6 +206,7 @@ module.exports = {
   createQuickPayment,
   downloadPdf,
   buildServices,
+  shippingSurchargePLN,
   buildClient,
   buildProforma,
   buildVatFromProforma,
