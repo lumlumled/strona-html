@@ -27,9 +27,15 @@
 //     receiver, parcels, type) — INNA struktura niż calculate-price (bez koperty).
 //     Uwaga: część kurierów ma limit wartości (np. swiatprzesylek 500 zł) i nie
 //     wspiera user_reference_number → wybór najtańszego musi to respektować.
-//   • order/pickup/label — do potwierdzenia na REALNYM (płatnym) zamówieniu,
-//     TODO(live). Poza-EU (np. US) może wymagać danych celnych (US w calculate-
-//     price zwrócił pusto).
+//   • order — POTWIERDZONE realnym zamówieniem (2026-07-13): PUT /order-commands/
+//     {uuid} (uuid klienta = idempotencja), body {packages:[{id}], label:
+//     {page_format:'a6',file_format:'pdf'}} → stan „ordered" + numer nadania +
+//     etykieta A6 (PDF, ~72 KB). validate (204) = pre-check. downloadLabel A6 OK.
+//   • ANULOWANIE zamówionej paczki na kontrakcie Furgonetki NIE idzie przez
+//     /packages/cancel (to dla umów własnych → „nie jesteś właścicielem").
+//     DELETE /order-commands/{uuid} działa tylko ZANIM order się dokończy.
+//     Anulowanie po fakcie: panel web (cancel_available) / dok do dobrania.
+//   • Poza-EU + UK/CH/NO/UA wymaga `duty` (dane celne) — do dołożenia (v2).
 
 const API_BASE = process.env.FURGONETKA_API_BASE || 'https://api.furgonetka.pl';
 const LABEL_FORMAT = process.env.FURGONETKA_LABEL_FORMAT || 'A6';
@@ -255,28 +261,48 @@ async function createPackage(wycena, oferta, { reference } = {}) {
   return furgoFetch('/packages', { method: 'post', body });
 }
 
-// Zamówienie utworzonej paczki do nadania (to kosztuje/finalizuje). Przyjmuje
-// id paczki zwrócone przez createPackage. TODO(sandbox): kształt body (lista id).
-async function orderPackage(packageId) {
-  return furgoFetch('/packages/order', { method: 'put', body: { packages: [packageId] } });
+// Walidacja danych przesyłki PRZED utworzeniem/kupnem (to samo body co create).
+// 204 = OK; 400 = { errors:[…] }. furgoFetch zwróci pusty string przy 204.
+async function validatePackage(wycena, oferta) {
+  const body = {
+    type: 'package',
+    service_id: oferta.service_id,
+    pickup: buildPickup(),
+    receiver: buildReceiver(wycena),
+    parcels: [buildParcel(wycena)],
+  };
+  return furgoFetch('/packages/validate', { method: 'post', body });
 }
 
-// Zamów odbiór kuriera + odczytaj okno godzinowe (do pusha „odbiór o HH:MM").
-async function schedulePickup(packageId) {
-  return furgoFetch('/packages/pickup', { method: 'put', body: { packages: [packageId] } });
-}
-async function getPickup() {
-  return furgoFetch('/packages/pickup');
+// ZAMÓWIENIE (kupno) — wzorzec komendy: PUT /order-commands/{uuid}. uuid generuje
+// KLIENT (idempotencja — powtórka z tym samym uuid nie zdubluje). Etykietę
+// zamawiamy od razu w żądanym formacie (A6). `packages` = tablica obiektów
+// PackageId ({ id }). Zwraca { uuid } (potem GET paczki potwierdza stan „ordered").
+async function orderPackage(packageId, { uuid } = {}) {
+  const crypto = require('crypto');
+  const opId = uuid || crypto.randomUUID();
+  const body = {
+    packages: [{ id: String(packageId) }],
+    label: { page_format: String(LABEL_FORMAT).toLowerCase(), file_format: 'pdf' },
+    skip_email_send: false,
+  };
+  const res = await furgoFetch(`/order-commands/${opId}`, { method: 'put', body });
+  return { uuid: opId, res };
 }
 
-// Etykieta PDF w formacie A6 (do drukarki etykiet — jak ShipX). TODO(sandbox):
-// dokładny path/parametr formatu druku.
+// Anulowanie ZLECENIA zamawiania (cofnięcie order-command). Bezpieczny „undo".
+async function cancelOrderCommand(uuid) {
+  return furgoFetch(`/order-commands/${encodeURIComponent(uuid)}`, { method: 'delete' });
+}
+
+// Etykieta PDF (A6). Po zamówieniu paczka ma etykietę; pobranie bajtów.
 async function downloadLabel(packageId) {
-  return furgoFetch(`/packages/${encodeURIComponent(packageId)}/label?format=${encodeURIComponent(LABEL_FORMAT)}`, { wantBuffer: true });
+  return furgoFetch(`/packages/${encodeURIComponent(packageId)}/label?type=${encodeURIComponent(LABEL_FORMAT)}`, { wantBuffer: true });
 }
 
-async function getTracking(trackingNumber) {
-  return furgoFetch(`/packages/tracking?tracking_number=${encodeURIComponent(trackingNumber)}`);
+// Tracking: GET /packages/{package_id}/tracking → { tracking:[…] }.
+async function getTracking(packageId) {
+  return furgoFetch(`/packages/${encodeURIComponent(packageId)}/tracking`);
 }
 
 // Jawne mapowanie statusów (jak w ShipX — tylko „delivered" znaczy doręczona).
@@ -318,22 +344,26 @@ async function zamowPrzesylkeZagraniczna(wycena, { autoOrder = true } = {}) {
   if (!packageId) throw new Error(`Furgonetka: createPackage bez package_id: ${JSON.stringify(paczka).slice(0, 200)}`);
 
   // order = kupno (płatne). pickup + etykieta A6 best-effort (nie wywalają całości).
-  let ordered = false; let pickup = null; let label = null;
+  let ordered = false; let orderUuid = null; let pickup = null; let label = null; let pkg = paczka;
   if (autoOrder) {
-    await orderPackage(packageId);
+    const ord = await orderPackage(packageId); // PUT /order-commands/{uuid} (kupno + etykieta A6)
+    orderUuid = ord.uuid;
     ordered = true;
-    try { await schedulePickup(packageId); pickup = await getPickup(); } catch (e) { pickup = { error: e.message }; }
+    // po zamówieniu paczka ma stan „ordered", numer nadania, dane odbioru, etykietę
+    try { const det = await furgoFetch(`/packages/${packageId}`); pkg = (det.packages && det.packages[0]) || det || paczka; } catch (_) {}
+    pickup = { date: pkg.pickup_date || null, number: pkg.pickup_number || null, courier_phone: pkg.courier_phone || null };
     try { label = await downloadLabel(packageId); } catch (_) { label = null; } // dociągnie worker
   }
 
   return {
     provider: 'furgonetka',
     shipment_id: String(packageId),
+    order_uuid: orderUuid,
     service: oferta.service ?? null,
-    tracking_number: paczka?.tracking_number ?? (paczka?.parcels && paczka.parcels[0] && paczka.parcels[0].package_no) ?? null,
+    tracking_number: (pkg && pkg.parcels && pkg.parcels[0] && pkg.parcels[0].package_no) || (pkg && pkg.tracking_number) || null,
     cena_kuriera: oferta.pricing?.price_gross ?? null,
     ordered,
-    pickup, // { … godzina odbioru … } — do pusha „kurier odbierze o HH:MM"
+    pickup, // { date, number, courier_phone } — do pusha „kurier odbierze …"
     label,  // Buffer PDF A6 albo null (dociągnie worker po potwierdzeniu)
     raw: { ofert: oferty.length, odrzuconych },
   };
@@ -350,10 +380,10 @@ module.exports = {
   calculatePrice,
   sortowaneOferty,
   wybierzNajtanszaOferte,
+  validatePackage,
   createPackage,
   orderPackage,
-  schedulePickup,
-  getPickup,
+  cancelOrderCommand,
   downloadLabel,
   getTracking,
   mapTrackingStatus,
