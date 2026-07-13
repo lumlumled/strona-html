@@ -3568,9 +3568,15 @@
       return digits ? `+${digits}` : '—';
     }
 
+    // Wpisy Log zmian, które NIE są telefonami (mirror NIE_TELEFON_ZRODLA z
+    // backendu) — nie liczą się do "Zadzwoniono dziś" i nie są renderowane jako
+    // rozmowa. facebook_lead_webhook to moment wpadnięcia nowego leada.
+    const NIE_TELEFON_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'facebook_lead_webhook']);
+
     function polaczenieKierunekLabel(row) {
       if (row.zrodlo === 'notatka_handlowca') return 'notatka';
       if (row.zrodlo === 'manual_akcja') return 'akcja (ręcznie)';
+      if (row.zrodlo === 'facebook_lead_webhook') return 'nowy lead';
       if (row.kierunek === 'przychodzące') return row.disposition === 'no_answer' ? 'nieodebrane' : 'przychodzące';
       if (row.kierunek === 'wychodzące') return 'wychodzące';
       return row.disposition === 'no_answer' ? 'nieodebrane' : '—';
@@ -3620,12 +3626,16 @@
         telefon.textContent = telefonParts.join(' – ');
         const czasTrwania = document.createElement('span');
         czasTrwania.className = 'czas-trwania';
-        // Notatka/ręczna zmiana akcji nie ma czasu trwania — "0s" byłoby mylące.
-        czasTrwania.textContent = (row.zrodlo === 'notatka_handlowca' || row.zrodlo === 'manual_akcja')
+        // Notatka/ręczna zmiana akcji/nowy lead nie mają czasu trwania — "0s"
+        // byłoby mylące (nowy lead wyglądałby jak 0-sekundowa rozmowa).
+        czasTrwania.textContent = NIE_TELEFON_ZRODLA.has(row.zrodlo)
           ? ''
           : `${row.czas_trwania_s || 0}s`;
         summary.append(czas, kierunek, telefon, czasTrwania);
-        if (row.handlowiec) {
+        // Nowy lead ma w Log zmian handlowca = owner (domyślnie Lorenzo), ale
+        // to przypisanie, nie "Lorenzo dzwonił" — nie pokazujemy go jako autora
+        // wpisu, żeby nie czytało się jak zrealizowane połączenie handlowca.
+        if (row.handlowiec && row.zrodlo !== 'facebook_lead_webhook') {
           const handlowiec = document.createElement('span');
           handlowiec.className = 'status-zmiana';
           handlowiec.textContent = row.handlowiec;
@@ -3779,7 +3789,10 @@
         const res = await fetch(`${API_BASE}/api/log-polaczen?offset=${offset}`);
         if (!res.ok) return;
         const body = await res.json();
-        const rows = body.data || [];
+        // Tylko realne połączenia liczą się do "Zadzwoniono dziś" — wpisy spoza
+        // NIE_TELEFON_ZRODLA (notatki, ręczne akcje, wpadnięcie nowego leada) to
+        // nie rozmowy. Bez tego świeży lead zawyżał licznik o jeden.
+        const rows = (body.data || []).filter((r) => !NIE_TELEFON_ZRODLA.has(r.zrodlo));
         const odebrano = rows.filter((r) => r.disposition === 'answered').length;
         const nieodebrano = rows.filter((r) => r.disposition === 'no_answer').length;
         const przychodzace = rows.filter((r) => r.kierunek === 'przychodzące').length;

@@ -119,8 +119,9 @@ function handleError(res, err, fallbackStatus = 400) {
 const LEADY_B2C_TABLE = 'Leady B2C';
 const LOG_ZMIAN_TABLE = 'Log zmian';
 // Kopia listy ze wspólnego modułu leady-endpoints (hub nie potrzebuje całego
-// modułu, tylko tego zbioru): wpisy Log zmian, które NIE są telefonami.
-const NIE_TELEFON_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm']);
+// modułu, tylko tego zbioru): wpisy Log zmian, które NIE są telefonami
+// (w tym facebook_lead_webhook = powstanie leada, nie połączenie).
+const NIE_TELEFON_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'facebook_lead_webhook']);
 
 function warsawToday() {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Warsaw', year: 'numeric', month: '2-digit', day: '2-digit' })

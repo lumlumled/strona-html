@@ -53,8 +53,11 @@ const EDITABLE_LEAD_FIELDS = [
 
 // Źródła w "Log zmian", które NIE są telefonami — nie liczą się do
 // "Ilość telefonów"/"Skontaktowane dziś" (notatki, ręczne zmiany akcji,
-// ręczne edycje pól złapane triggerem manual_crm).
-const NIE_TELEFON_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm']);
+// ręczne edycje pól złapane triggerem manual_crm, a także wpis z chwili
+// wpadnięcia nowego leada z Facebook Lead Ads — to zdarzenie "powstał lead",
+// nie połączenie; bez tego świeży lead fałszywie liczył się jako "zadzwoniono
+// dziś" i pokazywał się w Połączeniach jako 0-sekundowa rozmowa handlowca).
+const NIE_TELEFON_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'facebook_lead_webhook']);
 
 function normalizePhoneDigits(v) {
   return String(v || '').replace(/\D/g, '');

@@ -596,7 +596,10 @@ window.WycenaKarta = (() => {
       head.appendChild(callDot(row));
       head.appendChild(el('span', 'wk-rozmowa-time', formatDT(row.data_zmiany)));
       const jestNotatka = row.zrodlo === 'notatka_handlowca' || row.zrodlo === 'manual_akcja';
-      if (jestNotatka) {
+      if (row.zrodlo === 'facebook_lead_webhook') {
+        // Wpadnięcie leada, nie rozmowa — czytelna etykieta zamiast pustki/czasu.
+        head.appendChild(el('span', 'wk-rozmowa-tag', 'nowy lead'));
+      } else if (jestNotatka) {
         head.appendChild(el('span', 'wk-rozmowa-tag', row.zrodlo === 'manual_akcja'
           ? 'zmiana akcji'
           : `notatka${row.handlowiec ? ` · ${row.handlowiec}` : ''}`));

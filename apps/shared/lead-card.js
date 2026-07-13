@@ -565,7 +565,13 @@ window.LeadKarta = (() => {
         when.className = 'lk-historia-rozmow-data';
         when.textContent = formatRelativeDateTime(row.data_zmiany);
         head.appendChild(when);
-        if (jestNotatka) {
+        if (row.zrodlo === 'facebook_lead_webhook') {
+          // Wpadnięcie leada, nie rozmowa — bez "0s", z czytelną etykietą.
+          const tag = document.createElement('span');
+          tag.className = 'lk-historia-rozmow-czas';
+          tag.textContent = 'nowy lead';
+          head.appendChild(tag);
+        } else if (jestNotatka) {
           const tag = document.createElement('span');
           tag.className = 'lk-historia-rozmow-czas';
           tag.textContent = row.zrodlo === 'manual_akcja'
