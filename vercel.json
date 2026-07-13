@@ -40,6 +40,10 @@
     "api/statystyki.js": {
       "includeFiles": "{apps/statystyki/**,apps/shared/**,apps/hub/assets/**,docs/fable-doradca-lumlum.md}",
       "maxDuration": 60
+    },
+    "api/doradca.js": {
+      "includeFiles": "{apps/doradca/**,apps/statystyki/**,apps/shared/**,apps/hub/assets/**,docs/fable-doradca-lumlum.md}",
+      "maxDuration": 60
     }
   },
   "crons": [
@@ -58,7 +62,8 @@
     { "source": "/szybka", "destination": "/wyceny/szybka-wycena", "permanent": false },
     { "source": "/wiadomosci", "destination": "/wiadomosci/", "permanent": false },
     { "source": "/wiedza", "destination": "/wiedza/", "permanent": false },
-    { "source": "/statystyki", "destination": "/statystyki/", "permanent": false }
+    { "source": "/statystyki", "destination": "/statystyki/", "permanent": false },
+    { "source": "/doradca", "destination": "/doradca/", "permanent": false }
   ],
   "rewrites": [
     { "source": "/backlog-b2c/", "destination": "/api/backlog-b2c" },
@@ -84,6 +89,8 @@
     { "source": "/wiadomosci", "destination": "/api/index" },
     { "source": "/statystyki/", "destination": "/api/statystyki" },
     { "source": "/statystyki/:path*", "destination": "/api/statystyki" },
+    { "source": "/doradca/", "destination": "/api/doradca" },
+    { "source": "/doradca/:path*", "destination": "/api/doradca" },
     { "source": "/assets/:path*", "destination": "/api/index" },
     { "source": "/shared/:path*", "destination": "/api/index" },
     { "source": "/api/:path*", "destination": "/api/index" }

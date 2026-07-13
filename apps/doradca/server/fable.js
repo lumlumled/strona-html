@@ -1,17 +1,18 @@
-// ── AI-doradca Fable (backend) ──────────────────────────────────────────────
-// Czat, który widzi całą firmę: mózg = docs/fable-doradca-lumlum.md VERBATIM
-// jako system prompt (guardrails §5), snapshot wstrzykiwany co turę (§4),
-// JEDNO narzędzie stats(group, params) nad fasadą queries.js (§0). Tryb głęboki
-// (§9): pętla dopuszcza WIELE kolejnych stats() zanim doradca odpowie.
-// Streaming (SSE) obsługuje server.js — tu callback onEvent.
+// ── Silnik AI-doradcy Fable ──────────────────────────────────────────────────
+// Przeniesiony ze Statystyk (osobny panel apps/doradca — decyzja Antoniego).
+// Mózg = docs/fable-doradca-lumlum.md VERBATIM jako system prompt (guardrails
+// §5), snapshot wstrzykiwany co turę (§4), JEDNO narzędzie stats(group, params)
+// nad fasadą queries.js Statystyk (§0), tryb głęboki (§9): WIELE stats() zanim
+// odpowiedź. NOWE: memoryText — pamięć doradcy (pamiec.js) doklejana do systemu
+// ("uczy się na podstawie odpowiedzi"). Streaming (SSE) obsługuje server.js.
 const fs = require('fs');
 const path = require('path');
-const Q = require('./queries');
+// Fasada danych żyje w panelu Statystyk (warstwa danych). Doradca ją KONSUMUJE.
+const Q = require('../../statystyki/server/queries');
 
-const MAX_TOOL_RESULT = 12000; // limit rozmiaru wyniku stats() wstrzykiwanego do modelu
-const MAX_ITERS = 6;           // bezpiecznik pętli tool-use (deep mode = wiele wywołań)
+const MAX_TOOL_RESULT = 12000;
+const MAX_ITERS = 6;
 
-// ── Prompt Fable (VERBATIM, leniwie z pliku; docs/ dołączane w vercel.json) ──
 let _fable = null;
 function fablePrompt() {
   if (_fable == null) {
@@ -21,7 +22,18 @@ function fablePrompt() {
   return _fable;
 }
 
-function buildSystemPrompt(snapshot) {
+function buildSystemPrompt(snapshot, memoryText) {
+  const mem = memoryText && memoryText.trim()
+    ? `
+
+---
+
+## PAMIĘĆ DORADCY — czego nauczyłeś się o Antonim i firmie (żywe, aktualizuj)
+
+Otwarte ustalenia, obietnice Antoniego (z terminami — dopytuj, gdy minęły), rzeczy świadomie odkładane oraz trwała wiedza/preferencje. UŻYWAJ tego: nie pytaj o to, co już wiesz, odwołuj się do wcześniejszych ustaleń. Gdy coś się zmieniło albo obietnica jest do domknięcia — powiedz wprost.
+
+${memoryText.trim()}`
+    : '';
   return `${fablePrompt()}
 
 ---
@@ -32,7 +44,7 @@ To jest wynik \`stats(group:"snapshot")\` na teraz. 80% pytań odpowiadaj z tego
 
 \`\`\`json
 ${JSON.stringify(snapshot, null, 2)}
-\`\`\``;
+\`\`\`${mem}`;
 }
 
 // ── Fasada danych: JEDNO narzędzie stats(group, params) → queries.js ─────────
@@ -79,21 +91,21 @@ async function runStats(db, group, params) {
   }
 }
 
-// ── Wybór modelu (env, wzorem apps/komunikator/server/llm.js) ────────────────
-// Szybki model do czatu; deep=true → mocniejszy (Opus) na głęboką analizę.
+// ── Wybór modelu (env) — szybki do czatu; deep=true → mocniejszy (Opus) ──────
 function parseSpec(spec) {
   const [provider, ...rest] = String(spec).split(':');
   return { provider, model: rest.join(':') };
 }
 function pickModel(deep) {
+  // Czat = Fable 5 (doradca „Fable", szybki); głęboka analiza = Opus 4.8.
+  // Nadpisywalne env-em (LLM_DORADCA / LLM_DORADCA_DEEP).
   const spec = deep
-    ? (process.env.LLM_DORADCA_DEEP || process.env.LLM_DORADCA || 'anthropic:claude-opus-4-1')
-    : (process.env.LLM_DORADCA || 'anthropic:claude-sonnet-4-6');
+    ? (process.env.LLM_DORADCA_DEEP || process.env.LLM_DORADCA || 'anthropic:claude-opus-4-8')
+    : (process.env.LLM_DORADCA || 'anthropic:claude-fable-5');
   return parseSpec(spec);
 }
 
 // ── Streaming Anthropic Messages API (SSE) z tool-use ────────────────────────
-// Zwraca { content: [bloki], stop_reason }. Tekst leci na bieżąco przez onDelta.
 async function anthropicStream({ system, model, tools, messages, onDelta }) {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) throw new Error('Brak ANTHROPIC_API_KEY w konfiguracji serwera');
@@ -158,13 +170,13 @@ async function anthropicStream({ system, model, tools, messages, onDelta }) {
   return { content: blocks.filter(Boolean), stop_reason: stopReason };
 }
 
-// ── Pętla czatu z tool-use (deep mode) ──────────────────────────────────────
+// ── Pętla czatu z tool-use (deep mode) + pamięć w systemie ───────────────────
 // onEvent({type}): 'text'{text} | 'tool'{group,input} | 'tool_result'{group} |
 //                  'done'{capped?} | 'error'{message}
-// callModel wstrzykiwalny do testów; domyślnie anthropicStream z wybranym modelem.
-async function chat({ db, messages, deep = false, onEvent = () => {}, callModel, maxIters = MAX_ITERS }) {
+// callModel wstrzykiwalny do testów; memoryText doklejane do system promptu.
+async function chat({ db, messages, deep = false, onEvent = () => {}, callModel, maxIters = MAX_ITERS, memoryText = '' }) {
   const snapshot = await Q.snapshot(db);
-  const system = buildSystemPrompt(snapshot);
+  const system = buildSystemPrompt(snapshot, memoryText);
   const { provider, model } = pickModel(deep);
   const call = callModel || (({ system: s, tools, messages: m, onDelta }) => {
     if (provider !== 'anthropic') throw new Error(`Doradca: nieobsługiwany dostawca modelu "${provider}"`);
@@ -213,6 +225,7 @@ module.exports = {
   buildSystemPrompt,
   fablePrompt,
   pickModel,
+  parseSpec,
   anthropicStream,
   STATS_TOOL,
   GROUPS,

@@ -40,7 +40,8 @@ const PANELS = [
   { key: 'fulfillment', label: 'Fulfillment', desc: 'Pulpit pakowania: co spakować i nadać — produkty, etykieta, tracking', status: 'live', adminOnly: true },
   { key: 'wiadomosci', label: 'Wiadomości', desc: 'Komunikator: Messenger, IG, telefon i notatki w jednym wątku klienta', status: 'live' },
   { key: 'wiedza', label: 'Baza Wiedzy', desc: 'Mózg biznesu: zapytaj o wszystko, zatwierdzaj nową wiedzę, uzupełniaj luki', status: 'live' },
-  { key: 'statystyki', label: 'Statystyki', desc: 'Kokpit sprzedaży i pipeline + AI-doradca Fable', status: 'live' },
+  { key: 'statystyki', label: 'Statystyki', desc: 'Kokpit sprzedaży i pipeline', status: 'live' },
+  { key: 'doradca', label: 'Doradca', desc: 'AI-doradca Fable: pyta o firmę, kopie w dane na żywo, uczy się z rozmów', status: 'live', adminOnly: true },
   { key: 'pozwolenia', label: 'Pozwolenia', desc: 'Użytkownicy i dostępy do paneli oraz arkuszy', status: 'live', adminOnly: true },
 ];
 
@@ -152,6 +153,7 @@ function panelLinks() {
       wiadomosci: '/wiadomosci/',
       wiedza: '/wiedza/',
       statystyki: '/statystyki',
+      doradca: '/doradca/',
       pozwolenia: '/pozwolenia',
     };
   }
@@ -166,6 +168,7 @@ function panelLinks() {
     wiadomosci: 'http://localhost:3004/',
     wiedza: 'http://localhost:3005/',
     statystyki: `${hub}/statystyki`,
+    doradca: 'http://localhost:3011/',
     pozwolenia: `${hub}/pozwolenia`,
   };
 }
