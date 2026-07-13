@@ -38,7 +38,7 @@
       "maxDuration": 180
     },
     "api/statystyki.js": {
-      "includeFiles": "{apps/statystyki/**,apps/shared/**}",
+      "includeFiles": "{apps/statystyki/**,apps/shared/**,apps/hub/assets/**,docs/fable-doradca-lumlum.md}",
       "maxDuration": 60
     }
   },
@@ -57,7 +57,8 @@
     { "source": "/szybka-wycena", "destination": "/wyceny/szybka-wycena", "permanent": false },
     { "source": "/szybka", "destination": "/wyceny/szybka-wycena", "permanent": false },
     { "source": "/wiadomosci", "destination": "/wiadomosci/", "permanent": false },
-    { "source": "/wiedza", "destination": "/wiedza/", "permanent": false }
+    { "source": "/wiedza", "destination": "/wiedza/", "permanent": false },
+    { "source": "/statystyki", "destination": "/statystyki/", "permanent": false }
   ],
   "rewrites": [
     { "source": "/backlog-b2c/", "destination": "/api/backlog-b2c" },
@@ -81,8 +82,8 @@
     { "source": "/logout", "destination": "/api/index" },
     { "source": "/pozwolenia", "destination": "/api/index" },
     { "source": "/wiadomosci", "destination": "/api/index" },
-    { "source": "/statystyki/api/:path*", "destination": "/api/statystyki" },
-    { "source": "/statystyki", "destination": "/api/index" },
+    { "source": "/statystyki/", "destination": "/api/statystyki" },
+    { "source": "/statystyki/:path*", "destination": "/api/statystyki" },
     { "source": "/assets/:path*", "destination": "/api/index" },
     { "source": "/shared/:path*", "destination": "/api/index" },
     { "source": "/api/:path*", "destination": "/api/index" }

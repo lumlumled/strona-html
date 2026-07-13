@@ -94,7 +94,8 @@ app.get('/wyceny', (req, res) => {
 // Dostęp wg uprawnień jak do prawdziwego panelu — kafelek i strona zachowują
 // się od dziś tak, jak będą się zachowywać po zbudowaniu funkcjonalności.
 // wiadomosci wypadło z atrap — to żywy panel apps/komunikator/ pod /wiadomosci/.
-const SOON_PAGES = { statystyki: 'statystyki' };
+// statystyki ma już własny panel (apps/statystyki, rewrite /statystyki → /api/statystyki).
+const SOON_PAGES = {};
 
 Object.entries(SOON_PAGES).forEach(([route, panelKey]) => {
   app.get(`/${route}`, (req, res) => {

@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link rel="manifest" href="statystyki.webmanifest">
+  <meta name="theme-color" content="#000000">
+  <title>Statystyki — LumLum</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared/topbar.css">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --surface-1: #ffffff;
+      --surface-2: #fafaf9;
+      --page: #f5f5f4;
+      --text-primary: #111111;
+      --text-secondary: #52514e;
+      --text-muted: #8a8984;
+      --border: rgba(17, 17, 17, 0.12);
+      --accent: #111111;
+      --accent-contrast: #ffffff;
+      --accent-soft: #ececea;
+      --good: #16794a;
+      --warn: #a8560a;
+      --bad: #b3261e;
+      --good-soft: rgba(22, 121, 74, 0.12);
+      --bad-soft: rgba(179, 38, 30, 0.10);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-1: #161616;
+        --surface-2: #1c1c1b;
+        --page: #0a0a0a;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted: #8a8984;
+        --border: rgba(255, 255, 255, 0.14);
+        --accent: #ffffff;
+        --accent-contrast: #0a0a0a;
+        --accent-soft: #262626;
+        --good: #5cd39a;
+        --warn: #e8a75c;
+        --bad: #ff7a70;
+        --good-soft: rgba(92, 211, 154, 0.14);
+        --bad-soft: rgba(255, 122, 112, 0.14);
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--page); color: var(--text-primary);
+      min-height: 100vh; display: flex; flex-direction: column;
+      -webkit-font-smoothing: antialiased;
+    }
+    main { flex: 1; width: 100%; max-width: 1080px; margin: 0 auto; padding: 1.1rem 1.1rem 4rem; }
+
+    /* Zakładki */
+    .tabs { display: flex; gap: 0.4rem; margin: 0.2rem 0 1.1rem; }
+    .tab {
+      appearance: none; border: 1px solid var(--border); background: var(--surface-1);
+      color: var(--text-secondary); font: inherit; font-weight: 600; font-size: 0.9rem;
+      padding: 0.5rem 1.05rem; border-radius: 999px; cursor: pointer;
+    }
+    .tab.active { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+
+    .muted { color: var(--text-muted); font-size: 0.82rem; }
+    .updated { text-align: right; margin-bottom: 0.7rem; }
+
+    /* Kokpit */
+    .stars { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; margin-bottom: 0.8rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.7rem; margin-bottom: 0.8rem; }
+    .card {
+      background: var(--surface-1); border: 1px solid var(--border); border-radius: 16px;
+      padding: 1rem 1.1rem; display: flex; flex-direction: column; gap: 0.28rem;
+    }
+    .card.star { padding: 1.25rem 1.3rem; border-radius: 20px; }
+    .k-label { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+    .k-value { font-size: 1.55rem; font-weight: 700; letter-spacing: -0.5px; line-height: 1.05; }
+    .card.star .k-value { font-size: 2.5rem; }
+    .k-sub { font-size: 0.8rem; color: var(--text-secondary); }
+    .k-sub.good { color: var(--good); }
+    .k-sub.bad { color: var(--bad); }
+    .k-sub.warn { color: var(--warn); }
+    .section-title { font-size: 0.95rem; font-weight: 700; margin: 1.1rem 0 0.5rem; letter-spacing: -0.2px; }
+
+    /* Alerty */
+    .alerts { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.4rem; }
+    .alert {
+      background: var(--bad-soft); border: 1px solid var(--border); border-radius: 12px;
+      padding: 0.6rem 0.85rem; font-size: 0.88rem; color: var(--text-primary); line-height: 1.4;
+    }
+
+    /* Lejek */
+    .funnel { display: flex; flex-direction: column; gap: 0.35rem; }
+    .funnel-row { display: grid; grid-template-columns: 130px 1fr 40px; align-items: center; gap: 0.6rem; font-size: 0.84rem; }
+    .funnel-bar { height: 10px; border-radius: 999px; background: var(--accent-soft); overflow: hidden; }
+    .funnel-fill { height: 100%; background: var(--accent); border-radius: 999px; }
+    .funnel-row span:last-child { text-align: right; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
+    /* Martwe wyceny */
+    .dead { display: flex; flex-direction: column; gap: 0.35rem; }
+    .dead-row {
+      display: flex; align-items: center; gap: 0.7rem; background: var(--surface-1);
+      border: 1px solid var(--border); border-radius: 12px; padding: 0.55rem 0.8rem; font-size: 0.86rem;
+    }
+    .dead-row .kwota { font-weight: 700; min-width: 78px; font-variant-numeric: tabular-nums; }
+    .dead-row .imie { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dead-row .wiek { color: var(--text-muted); font-size: 0.78rem; }
+    .dead-row a { color: var(--accent); text-decoration: none; font-weight: 600; }
+
+    /* Doradca / czat */
+    #doradca { display: none; flex-direction: column; height: calc(100vh - 190px); min-height: 420px; }
+    #chat-log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0.8rem; padding: 0.3rem 0.1rem 1rem; }
+    .msg { max-width: 88%; padding: 0.7rem 0.95rem; border-radius: 16px; font-size: 0.92rem; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word; }
+    .msg.user { align-self: flex-end; background: var(--accent); color: var(--accent-contrast); border-bottom-right-radius: 5px; }
+    .msg.bot { align-self: flex-start; background: var(--surface-1); border: 1px solid var(--border); border-bottom-left-radius: 5px; }
+    .msg.bot strong { font-weight: 700; }
+    .tool-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.45rem; }
+    .chip {
+      font-size: 0.72rem; font-weight: 600; color: var(--text-secondary);
+      background: var(--accent-soft); border-radius: 999px; padding: 0.18rem 0.6rem;
+    }
+    .empty-hint { color: var(--text-muted); font-size: 0.9rem; text-align: center; margin: auto; max-width: 320px; line-height: 1.5; }
+    .composer { display: flex; gap: 0.5rem; align-items: flex-end; border-top: 1px solid var(--border); padding-top: 0.7rem; }
+    .composer textarea {
+      flex: 1; resize: none; font: inherit; font-size: 0.92rem; color: var(--text-primary);
+      background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px;
+      padding: 0.65rem 0.85rem; max-height: 140px; min-height: 44px;
+    }
+    .composer textarea:focus { outline: none; border-color: var(--accent); }
+    .send-btn {
+      appearance: none; border: none; background: var(--accent); color: var(--accent-contrast);
+      font: inherit; font-weight: 600; border-radius: 14px; padding: 0.65rem 1.15rem; cursor: pointer; height: 44px;
+    }
+    .send-btn:disabled { opacity: 0.5; cursor: default; }
+    .composer-row { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.5rem; }
+    .quick-btn {
+      appearance: none; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+      font: inherit; font-size: 0.8rem; font-weight: 600; border-radius: 999px; padding: 0.35rem 0.85rem; cursor: pointer;
+    }
+    .deep-toggle { display: flex; align-items: center; gap: 0.35rem; font-size: 0.8rem; color: var(--text-secondary); margin-left: auto; cursor: pointer; }
+
+    .state { text-align: center; color: var(--text-muted); padding: 2.5rem 1rem; font-size: 0.92rem; }
+    @media (max-width: 560px) {
+      .stars { grid-template-columns: 1fr; }
+      .card.star .k-value { font-size: 2.1rem; }
+    }
+  </style>
+</head>
+<body>
+  <div id="site-header"></div>
+  <main>
+    <div class="tabs">
+      <button class="tab active" data-tab="kokpit" id="tab-kokpit">Kokpit</button>
+      <button class="tab" data-tab="doradca" id="tab-doradca" style="display:none">Doradca</button>
+    </div>
+
+    <!-- KOKPIT -->
+    <section id="kokpit">
+      <div class="muted updated" id="updated"></div>
+      <div id="kokpit-body"><div class="state">Ładuję dane…</div></div>
+    </section>
+
+    <!-- DORADCA -->
+    <section id="doradca">
+      <div id="chat-log">
+        <div class="empty-hint">Napisz „co dziś?" — doradca sprawdzi żywe liczby i poda jeden ruch na teraz.</div>
+      </div>
+      <div>
+        <div class="composer-row">
+          <button class="quick-btn" id="quick-dzis">co dziś?</button>
+          <button class="quick-btn" id="quick-pomijam">co pomijam?</button>
+          <label class="deep-toggle"><input type="checkbox" id="deep"> tryb głęboki</label>
+        </div>
+        <div class="composer">
+          <textarea id="chat-input" rows="1" placeholder="Zapytaj doradcę…"></textarea>
+          <button class="send-btn" id="send">Wyślij</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="shared/topbar.js"></script>
+  <script>
+    const API_BASE = window.API_BASE || '';
+    const USER = window.LUMLUM_USER || {};
+    if (window.LumTopbar) LumTopbar.mount({ active: 'statystyki', into: document.getElementById('site-header') });
+
+    // ── Zakładki (Doradca tylko dla admina) ──
+    const isAdmin = Boolean(USER.isAdmin);
+    if (isAdmin) document.getElementById('tab-doradca').style.display = '';
+    const tabs = { kokpit: document.getElementById('kokpit'), doradca: document.getElementById('doradca') };
+    document.querySelectorAll('.tab').forEach((btn) => btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      const t = btn.dataset.tab;
+      tabs.kokpit.style.display = t === 'kokpit' ? '' : 'none';
+      tabs.doradca.style.display = t === 'doradca' ? 'flex' : 'none';
+      if (t === 'doradca') document.getElementById('chat-input').focus();
+    }));
+
+    // ── Formatery ──
+    const fmtZl = (n) => (n == null ? '—' : Math.round(n).toLocaleString('pl-PL') + ' zł');
+    const fmtPct = (x) => (x == null ? '—' : Math.round(x * 100) + '%');
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+    // ── Kokpit ──
+    async function loadKokpit() {
+      const body = document.getElementById('kokpit-body');
+      try {
+        const res = await fetch(`${API_BASE}/api/snapshot`, { headers: { Accept: 'application/json' } });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const s = await res.json();
+        renderKokpit(s);
+      } catch (err) {
+        body.innerHTML = `<div class="state">Nie udało się pobrać danych: ${esc(err.message)}</div>`;
+      }
+    }
+
+    function tile(label, value, sub, cls) {
+      return `<div class="card"><span class="k-label">${label}</span><span class="k-value">${value}</span>${sub ? `<span class="k-sub ${cls || ''}">${sub}</span>` : ''}</div>`;
+    }
+
+    function renderKokpit(s) {
+      const sp = s.sprzedaz || {}, pi = s.pipeline_otwarty || {}, ou = s.outreach || {}, ld = s.leady || {};
+      document.getElementById('updated').textContent = s.generated_at
+        ? 'Zaktualizowano: ' + new Date(s.generated_at).toLocaleString('pl-PL') : '';
+
+      // Gwiazdy: close rate + otwarty pipeline
+      const crVal = sp.close_rate == null ? '—' : fmtPct(sp.close_rate);
+      const crSub = sp.close_rate == null
+        ? (sp.close_rate_status || 'buduje się') + (sp.close_rate_wyceny_w_panelu != null ? ` · ${sp.close_rate_wyceny_w_panelu} wycen z panelu` : '')
+        : (sp.close_rate >= 0.25 ? 'cel 25–35% osiągnięty' : 'cel 25–35% — pipeline przecieka');
+      const crCls = sp.close_rate == null ? 'warn' : (sp.close_rate >= 0.25 ? 'good' : 'bad');
+      const stars = `
+        <div class="card star"><span class="k-label">Close rate (kohortowy)</span><span class="k-value">${crVal}</span><span class="k-sub ${crCls}">${esc(crSub)}</span></div>
+        <div class="card star"><span class="k-label">Otwarty pipeline</span><span class="k-value">${fmtZl(pi.suma)}</span><span class="k-sub">${pi.count || 0} wycen · śr. wiek ${pi.sredni_wiek_dni ?? '—'} dni</span></div>`;
+
+      // Sprzedaż
+      const delta = sp.delta_do_tempa;
+      const deltaSub = delta == null ? '' : (delta >= 0 ? `+${fmtZl(delta)} nad tempem` : `${fmtZl(delta)} pod tempem`);
+      const sprzedaz = [
+        tile('Przychód (mies.)', fmtZl((sp.przychod_mies || {}).suma), deltaSub, delta >= 0 ? 'good' : 'bad'),
+        tile('Zamówienia (mies.)', (sp.przychod_mies || {}).count ?? 0, '', ''),
+        tile('AOV', fmtZl(sp.aov), 'cel 2500+', sp.aov && sp.aov >= 2500 ? 'good' : ''),
+        tile('B2B', fmtPct(sp.b2b_pct), 'udział zamówień', ''),
+        tile('Powroty', fmtPct(sp.powroty_pct), 'klienci ≥2 zam.', ''),
+      ].join('');
+
+      // Outreach
+      const stl = ou.speed_to_lead_med_min;
+      const outreach = [
+        tile('% dodzwonień', fmtPct(ou.pct_dodzwonien), '', ou.pct_dodzwonien != null && ou.pct_dodzwonien < 0.5 ? 'bad' : ''),
+        tile('Speed-to-lead', stl == null ? '—' : stl + ' min', stl == null ? 'za mało danych' : (stl > 60 ? 'leady stygną' : 'ok'), stl != null && stl > 60 ? 'bad' : ''),
+        tile('Telefony dziś', ou.telefony_dzis ?? 0, `${ou.telefony_tydzien ?? 0} w tygodniu`, ou.telefony_dzis === 0 ? 'bad' : ''),
+        tile('Leady nietknięte', ou.leady_nietkniete ?? 0, 'wczesny lejek, bez tel.', ou.leady_nietkniete > 0 ? 'bad' : 'good'),
+        tile('Nowe leady', ou.leady_nowe ?? 0, 'czekają na 1. kontakt', ou.leady_nowe > 0 ? 'warn' : ''),
+        tile('Martwe wyceny tknięte 7d', ou.martwe_wyceny_tkniete_7d ?? 0, 'odgrzane >14 dni', ou.martwe_wyceny_tkniete_7d === 0 ? 'bad' : 'good'),
+      ].join('');
+
+      // Alerty
+      const alerts = (s.alerty || []).length
+        ? `<div class="alerts">${s.alerty.map((a) => `<div class="alert">${esc(a)}</div>`).join('')}</div>` : '';
+
+      // Lejek leadów
+      const lejek = ld.lejek || {};
+      const maxL = Math.max(1, ...Object.values(lejek));
+      const funnel = Object.keys(lejek).length
+        ? `<div class="funnel">${Object.entries(lejek).sort((a, b) => b[1] - a[1]).map(([k, v]) =>
+            `<div class="funnel-row"><span>${esc(k)}</span><div class="funnel-bar"><div class="funnel-fill" style="width:${Math.round(v / maxL * 100)}%"></div></div><span>${v}</span></div>`).join('')}</div>` : '';
+
+      // Top martwych do dzwonienia
+      const dead = (pi.top_do_dzwonienia || []);
+      const deadHtml = dead.length
+        ? `<div class="dead">${dead.map((d) => {
+            const tel = d.telefon ? `<a href="tel:${esc(String(d.telefon).replace(/\s/g, ''))}">Zadzwoń</a>` : '';
+            return `<div class="dead-row"><span class="kwota">${fmtZl(d.kwota)}</span><span class="imie">#${d.id} · ${esc(d.imie || 'bez nazwy')}</span><span class="wiek">${d.wiek_dni ?? '—'} dni</span>${tel}</div>`;
+          }).join('')}</div>` : '<div class="muted">Brak otwartych wycen.</div>';
+
+      document.getElementById('kokpit-body').innerHTML = `
+        <div class="stars">${stars}</div>
+        ${alerts}
+        <div class="section-title">Sprzedaż</div>
+        <div class="grid">${sprzedaz}</div>
+        <div class="section-title">Outreach — czy maszyna mieli</div>
+        <div class="grid">${outreach}</div>
+        <div class="section-title">Top martwych wycen do dzwonienia</div>
+        ${deadHtml}
+        <div class="section-title">Lejek leadów</div>
+        ${funnel}`;
+    }
+
+    // ── Doradca (czat SSE) ──
+    const history = [];
+    const log = document.getElementById('chat-log');
+    const input = document.getElementById('chat-input');
+    const sendBtn = document.getElementById('send');
+    let streaming = false;
+
+    function renderMd(text) {
+      // Lekki markdown: **bold**, początki linii "- " → punkty; reszta jako tekst.
+      return esc(text).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    }
+    function addMsg(role, text) {
+      const el = document.createElement('div');
+      el.className = `msg ${role}`;
+      el.innerHTML = role === 'bot' ? renderMd(text) : esc(text);
+      log.appendChild(el);
+      log.scrollTop = log.scrollHeight;
+      return el;
+    }
+
+    async function send(text) {
+      if (streaming || !text.trim()) return;
+      const hint = log.querySelector('.empty-hint');
+      if (hint) hint.remove();
+      streaming = true; sendBtn.disabled = true;
+      addMsg('user', text);
+      history.push({ role: 'user', content: text });
+      input.value = ''; input.style.height = 'auto';
+
+      // Bąbel bota: chipsy narzędzi + tekst
+      const bot = document.createElement('div');
+      bot.className = 'msg bot';
+      const chips = document.createElement('div'); chips.className = 'tool-chips';
+      const body = document.createElement('div'); body.className = 'bot-text';
+      body.textContent = '…';
+      bot.appendChild(chips); bot.appendChild(body);
+      log.appendChild(bot); log.scrollTop = log.scrollHeight;
+
+      let acc = '';
+      const deep = document.getElementById('deep').checked;
+      try {
+        const res = await fetch(`${API_BASE}/api/doradca/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: history, deep }),
+        });
+        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let sep;
+          while ((sep = buf.indexOf('\n\n')) >= 0) {
+            const chunk = buf.slice(0, sep); buf = buf.slice(sep + 2);
+            let event = 'message', data = '';
+            chunk.split('\n').forEach((line) => {
+              if (line.startsWith('event:')) event = line.slice(6).trim();
+              else if (line.startsWith('data:')) data += line.slice(5).trim();
+            });
+            if (!data) continue;
+            let obj; try { obj = JSON.parse(data); } catch { continue; }
+            if (event === 'text') { acc += obj.text || ''; body.innerHTML = renderMd(acc); }
+            else if (event === 'tool') { const c = document.createElement('span'); c.className = 'chip'; c.textContent = `🔍 ${obj.group || 'stats'}`; chips.appendChild(c); }
+            else if (event === 'error') { acc += `\n\n⚠️ ${obj.message || 'błąd'}`; body.innerHTML = renderMd(acc); }
+            log.scrollTop = log.scrollHeight;
+          }
+        }
+        if (!acc.trim()) { acc = '(brak odpowiedzi)'; body.textContent = acc; }
+        history.push({ role: 'assistant', content: acc });
+      } catch (err) {
+        body.innerHTML = renderMd(acc + `\n\n⚠️ ${err.message}`);
+      } finally {
+        streaming = false; sendBtn.disabled = false; input.focus();
+      }
+    }
+
+    sendBtn.addEventListener('click', () => send(input.value));
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input.value); } });
+    input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 140) + 'px'; });
+    document.getElementById('quick-dzis').addEventListener('click', () => send('co dziś?'));
+    document.getElementById('quick-pomijam').addEventListener('click', () => send('Co pomijam? Przynieś 1 ślepą plamę z danych, 1 niewygodną prawdę i 1 rzecz, którą odkładam — każda z jedną akcją.'));
+
+    loadKokpit();
+  </script>
+</body>
+</html>

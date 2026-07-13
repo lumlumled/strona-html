@@ -14,6 +14,11 @@ const NIE_TELEFON_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual
 
 // Statusy leada, które są "domknięte/martwe" — nie licz jako aktywny lejek.
 const LEAD_ZAMKNIETE = new Set(['Sprzedane', 'Stracony', 'Błędne dane']);
+// Etapy wczesne dla "leady nietknięte": Log zmian ma telefony dopiero od webhooka
+// Zadarmy (~2026-07), więc "0 wierszy telefonicznych" na CAŁEJ bazie zawyżałoby
+// (leady sprzed webhooka mają 0, choć dzwoniono). Liczymy tylko wczesny lejek
+// (spec SEGMENT 2: ~93/407 = Nowy/Nie odebrał z 0 telefonami).
+const LEAD_NIETKNIETE_ETAPY = new Set(['Nowy', 'Nie odebrał']);
 // Lead, który dostał już wycenę (dowolna pisownia z bazy).
 const LEAD_WYCENA_WYSLANA = 'Wycena wysłana';
 
@@ -122,21 +127,27 @@ async function pipeline(db, { olderThanDays = 0, minKwota = 0, owner, limit = 10
   return { count: rows.length, suma, sredni_wiek_dni: sredniWiek, top_do_dzwonienia: top };
 }
 
-// ── Wspólny fetch danych outreach (Log zmian + Leady) — używany też przez snapshot ──
+// ── Wspólny fetch danych outreach (Log zmian + Leady + otwarte wyceny) ──
+// Otwarte wyceny są potrzebne do "martwe_wyceny_tkniete_7d" (match po telefonie).
 async function fetchOutreachRaw(db) {
-  const [logRes, leadyRes] = await Promise.all([
+  const [logRes, leadyRes, wycenyRes] = await Promise.all([
     db.from(LOG).select('telefon,data_zmiany,zrodlo,disposition,kierunek,status_po,handlowiec'),
     db.from(LEADY).select('"Phone number","Deal stage","Owner"'),
+    db.from(WYCENY).select('id,created_at,telefon_digits,telefon_e164').eq('typ', 'WYCENA').eq('status', 'Open'),
   ]);
   if (logRes.error) throw logRes.error;
   if (leadyRes.error) throw leadyRes.error;
-  return { log: logRes.data || [], leady: leadyRes.data || [] };
+  if (wycenyRes.error) throw wycenyRes.error;
+  return { log: logRes.data || [], leady: leadyRes.data || [], wyceny: wycenyRes.data || [] };
 }
 
 // ── C. OUTREACH / TELEFONY ───────────────────────────────────────────────────
-function outreachCompute({ log, leady }, { from, to, handlowiec } = {}) {
+function outreachCompute({ log, leady, wyceny = [] }, { from, to, handlowiec } = {}) {
   // Telefony = wiersze spoza NIE_TELEFON_ZRODLA (guardrails §2.2 — NIE z "Ilość telefonów").
-  let calls = log.filter((r) => !NIE_TELEFON_ZRODLA.has(r.zrodlo) && phone9(r.telefon));
+  const telRows = log.filter((r) => !NIE_TELEFON_ZRODLA.has(r.zrodlo) && phone9(r.telefon));
+  // Wolumen/dodzwonienia mogą być filtrowane per handlowiec; "nietknięte" i
+  // "martwe tknięte" liczymy firmowo (z telRows), niezależnie od filtra.
+  let calls = telRows;
   if (handlowiec && handlowiec !== 'all') calls = calls.filter((r) => (r.handlowiec || '') === handlowiec);
 
   const todayKey = warsawDay(new Date());
@@ -167,6 +178,37 @@ function outreachCompute({ log, leady }, { from, to, handlowiec } = {}) {
   const leadyNowe = leady.filter((l) => l['Deal stage'] === 'Nowy').length;
   const leadyNieOdebral = leady.filter((l) => l['Deal stage'] === 'Nie odebrał').length;
 
+  // Telefony FIRMOWO po telefonie (cała historia + ostatnie 7 dni) — do
+  // "nietknięte" i "martwe tknięte". Zawsze z telRows (nie filtr handlowca).
+  const now = Date.now();
+  const week = now - 7 * 86400000;
+  const callPhones = new Set();     // telefon dostał kiedykolwiek połączenie
+  const callPhones7d = new Set();   // ...w ostatnich 7 dniach
+  telRows.forEach((r) => {
+    const p = phone9(r.telefon);
+    callPhones.add(p);
+    if (r.data_zmiany && new Date(r.data_zmiany).getTime() >= week) callPhones7d.add(p);
+  });
+
+  // Leady nietknięte (guardrails §4, spec SEGMENT 2): lead wczesnego lejka
+  // (Nowy/Nie odebrał) z telefonem, który NIE ma ani jednego wiersza
+  // telefonicznego w Log zmian. Ograniczone do wczesnych etapów, bo krótkie
+  // okno Log zmian zawyżałoby liczbę na całej bazie (patrz LEAD_NIETKNIETE_ETAPY).
+  const leadyNietkniete = leady.filter((l) => {
+    if (!LEAD_NIETKNIETE_ETAPY.has(l['Deal stage'])) return false;
+    const p = phone9(l['Phone number']);
+    return p && !callPhones.has(p);
+  }).length;
+
+  // Martwe wyceny tknięte w 7 dni: otwarta wycena starsza niż 14 dni, której
+  // telefon dostał połączenie w ostatnich 7 dniach (dowód pracy po pipeline 270k).
+  const DEAD_AGE_MS = 14 * 86400000;
+  const martweWycenyTkniete7d = wyceny.filter((w) => {
+    if (!w.created_at || (now - new Date(w.created_at).getTime()) <= DEAD_AGE_MS) return false;
+    const p = phone9(w.telefon_digits || w.telefon_e164);
+    return p && callPhones7d.has(p);
+  }).length;
+
   // Speed-to-lead: event 'Nowy' → 1. telefon wychodzący. Log zmian ma krótkie
   // okno (webhook Zadarmy od 2026-07) → często za mało punktów; null gdy n<5.
   const stl = speedToLead(log);
@@ -181,6 +223,8 @@ function outreachCompute({ log, leady }, { from, to, handlowiec } = {}) {
     speed_to_lead_n: stl.n,
     leady_nowe: leadyNowe,
     leady_nie_odebral: leadyNieOdebral,
+    leady_nietkniete: leadyNietkniete,
+    martwe_wyceny_tkniete_7d: martweWycenyTkniete7d,
     kadencja_wsrod_dzwonionych: cadenceBuckets(perPhone),
   };
 }
@@ -239,36 +283,79 @@ async function leady(db) {
 // NIEPOWIĄZANE worki — 252 zamówienia + 126 wycen zaciągnięte osobno, bez
 // zapisanego linku wycena→zamówienie; liczenie po niej dałoby fałszywe ~66%.
 async function closeRate(db) {
-  const { data, error } = await db.from(WYCENY).select('id,typ,status,source').neq('typ', 'NOTATKA');
+  const { data, error } = await db.from(WYCENY)
+    .select('id,typ,status,source,created_at,telefon_digits').neq('typ', 'NOTATKA');
   if (error) throw error;
+  const rows = data || [];
   const HISTORIA = new Set(['import', 'shopify']); // stary system + self-serve = nie wyceny z panelu
-  const cohort = (data || []).filter((r) => !HISTORIA.has(r.source));
-  const domkniete = cohort.filter((r) => r.typ === 'ZAMÓWIENIE').length;
-  const stracone = cohort.filter((r) => r.typ === 'WYCENA' && r.status === 'Stracone').length;
-  const otwarte = cohort.filter((r) => r.typ === 'WYCENA' && r.status === 'Open').length;
+
+  // Wszystkie ZAMÓWIENIA (DOWOLNE źródło, też shopify/import) → telefon: kiedy kupił.
+  // Drugi sygnał domknięcia: wycena z panelu, której telefon kupił innym kanałem
+  // (np. wystawiona w panelu, opłacona w sklepie) w oknie 30 dni.
+  const orderTsByPhone = new Map();
+  rows.forEach((r) => {
+    if (r.typ !== 'ZAMÓWIENIE') return;
+    const p = phone9(r.telefon_digits); if (!p || !r.created_at) return;
+    const arr = orderTsByPhone.get(p) || [];
+    arr.push(new Date(r.created_at).getTime());
+    orderTsByPhone.set(p, arr);
+  });
+  const WINDOW_MS = 30 * 86400000;
+  const kupilInnymKanalem = (w) => {
+    const p = phone9(w.telefon_digits); if (!p || !w.created_at) return false;
+    const t = new Date(w.created_at).getTime();
+    const arr = orderTsByPhone.get(p); if (!arr) return false;
+    return arr.some((ot) => ot >= t && ot <= t + WINDOW_MS);
+  };
+
+  const cohort = rows.filter((r) => !HISTORIA.has(r.source));
+  // (1) twardy klucz: ten sam id po konwersji jest już ZAMÓWIENIEM.
+  const domknieteSameId = cohort.filter((r) => r.typ === 'ZAMÓWIENIE').length;
+  // (2) phone-match: wycena wciąż typ=WYCENA, ale ten telefon kupił w 30 dni.
+  // Zbiory rozłączne (WYCENA vs ZAMÓWIENIE) → brak podwójnego liczenia.
+  const wycenaRows = cohort.filter((r) => r.typ === 'WYCENA');
+  const wonByPhone = new Set(wycenaRows.filter(kupilInnymKanalem).map((r) => r.id));
+  const domkniete = domknieteSameId + wonByPhone.size;
+
+  // Przegrane = jawnie 'Stracone', ale NIE te, które i tak kupiły (phone-match).
+  const stracone = wycenaRows.filter((r) => r.status === 'Stracone' && !wonByPhone.has(r.id)).length;
+  const otwarte = wycenaRows.filter((r) => r.status === 'Open' && !wonByPhone.has(r.id)).length;
+  // Dojrzewające = otwarte młodsze niż 30 dni (okno konwersji jeszcze trwa) — info, poza mianownikiem.
+  const now = Date.now();
+  const dojrzewajace = wycenaRows.filter((r) => r.status === 'Open' && !wonByPhone.has(r.id)
+    && r.created_at && (now - new Date(r.created_at).getTime()) < WINDOW_MS).length;
+
   const rozstrzygniete = domkniete + stracone;
   const MIN_PROBA = 15;
   const gotowe = rozstrzygniete >= MIN_PROBA;
   return {
-    metoda: 'forward: wyceny z panelu, ten sam id po konwersji (kohortowy)',
+    metoda: 'forward kohortowy: ten sam id WYCENA→ZAMÓWIENIE (twardy klucz) + phone-match ZAMÓWIENIA w 30 dni (inny kanał, np. Shopify)',
     wyceny_w_panelu: cohort.length,
     domkniete,
+    domkniete_ten_sam_id: domknieteSameId,
+    domkniete_inny_kanal: wonByPhone.size,
     stracone,
     otwarte,
+    dojrzewajace,
     close_rate: gotowe ? round(domkniete / rozstrzygniete) : null,
     status: gotowe ? 'ok' : `buduje się — za mało rozstrzygniętych wycen (${rozstrzygniete}/${MIN_PROBA})`,
-    _uwaga: 'Liczony TYLKO z wycen zrobionych w panelu (konwersja = ten sam id WYCENA→ZAMÓWIENIE, data utworzenia zachowana). Historia (import) nieodtwarzalna — osobne worki wycen i zamówień bez linku. Próbka rośnie z każdą nową wyceną.',
+    _uwaga: 'Liczony TYLKO z wycen z panelu (source ≠ import/shopify). Domknięta = ten sam id stał się ZAMÓWIENIEM LUB ten telefon ma ZAMÓWIENIE (dowolny kanał) w 30 dni od wyceny. Mianownik = domknięte + jawnie Stracone; otwarte (w tym „dojrzewające" <30 dni) poza mianownikiem. Historia (import) nieodtwarzalna.',
   };
 }
 
 // ── G. SNAPSHOT (rollup dla AI-doradcy) ──────────────────────────────────────
-async function snapshot(db) {
+// owner (opcjonalnie): scoping widoku per handlowiec (Kokpit dla nie-admina).
+// Bez owner = firmowo (doradca, endpoint maszynowy). Uwaga: owner w `wyceny` to
+// artefakt migracji (guardrails §2.3) — to scoping WIDOKU, nie raport wyników.
+async function snapshot(db, { owner } = {}) {
   const [sp, pipe, out, ld, cr] = await Promise.all([
-    sprzedaz(db, {}), pipeline(db, { limit: 10 }), outreach(db, {}), leady(db), closeRate(db),
+    sprzedaz(db, { owner }), pipeline(db, { limit: 10, owner }), outreach(db, { handlowiec: owner }), leady(db), closeRate(db),
   ]);
 
   const alerty = [];
   if (pipe.suma > 100000) alerty.push(`${pipe.suma.toLocaleString('pl-PL')} zł leży w ${pipe.count} otwartych wycenach (śr. wiek ${pipe.sredni_wiek_dni} dni).`);
+  if (pipe.count > 0 && out.martwe_wyceny_tkniete_7d === 0) alerty.push('Żadna otwarta wycena >14 dni nie dostała telefonu w ostatnie 7 dni — nikt nie odgrzewa pipeline’u.');
+  if (out.leady_nietkniete > 0) alerty.push(`${out.leady_nietkniete} leadów wczesnego lejka (Nowy/Nie odebrał) bez zarejestrowanego telefonu — do przedzwonienia.`);
   if (out.leady_nie_odebral > 0) alerty.push(`${out.leady_nie_odebral} leadów w statusie „Nie odebrał" — nigdy nie dobrzwonione.`);
   if (out.leady_nowe > 0) alerty.push(`${out.leady_nowe} nowych leadów czeka na pierwszy kontakt.`);
   if (out.telefony_dzis === 0) alerty.push('Dziś zero wykonanych telefonów.');
@@ -289,6 +376,7 @@ async function snapshot(db) {
       telefony_dzis: out.telefony_dzis, telefony_tydzien: out.telefony_tydzien,
       pct_dodzwonien: out.pct_dodzwonien, speed_to_lead_med_min: out.speed_to_lead_med_min,
       leady_nowe: out.leady_nowe, leady_nie_odebral: out.leady_nie_odebral,
+      leady_nietkniete: out.leady_nietkniete, martwe_wyceny_tkniete_7d: out.martwe_wyceny_tkniete_7d,
     },
     leady: { lejek: ld.lejek, zrodlo: ld.zrodlo },
     alerty,

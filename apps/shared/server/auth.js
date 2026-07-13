@@ -40,7 +40,7 @@ const PANELS = [
   { key: 'fulfillment', label: 'Fulfillment', desc: 'Pulpit pakowania: co spakować i nadać — produkty, etykieta, tracking', status: 'live', adminOnly: true },
   { key: 'wiadomosci', label: 'Wiadomości', desc: 'Komunikator: Messenger, IG, telefon i notatki w jednym wątku klienta', status: 'live' },
   { key: 'wiedza', label: 'Baza Wiedzy', desc: 'Mózg biznesu: zapytaj o wszystko, zatwierdzaj nową wiedzę, uzupełniaj luki', status: 'live' },
-  { key: 'statystyki', label: 'Statystyki', desc: 'Lejek, telefony, skuteczność — dane z całego systemu', status: 'soon' },
+  { key: 'statystyki', label: 'Statystyki', desc: 'Kokpit sprzedaży i pipeline + AI-doradca Fable', status: 'live' },
   { key: 'pozwolenia', label: 'Pozwolenia', desc: 'Użytkownicy i dostępy do paneli oraz arkuszy', status: 'live', adminOnly: true },
 ];
 
