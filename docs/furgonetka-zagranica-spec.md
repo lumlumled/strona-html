@@ -107,6 +107,33 @@ Z tego jedyne „poza Europą" = **US**. Logika serwera i tak obsługuje dowolny
   „kliknij Zamów"** (bezpieczne, zero przepisywania); pełny auto-order po
   potwierdzeniu flow.
 
+## Decyzje dogrywka (2026-07-13, trzecia tura)
+
+- **ROLLOUT = FULL AUTO** (moja rekomendacja, order potwierdzony): zagraniczny
+  klient prywatny → auto najtańszy dozwolony → order (order-commands) → etykieta
+  A6 → push. GUARD: kraje wymagające `duty` (cło: US + UK/CH/NO/UA + reszta
+  spoza UE) → **wstrzymaj + push** (bez `duty` order by padł). UE (unia celna)
+  → full auto. Auto-cancel: pomijamy na teraz (nie na happy-path; firma zagr.
+  wstrzymana PRZED order; rzadkie przypadki = panel web).
+
+- **NOWE: odbiór kuriera InPost (dispatch_order) z Fulfillment** — gdy Antoni
+  po raz PIERWSZY danego dnia kliknie „Drukuj etykietę"/„Oznacz" w /fulfillment
+  (przed 15:00) → `POST /v1/organizations/{id}/dispatch_orders` (ShipX) na
+  dzisiejsze gotowe przesyłki InPost, okno **15:00–17:00**, adres Walońska 7/84.
+  RAZ dziennie (idempotencja: flaga daty w bazie); kolejne kliknięcia = nic.
+  Po 15:00 = za późno na dziś (następny dzień / info). Dotyczy InPost (PL), nie
+  Furgonetki.
+
+- **NOWE: weekend (nice-to-have, moja rekomendacja: wersja LEAN)** —
+  a) zamówienie czw 18:00 → pt 15:00 = oznacz jako weekendowe (dostawa sobota),
+     flagi `saturday_delivery`/weekend w API — złożone, per-przewoźnik → v2;
+  b) zamówienie w sobotę → **push do Antoniego „nadać dziś?"** (proste, wartościowe)
+     → jeśli tak, nadaj; jak nie, poniedziałek. → robimy TYLKO (b) teraz, (a) na v2.
+
+- **Kolejność:** (1) pipeline zagranica full-auto + faktura firmy zagr. wstrzymaj,
+  (2) formularz (koszt dostawy + paczkomat tylko PL numer), (3) odbiór InPost
+  dispatch_order z fulfillment, (4) weekend-lean (b). Auto-cancel + duty + weekend(a) = v2.
+
 ## Architektura (lustro ShipX)
 
 - Tabela `wyceny_shipments` już ma `provider` (`shipx | furgonetka`) i `label_url`
