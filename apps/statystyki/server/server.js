@@ -30,7 +30,7 @@ app.get('/shared/:file', (req, res) => {
 app.get('/statystyki.webmanifest', (req, res) => {
   res.type('application/manifest+json').json({
     name: 'LumLum — Statystyki', short_name: 'Statystyki',
-    description: 'Kokpit sprzedaży + AI-doradca.',
+    description: 'Kokpit sprzedaży i marketingu LumLum.',
     start_url: `${req.baseUrl}/`, scope: `${req.baseUrl}/`,
     display: 'standalone', orientation: 'portrait', background_color: '#0a0a0a', theme_color: '#000000',
     icons: [

@@ -615,7 +615,7 @@ async function konwersje(db) {
   return { close_rate, krzywa_umierania, czas_do_domkniecia, sciana_cenowa, dowod_telefonu };
 }
 
-// Zgodność wstecz: close-rate jako samodzielna grupa (doradca, /api/stats/close-rate).
+// Zgodność wstecz: close-rate jako samodzielna grupa (/api/stats/close-rate).
 async function closeRate(db) {
   return (await konwersje(db)).close_rate;
 }
@@ -934,10 +934,11 @@ async function forward(db, pre = {}) {
   return { forecast, cena_zaniedbania, wejscia };
 }
 
-// ── G. SNAPSHOT (rollup dla AI-doradcy) ──────────────────────────────────────
+// ── G. SNAPSHOT (rollup firmy na jeden strzał — front + fasada /api/stats) ───
 // owner (opcjonalnie): scoping widoku per handlowiec (Kokpit dla nie-admina).
-// Bez owner = firmowo (doradca, endpoint maszynowy). Uwaga: owner w `wyceny` to
-// artefakt migracji (guardrails §2.3) — to scoping WIDOKU, nie raport wyników.
+// Bez owner = firmowo (endpoint maszynowy dla zewnętrznych konsumentów).
+// Uwaga: owner w `wyceny` to artefakt migracji (guardrails §2.3) — to scoping
+// WIDOKU, nie raport wyników.
 async function snapshot(db, { owner } = {}) {
   const [sp, pipe, out, ld, kv, radar, fakt, marza] = await Promise.all([
     sprzedaz(db, { owner }), pipeline(db, { limit: 10, owner }), outreach(db, { handlowiec: owner }),
