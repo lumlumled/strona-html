@@ -1,26 +1,19 @@
-// Panel Statystyki — API dla wewnętrznego AI-doradcy (PLACEHOLDER).
-//
-// Cel: JEDNO miejsce, z którego asystent AI (Fable) zaciąga gotowe
-// statystyki firmy, zamiast przeszukiwać cały system. Kontrakt (kształt
-// JSON) jest FINALNY — asystent można budować już teraz. Realne zapytania
-// do bazy wpina się w buildzie v1 (segmenty Sprzedaż + Outreach); do tego
-// czasu endpoint zwraca szkielet z wartościami `null` i `_status:"placeholder"`.
-//
-// Mapowanie każdego pola na źródło (tabela/kolumna): docs/statystyki-panel-spec.md.
-// Endpoint MASZYNOWY: autoryzacja tokenem (Bearer / ?token=), bez sesji-cookie.
+// Panel Statystyki — API dla wewnętrznego AI-doradcy (v1: Sprzedaż + Outreach +
+// Leady + Pipeline + Snapshot). JEDNA fasada /api/stats/* (guardrails §0):
+// AI-doradca pyta tylko to, nigdy bazy bezpośrednio. Read-only, token-gated.
+// Definicje metryk: queries.js. Guardrails: docs/statystyki-doradca-build-guardrails.md.
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const { getClient } = require('./supabase');
+const Q = require('./queries');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use((req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
-// --- Autoryzacja tokenem ---
-// AI-doradca woła z `Authorization: Bearer <STATS_API_TOKEN>` albo `?token=`.
-// Dopóki STATS_API_TOKEN nie jest ustawiony w env → 503 (świadomie: nie
-// wystawiamy danych bez tokena). Ustaw sekret w env i podaj go asystentowi.
+// --- Autoryzacja tokenem (endpoint maszynowy, bez sesji) ---
 function requireToken(req, res, next) {
   const expected = process.env.STATS_API_TOKEN;
   if (!expected) return res.status(503).json({ error: 'STATS_API_TOKEN nie ustawiony — endpoint wyłączony' });
@@ -30,50 +23,45 @@ function requireToken(req, res, next) {
   next();
 }
 
-// Szkielet snapshotu — POLA FINALNE, wartości do wpięcia w buildzie.
-// Komentarz przy każdym polu = skąd się je liczy (patrz spec).
-function emptySnapshot() {
-  return {
-    _status: 'placeholder',
-    _note: 'Kontrakt pól jest finalny; realne zapytania do wpięcia w buildzie v1. Źródła pól: docs/statystyki-panel-spec.md.',
-    generated_at: new Date().toISOString(),
-    sprzedaz: {
-      close_rate_30d: null,                                   // kohortowo: z wycen typ=WYCENA (30d wstecz) ile ma ZAMÓWIENIE/paid w 30 dni
-      sprzedaz_mies: { count: null, suma: null },             // wyceny typ=ZAMÓWIENIE, bieżący miesiąc (Europe/Warsaw)
-      aov: null,                                              // suma / count zamówień w oknie
-      pipeline_otwarty: { count: null, suma: null, sredni_wiek_dni: null }, // typ=WYCENA, status Open/Waiting for payment
-    },
-    outreach: {
-      telefony_dzis: null,                                    // Log zmian, zrodlo=zadarma_webhook, data_zmiany=dziś
-      telefony_tydzien: null,                                 // j.w., ostatnie 7 dni
-      pct_dodzwonien: null,                                   // 1 − (disposition='no_answer' / wszystkie telefony)
-      speed_to_lead_med_min: null,                            // mediana: event 'Nowy' (Log zmian) → 1. tel wychodzący
-      leady_nietkniete: null,                                 // leady status Nowy/Nie odebrał z 0 wpisów telefonicznych
-      martwe_wyceny_tkniete_7d: null,                         // otwarte wyceny >14 dni, które dostały kontakt w 7 dni
-    },
-    alerty: [],                                               // gotowe zdania dla doradcy, np. "268 000 zł leży w otwartych wycenach…"
-  };
-}
+// Opakowanie: łapie błędy, zwraca 502 z komunikatem (nie wywala funkcji).
+const handler = (fn) => async (req, res) => {
+  try {
+    const db = getClient();
+    res.json(await fn(db, req));
+  } catch (err) {
+    console.error('stats error:', err.message);
+    res.status(502).json({ error: err.message });
+  }
+};
 
-// GŁÓWNY endpoint dla AI: kompletny snapshot firmy w jednym strzale.
-app.get('/api/stats/snapshot', requireToken, (req, res) => res.json(emptySnapshot()));
+const str = (v) => (v == null ? undefined : String(v).trim() || undefined);
+const int = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
 
-// Aliasy segmentowe (opcjonalne — gdyby asystent chciał tylko część).
-app.get('/api/stats/sprzedaz', requireToken, (req, res) => {
-  res.json({ _status: 'placeholder', generated_at: new Date().toISOString(), ...emptySnapshot().sprzedaz });
-});
-app.get('/api/stats/outreach', requireToken, (req, res) => {
-  res.json({ _status: 'placeholder', generated_at: new Date().toISOString(), ...emptySnapshot().outreach });
-});
+// GŁÓWNY: pełny obraz firmy w jednym strzale (rollup A–D + close rate + alerty).
+app.get('/api/stats/snapshot', requireToken, handler((db) => Q.snapshot(db)));
 
-// Health-check bez tokena — do sprawdzenia, czy funkcja żyje po deployu.
+// Segmentowe (doszczegółowienie).
+app.get('/api/stats/sprzedaz', requireToken, handler((db, req) => Q.sprzedaz(db, { owner: str(req.query.owner) })));
+app.get('/api/stats/pipeline', requireToken, handler((db, req) => Q.pipeline(db, {
+  olderThanDays: int(req.query.olderThanDays, 0),
+  minKwota: int(req.query.minKwota, 0),
+  owner: str(req.query.owner),
+  limit: int(req.query.limit, 10),
+})));
+app.get('/api/stats/outreach', requireToken, handler((db, req) => Q.outreach(db, {
+  from: str(req.query.from), to: str(req.query.to), handlowiec: str(req.query.handlowiec),
+})));
+app.get('/api/stats/leady', requireToken, handler((db) => Q.leady(db)));
+app.get('/api/stats/close-rate', requireToken, handler((db) => Q.closeRate(db)));
+
+// Health bez tokena — sprawdzenie, czy funkcja żyje po deployu.
 app.get('/api/stats/health', (req, res) => {
   res.json({ ok: true, panel: 'statystyki', token_set: Boolean(process.env.STATS_API_TOKEN), ts: new Date().toISOString() });
 });
 
 const PORT = process.env.PORT || 3010;
 if (require.main === module) {
-  app.listen(PORT, () => console.log(`API Statystyki (placeholder) działa na http://localhost:${PORT}`));
+  app.listen(PORT, () => console.log(`API Statystyki działa na http://localhost:${PORT}`));
 }
 
 module.exports = app;
