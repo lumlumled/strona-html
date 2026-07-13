@@ -148,13 +148,17 @@ async function furgoFetch(pathname, { method = 'get', body, wantBuffer = false }
 // Nazwy pól POTWIERDZONE na żywym API (2026-07-13) przez odczyt realnej paczki
 // i udany calculate-price. Odbiorca: building_number i flat_number OSOBNO.
 function buildReceiver(wycena) {
+  const nr = [wycena.ship_house_no, wycena.ship_flat_no].filter(Boolean).join('/');
+  // Numer budynku MUSI być w polu `street` (tak trzyma to Furgonetka — realna
+  // paczka: "Mierová 950/95", building_number=null; DPD waliduje street→noNumber
+  // gdy brak numeru). Osobne pola zostawiamy dla kurierów, które je czytają.
   return {
     name: [wycena.first_name, wycena.last_name].filter(Boolean).join(' ').trim()
       || wycena.imie_nazwisko || wycena.invoice_company_name || '',
     company: wycena.invoice_company_name || '',
     email: wycena.email || '',
     phone: String(wycena.telefon_e164 || wycena.telefon_digits || '').replace(/^\+/, ''),
-    street: wycena.ship_street || '',
+    street: [wycena.ship_street, nr].filter(Boolean).join(' '),
     building_number: wycena.ship_house_no || '',
     flat_number: wycena.ship_flat_no || '',
     city: wycena.ship_city || '',
@@ -211,25 +215,22 @@ async function calculatePrice(wycena) {
   return furgoFetch('/packages/calculate-price', { method: 'post', body });
 }
 
-// Kurierzy ZABRONIENI (nigdy nie do wyboru): furgonetka_gielda (aukcja) oraz
-// poczta/Pocztex — TWARDY zakaz Antoniego ("żadnego pocztexu"). Zawsze wyklucz
-// „poczta" (Poczta Polska oferuje Pocztex). Override/rozszerzenie env FURGONETKA_BLOCKED.
-const BLOKOWANI = new Set(
-  (process.env.FURGONETKA_BLOCKED || 'furgonetka_gielda,poczta,pocztex')
+// Kurierzy DOZWOLENI (allow-lista, decyzja Antoniego): TYLKO renomowani —
+// DPD, DHL, FedEx, UPS. Żadnych randomowych brokerów (swiatprzesylek,
+// ambroexpress, gls) ani Poczty/Pocztexu (twardy zakaz). Wszystko spoza listy
+// jest ignorowane. Override/rozszerzenie env FURGONETKA_ALLOWED.
+const DOZWOLENI = new Set(
+  (process.env.FURGONETKA_ALLOWED || 'dpd,dhl,fedex,ups')
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
 );
-function serwisZablokowany(service) {
-  const s = String(service || '').toLowerCase();
-  return BLOKOWANI.has(s) || s.includes('pocztex') || s.includes('poczta');
-}
 
-// Oferty kurierskie POSORTOWANE rosnąco po cenie: available=true, jest
-// pricing.price_gross, bez kurierów zabronionych. Lista do fallbacku
-// (najtańszy który REALNIE przyjmie paczkę — patrz orchestracja).
+// Oferty POSORTOWANE rosnąco po cenie: available=true, jest pricing.price_gross,
+// TYLKO dozwoleni kurierzy. Lista do fallbacku (najtańszy DOZWOLONY, który
+// realnie przyjmie paczkę — patrz orchestracja).
 function sortowaneOferty(pricing) {
   const offers = (pricing && pricing.services_prices) || [];
   return offers
-    .filter((o) => o.available && o.pricing && o.pricing.price_gross != null && !serwisZablokowany(o.service))
+    .filter((o) => o.available && o.pricing && o.pricing.price_gross != null && DOZWOLENI.has(String(o.service || '').toLowerCase()))
     .sort((a, b) => a.pricing.price_gross - b.pricing.price_gross);
 }
 

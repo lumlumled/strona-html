@@ -79,6 +79,34 @@ Z tego jedyne „poza Europą" = **US**. Logika serwera i tak obsługuje dowolny
 - **create/order/pickup/label:** envelope pewny; do potwierdzenia draftem (POST
   /packages) + delete, oznaczone `TODO(live)` w module.
 
+## Decyzje dogrywka (2026-07-13, druga tura)
+
+- **Kurierzy = allow-lista: DPD, DHL, FedEx, UPS** (renomowani). Żadnych brokerów
+  (swiatprzesylek, ambroexpress, gls) ani Poczty/**Pocztexu** (twardy zakaz).
+  `sortowaneOferty` filtruje po `FURGONETKA_ALLOWED`. ⚠️ DHL na koncie
+  NIEDOSTĘPNY (`dhl niedost`) — Antoni musi go aktywować w panelu Furgonetki.
+- **Routing przewoźnika** (korekta — nie tylko po kraju):
+  - dostawa PL **i** telefon polski (+48) → **InPost (ShipX)**, paczkomat OK,
+  - dostawa PL **ale telefon zagraniczny** → **Furgonetka kurier** (InPost wymaga
+    PL numeru do SMS/paczkomatu),
+  - dostawa zagranica → **Furgonetka kurier**.
+  → warunek Furgonetki: `ship_country != PL` **LUB** `telefon nie +48`.
+- **Pudło:** 43×33×10 cm (największe realne). Wszystkie realne pudełka LumLum są
+  w tym samym progu cenowym — dobór S/M/L nic nie daje. Waga override
+  `FURGONETKA_WEIGHT_KG` (v2: z pozycji × `sku_cennik.weight_kg`).
+- **receiver.street MUSI zawierać numer** budynku (Furgonetka: "Mierová 950/95");
+  DPD waliduje `street→noNumber` gdy brak. `receiver.name` ma min. długość.
+- **Formularz — dodatkowo:**
+  - obcy prefiks telefonu → **ukryj paczkomat** + komunikat „Chcesz dostawę do
+    paczkomatu? Podaj polski numer telefonu.",
+  - koszt dostawy: PL darmowa / EU 50 / poza 100 (jak wyżej).
+- **`order` (PUT /packages/order) NIEROZGRYZIONY** — model koznyka (create →
+  validate → order), draft „waiting" zwraca „Paczka nie istnieje". Nie forsować
+  na żywym (płatnym) endpincie — wziąć flow z zalogowanej dokumentacji /
+  supportu Furgonetki. **v1 rollout: auto-przygotuj draft + push do Antoniego
+  „kliknij Zamów"** (bezpieczne, zero przepisywania); pełny auto-order po
+  potwierdzeniu flow.
+
 ## Architektura (lustro ShipX)
 
 - Tabela `wyceny_shipments` już ma `provider` (`shipx | furgonetka`) i `label_url`
