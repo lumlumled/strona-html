@@ -126,6 +126,9 @@
 
     .alerts { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.4rem; }
     .alert { background: var(--bad-soft); border: 1px solid var(--border); border-radius: 12px; padding: 0.6rem 0.85rem; font-size: 0.88rem; line-height: 1.4; }
+    .insights { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.9rem; }
+    .insight { background: var(--accent-soft); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 12px; padding: 0.7rem 0.95rem; font-size: 0.9rem; line-height: 1.45; }
+    .k-sub .arw { font-weight: 700; }
 
     .funnel { display: flex; flex-direction: column; gap: 0.35rem; }
     .funnel-row { display: grid; grid-template-columns: 130px 1fr 40px; align-items: center; gap: 0.6rem; font-size: 0.84rem; }
@@ -150,12 +153,17 @@
   <div id="site-header"></div>
   <main>
     <div class="tabs">
-      <button class="tab active" data-tab="marketing">Marketing</button>
+      <button class="tab active" data-tab="przeglad">Przegląd</button>
+      <button class="tab" data-tab="marketing">Marketing</button>
       <button class="tab" data-tab="outreach">Outreach</button>
       <button class="tab" data-tab="sprzedaz">Sprzedaż</button>
     </div>
 
-    <section id="marketing">
+    <section id="przeglad">
+      <div id="przeglad-body"><div class="state">Analizuję ostatnie tygodnie…</div></div>
+    </section>
+
+    <section id="marketing" style="display:none">
       <div class="subtabs">
         <button class="subtab active" data-sub="organic">Organic</button>
         <button class="subtab" data-sub="paid">Paid</button>
@@ -198,7 +206,7 @@
     const ymShort = (ym) => { const [y, m] = ym.split('-'); return MONTHS_PL[+m - 1] + ' ' + y.slice(2); };
 
     // ── Zakładki ──
-    const sections = ['marketing', 'outreach', 'sprzedaz'];
+    const sections = ['przeglad', 'marketing', 'outreach', 'sprzedaz'];
     const loaded = {};
     document.querySelectorAll('.tab').forEach((btn) => btn.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach((b) => b.classList.remove('active'));
@@ -217,7 +225,8 @@
 
     function ensureLoaded(t) {
       if (loaded[t]) return; loaded[t] = true;
-      if (t === 'marketing') loadOrganik();
+      if (t === 'przeglad') loadPrzeglad();
+      else if (t === 'marketing') loadOrganik();
       else loadSnapshot(); // outreach + sprzedaż z jednego snapshotu
     }
 
@@ -351,6 +360,80 @@
     }
     function niceMax(v) { const p = Math.pow(10, Math.floor(Math.log10(v))); const f = v / p; const nf = f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10; return nf * p; }
 
+    // ════════════ PRZEGLĄD (panel główny: momentum + korelacja) ════════════
+    async function loadPrzeglad() {
+      const body = document.getElementById('przeglad-body');
+      try { renderPrzeglad(await getJSON('/api/przeglad')); }
+      catch (err) { body.innerHTML = `<div class="state">Nie udało się pobrać danych: ${esc(err.message)}</div>`; }
+    }
+
+    function renderPrzeglad(pr) {
+      const m = pr.momentum || {};
+      const momTile = (label, cur, dp, goodUp = true) => {
+        const up = dp >= 0, good = dp === 0 ? null : (goodUp ? up : !up);
+        const cls = good == null ? '' : (good ? 'good' : 'bad');
+        const arw = dp === 0 ? '→' : (up ? '▲' : '▼');
+        return `<div class="card"><span class="k-label">${label}</span><span class="k-value">${cur}</span><span class="k-sub ${cls}"><span class="arw">${arw} ${up ? '+' : ''}${dp}%</span> vs tydzień temu</span></div>`;
+      };
+      const tiles = [
+        momTile('Leady (ten tydzień)', m.leady ? m.leady.teraz : 0, m.leady ? m.leady.delta_pct : 0),
+        momTile('Sprzedaż (ten tydzień)', fmtZl(m.sprzedaz_zl ? m.sprzedaz_zl.teraz : 0), m.sprzedaz_zl ? m.sprzedaz_zl.delta_pct : 0),
+        momTile('Zasięg organiczny', fmtC(m.zasieg ? m.zasieg.teraz : 0), m.zasieg ? m.zasieg.delta_pct : 0),
+        momTile('Zamówienia', m.sprzedaz_n ? m.sprzedaz_n.teraz : 0, m.sprzedaz_n ? m.sprzedaz_n.delta_pct : 0),
+      ].join('');
+      const insights = (pr.wnioski || []).map((w) => `<div class="insight">${esc(w)}</div>`).join('');
+      const nt = pr.najlepszy_tydzien || {};
+      const content = (nt.top_content || []).slice(0, 3).map((r) => {
+        const pl = PLAT[r.platform] || { n: r.platform, c: 'var(--text-muted)' };
+        const t = (r.title || '').replace(/\s+/g, ' ').slice(0, 80) || '(bez opisu)';
+        return `<div class="post-row" style="--pc:${pl.c}"><span class="post-plat">${pl.n}</span><span class="post-title"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(t)}</a></span><span class="post-num"><div class="v">${fmtC(r.views)}</div><div class="l">${fmtC(r.likes)} ❤</div></span></div>`;
+      }).join('');
+      document.getElementById('przeglad-body').innerHTML = `
+        <div class="section-title">Gdzie jesteśmy teraz</div>
+        <div class="grid">${tiles}</div>
+        <div class="section-title">Wnioski</div>
+        <div class="insights">${insights || '<div class="muted">Za mało danych.</div>'}</div>
+        <div class="section-title">Korelacja: content ↔ leady ↔ sprzedaż <span class="muted">(12 tyg., indeks 100 = średnia serii)</span></div>
+        <div class="chart-wrap" id="correl-wrap"></div>
+        <div class="section-title">Content przy szczycie leadów${nt.label ? ' (' + esc(nt.label) + ')' : ''}</div>
+        <div class="posts">${content || '<div class="muted">Brak dopasowanego contentu.</div>'}</div>`;
+      renderCorrelChart(document.getElementById('correl-wrap'), pr.tygodnie || []);
+    }
+
+    function renderCorrelChart(wrap, tyg) {
+      if (tyg.length < 2) { wrap.innerHTML = '<div class="muted">Za mało tygodni.</div>'; return; }
+      const cs = getComputedStyle(document.body);
+      const series = [
+        { key: 'zasieg', name: 'Zasięg', color: cs.getPropertyValue('--fb').trim(), raw: (b) => b.zasieg, fmt: fmtC },
+        { key: 'leady', name: 'Leady', color: cs.getPropertyValue('--ig').trim(), raw: (b) => b.leady, fmt: fmtInt },
+        { key: 'sprzedaz', name: 'Sprzedaż', color: cs.getPropertyValue('--tt').trim(), raw: (b) => b.sprzedaz_zl, fmt: fmtZl },
+      ];
+      series.forEach((s) => { const vals = tyg.map(s.raw); const mean = vals.reduce((a, b) => a + b, 0) / vals.length || 1; s.idx = vals.map((v) => mean ? v / mean * 100 : 100); });
+      const W = 760, H = 280, padL = 42, padR = 14, padT = 10, padB = 26, iw = W - padL - padR, ih = H - padT - padB, n = tyg.length;
+      const allIdx = series.flatMap((s) => s.idx);
+      const maxV = Math.max(120, ...allIdx), minV = Math.min(80, ...allIdx);
+      const x = (i) => padL + (i / (n - 1)) * iw;
+      const y = (v) => padT + ih - ((v - minV) / (maxV - minV || 1)) * ih;
+      const legend = `<div class="legend">${series.map((s) => `<span><i style="background:${s.color}"></i>${s.name}</span>`).join('')}</div>`;
+      const y100 = y(100);
+      const grid = `<line class="grid-line" x1="${padL}" y1="${y100}" x2="${W - padR}" y2="${y100}" style="stroke-dasharray:4 4"/><text class="axis-t" x="${padL - 6}" y="${y100 + 3}" text-anchor="end">100</text>`;
+      let xl = ''; tyg.forEach((b, i) => { if (i % 2 === 0 || i === n - 1) xl += `<text class="axis-t" x="${x(i)}" y="${H - 8}" text-anchor="middle">${esc(b.label)}</text>`; });
+      const paths = series.map((s) => `<path class="series" d="${s.idx.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}" stroke="${s.color}"/>`).join('');
+      const dots = series.map((s) => `<circle class="cx-dot" data-k="${s.key}" r="4.5" fill="${s.color}" stroke="var(--surface-1)" stroke-width="2"/>`).join('');
+      wrap.innerHTML = legend + `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Korelacja tygodniowa (indeks)">${grid}${xl}${paths}<line class="crosshair" id="cx2" y1="${padT}" y2="${padT + ih}"/>${dots}<rect x="${padL}" y="${padT}" width="${iw}" height="${ih}" fill="transparent" id="hit2"/></svg>`;
+      const svg = wrap.querySelector('svg'), hit = wrap.querySelector('#hit2'), cx = wrap.querySelector('#cx2'), cxDots = [...wrap.querySelectorAll('.cx-dot')], tip = document.getElementById('tooltip');
+      const show = (on) => { cx.style.opacity = on ? '1' : '0'; cxDots.forEach((d) => d.style.opacity = on ? '1' : '0'); tip.style.opacity = on ? '1' : '0'; };
+      hit.addEventListener('mousemove', (e) => {
+        const r = svg.getBoundingClientRect(); const px = (e.clientX - r.left) / r.width * W;
+        let i = Math.round((px - padL) / (iw / (n - 1))); i = Math.max(0, Math.min(n - 1, i));
+        cx.setAttribute('x1', x(i)); cx.setAttribute('x2', x(i));
+        cxDots.forEach((d) => { const s = series.find((z) => z.key === d.dataset.k); d.setAttribute('cx', x(i)); d.setAttribute('cy', y(s.idx[i])); });
+        tip.innerHTML = `<div class="tt-h">tydz. ${esc(tyg[i].label)}</div>` + series.map((s) => `<div class="tt-r"><span><i style="background:${s.color}"></i>${s.name}</span><b>${s.fmt(s.raw(tyg[i]))}</b></div>`).join('');
+        tip.style.left = Math.min(e.clientX + 14, window.innerWidth - 170) + 'px'; tip.style.top = (e.clientY - 10) + 'px'; show(true);
+      });
+      hit.addEventListener('mouseleave', () => show(false));
+    }
+
     // ════════════ OUTREACH + SPRZEDAŻ (snapshot) ════════════
     let snap = null;
     async function loadSnapshot() {
@@ -418,7 +501,7 @@
         <div class="section-title">Top martwych wycen do dzwonienia</div>${deadHtml}`;
     }
 
-    ensureLoaded('marketing');
+    ensureLoaded('przeglad');
   </script>
 </body>
 </html>

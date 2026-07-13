@@ -434,4 +434,72 @@ async function organik(db) {
   };
 }
 
-module.exports = { sprzedaz, pipeline, outreach, leady, closeRate, snapshot, organik };
+// ── PRZEGLĄD (panel główny): momentum + KORELACJA content↔leady↔sprzedaż ──────
+// Sens: nie sumy z roku, tylko „gdzie jesteśmy teraz vs tydzień temu" i „czy
+// content organiczny napędza leady/sprzedaż". Tygodniowe kubełki (12 tyg.).
+function pearson(xs, ys) {
+  const n = Math.min(xs.length, ys.length); if (n < 3) return null;
+  const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < n; i++) { const dx = xs[i] - mx, dy = ys[i] - my; sxy += dx * dy; sxx += dx * dx; syy += dy * dy; }
+  if (!sxx || !syy) return null;
+  return Math.round((sxy / Math.sqrt(sxx * syy)) * 100) / 100;
+}
+const dm = (d) => `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}`;
+
+async function przeglad(db, { weeks = 12 } = {}) {
+  const now = new Date();
+  const W = weeks;
+  const [leadyR, wycR, dailyR, postsR] = await Promise.all([
+    db.from(LEADY).select('"Date",ad_name'),
+    db.from(WYCENY).select('created_at,kwota_sprzedazy_brutto,kwota_proponowana_brutto').eq('typ', 'ZAMÓWIENIE'),
+    db.from('marketing_organic_daily').select('date,metrics'),
+    db.from('marketing_organic_posts').select('platform,published_at,title,url,views,likes'),
+  ]);
+  if (leadyR.error) throw leadyR.error;
+  const agoW = (d) => Math.floor((now - d) / (7 * 86400000)); // 0 = ten tydzień
+  const chrono = (d) => { const a = agoW(d); return (a >= 0 && a < W) ? (W - 1 - a) : -1; }; // 0=najstarszy .. W-1=teraz
+  const bins = Array.from({ length: W }, (_, i) => ({
+    label: dm(new Date(now.getTime() - (W - 1 - i) * 7 * 86400000)),
+    leady: 0, leady_nieskl: 0, sprzedaz_n: 0, sprzedaz_zl: 0, zasieg: 0,
+  }));
+  (leadyR.data || []).forEach((r) => { const d = parseLeadDate(r['Date']); if (!d) return; const i = chrono(d); if (i < 0) return; bins[i].leady++; if (!r.ad_name || !String(r.ad_name).trim()) bins[i].leady_nieskl++; });
+  (wycR.data || []).forEach((r) => { if (!r.created_at) return; const i = chrono(new Date(r.created_at)); if (i < 0) return; bins[i].sprzedaz_n++; bins[i].sprzedaz_zl += num(r.kwota_sprzedazy_brutto) || num(r.kwota_proponowana_brutto); });
+  (dailyR.data || []).forEach((r) => { const i = chrono(new Date(r.date)); if (i >= 0) bins[i].zasieg += num(r.metrics && r.metrics.views); });
+  (postsR.data || []).forEach((r) => { if (!r.published_at) return; const i = chrono(new Date(r.published_at)); if (i >= 0) bins[i].zasieg += num(r.views); });
+
+  const reach = bins.map((b) => b.zasieg), lea = bins.map((b) => b.leady), sprz = bins.map((b) => b.sprzedaz_zl);
+  const korelacja = {
+    zasieg_leady: pearson(reach, lea),
+    zasieg_leady_lag1: pearson(reach.slice(0, -1), lea.slice(1)), // zasięg w tyg. t → leady w t+1
+    zasieg_sprzedaz: pearson(reach, sprz),
+  };
+
+  const teraz = bins[W - 1], poprz = bins[W - 2] || { leady: 0, sprzedaz_zl: 0, zasieg: 0, sprzedaz_n: 0 };
+  const delta = (a, b) => (b ? Math.round((a - b) / b * 100) : (a ? 100 : 0));
+  const mom = (a, b) => ({ teraz: Math.round(a), poprzedni: Math.round(b), delta_pct: delta(a, b) });
+  const momentum = {
+    leady: mom(teraz.leady, poprz.leady), sprzedaz_zl: mom(teraz.sprzedaz_zl, poprz.sprzedaz_zl),
+    zasieg: mom(teraz.zasieg, poprz.zasieg), sprzedaz_n: mom(teraz.sprzedaz_n, poprz.sprzedaz_n),
+  };
+
+  // Najlepszy tydzień leadów + content, który mógł go napędzić (ten tydzień lub poprzedni — lag).
+  let best = 0; bins.forEach((b, i) => { if (b.leady > bins[best].leady) best = i; });
+  const bestAgo = W - 1 - best;
+  const wEnd = now.getTime() - bestAgo * 7 * 86400000, wStart = wEnd - 14 * 86400000;
+  const top_content = (postsR.data || [])
+    .filter((r) => { if (!r.published_at) return false; const t = new Date(r.published_at).getTime(); return t >= wStart && t <= wEnd; })
+    .sort((a, b) => num(b.views) - num(a.views)).slice(0, 3)
+    .map((r) => ({ platform: r.platform, title: r.title, url: r.url, views: num(r.views), likes: num(r.likes) }));
+
+  const sil = (c) => c == null ? 'brak danych' : (Math.abs(c) >= 0.6 ? 'silna' : Math.abs(c) >= 0.3 ? 'umiarkowana' : 'słaba');
+  const sgn = (n2) => (n2 >= 0 ? '+' : '') + n2;
+  const wnioski = [];
+  if (korelacja.zasieg_leady != null) wnioski.push(`Zasięg organiczny ↔ leady: korelacja ${sgn(korelacja.zasieg_leady)} (${sil(korelacja.zasieg_leady)})${korelacja.zasieg_leady_lag1 != null ? `, z opóźnieniem tygodnia ${sgn(korelacja.zasieg_leady_lag1)}` : ''}.`);
+  wnioski.push(`Ten tydzień vs poprzedni: leady ${sgn(momentum.leady.delta_pct)}%, sprzedaż ${sgn(momentum.sprzedaz_zl.delta_pct)}%, zasięg ${sgn(momentum.zasieg.delta_pct)}%.`);
+  if (top_content[0]) { const t0 = String(top_content[0].title || '').replace(/\s+/g, ' ').slice(0, 64) || 'film bez opisu'; wnioski.push(`Szczyt leadów: tydzień ${bins[best].label} (${bins[best].leady}). Najmocniejszy content z tego okna: „${t0}…" (${top_content[0].views.toLocaleString('pl-PL')} wyśw.).`); }
+
+  return { tygodnie: bins, momentum, korelacja, najlepszy_tydzien: { label: bins[best].label, leady: bins[best].leady, top_content }, wnioski };
+}
+
+module.exports = { sprzedaz, pipeline, outreach, leady, closeRate, snapshot, organik, przeglad };

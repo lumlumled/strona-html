@@ -74,6 +74,7 @@ app.get('/api/stats/outreach', requireToken, machine((db, req) => Q.outreach(db,
 app.get('/api/stats/leady', requireToken, machine((db) => Q.leady(db)));
 app.get('/api/stats/close-rate', requireToken, machine((db) => Q.closeRate(db)));
 app.get('/api/stats/organik', requireToken, machine((db) => Q.organik(db)));
+app.get('/api/stats/przeglad', requireToken, machine((db) => Q.przeglad(db)));
 
 // ── Bramka sesji huba (ciasteczko Path=/) ────────────────────────────────────
 const auth = createAuth({ getClient, panelKey: 'statystyki', loginTitle: 'Statystyki' });
@@ -103,6 +104,12 @@ app.get('/api/snapshot', async (req, res) => {
 app.get('/api/organik', async (req, res) => {
   try { res.json(await Q.organik(getClient())); }
   catch (err) { console.error('organik error:', err.message); res.status(502).json({ error: err.message }); }
+});
+
+// Przegląd (panel główny): momentum + korelacja content↔leady↔sprzedaż.
+app.get('/api/przeglad', async (req, res) => {
+  try { res.json(await Q.przeglad(getClient())); }
+  catch (err) { console.error('przeglad error:', err.message); res.status(502).json({ error: err.message }); }
 });
 
 // Doradca — czat SSE. ADMIN-only: system prompt (docs/fable-doradca-lumlum.md)
