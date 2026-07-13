@@ -1,11 +1,11 @@
 // Testy pętli AI-doradcy (tryb głęboki = wiele stats() pod rząd):
-//   node --test apps/statystyki/server/doradca.test.js
+//   node --test apps/doradca/server/fable.test.js
 // Krytyczne: (1) doradca może zrobić KILKA kolejnych wywołań stats() zanim
 // odpowie (guardrails §5/§9); (2) bezpiecznik maxIters kończy pętlę; (3) tekst
 // leci strumieniowo (onEvent 'text'), a wyniki narzędzia wracają do modelu.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const doradca = require('./doradca');
+const fable = require('./fable');
 
 // Pusty mock db — Q.snapshot() zbuduje się na zerach (bez rzucania).
 function emptyDb() {
@@ -42,7 +42,7 @@ test('chat: wiele kolejnych stats() zanim doradca odpowie (deep mode)', async ()
   };
 
   const events = [];
-  const finalText = await doradca.chat({
+  const finalText = await fable.chat({
     db: emptyDb(),
     messages: [{ role: 'user', content: 'co dziś?' }],
     onEvent: (e) => events.push(e),
@@ -56,9 +56,26 @@ test('chat: wiele kolejnych stats() zanim doradca odpowie (deep mode)', async ()
   const done = events.find((e) => e.type === 'done');
   assert.ok(done && !done.capped, 'zakończone naturalnie, nie limitem');
   assert.match(finalText, /Następny ruch/);
-  // Trzecia tura widziała tool_result z poprzednich (wynik wrócił do modelu).
   const lastMsgs = seenMessages[2];
   assert.ok(lastMsgs.some((m) => m.role === 'user' && Array.isArray(m.content) && m.content.some((c) => c.type === 'tool_result')));
+});
+
+test('chat: memoryText trafia do system promptu (uczenie)', async () => {
+  let seenSystem = '';
+  const callModel = async ({ system, onDelta }) => {
+    seenSystem = system;
+    onDelta('ok');
+    return { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' };
+  };
+  await fable.chat({
+    db: emptyDb(),
+    messages: [{ role: 'user', content: 'hej' }],
+    memoryText: '**Wiedza / preferencje:**\n- Antoni nie chce podnosić cen',
+    onEvent: () => {},
+    callModel,
+  });
+  assert.match(seenSystem, /PAMIĘĆ DORADCY/);
+  assert.match(seenSystem, /nie chce podnosić cen/);
 });
 
 test('chat: bezpiecznik maxIters kończy niekończącą się pętlę tool-use', async () => {
@@ -67,7 +84,7 @@ test('chat: bezpiecznik maxIters kończy niekończącą się pętlę tool-use', 
     return { content: [{ type: 'tool_use', id: 'x', name: 'stats', input: { group: 'snapshot' } }], stop_reason: 'tool_use' };
   };
   const events = [];
-  await doradca.chat({
+  await fable.chat({
     db: emptyDb(),
     messages: [{ role: 'user', content: 'test' }],
     onEvent: (e) => events.push(e),
@@ -80,6 +97,6 @@ test('chat: bezpiecznik maxIters kończy niekończącą się pętlę tool-use', 
 });
 
 test('runStats: nieznana grupa zwraca błąd zamiast rzucać', async () => {
-  const out = await doradca.runStats(emptyDb(), 'nie-ma-takiej');
+  const out = await fable.runStats(emptyDb(), 'nie-ma-takiej');
   assert.ok(out.error && /Nieznana grupa/.test(out.error));
 });

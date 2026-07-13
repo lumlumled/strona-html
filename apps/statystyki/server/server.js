@@ -1,10 +1,10 @@
-// Panel Statystyki (lumlum.dev/statystyki) — Kokpit sprzedaży dla Antoniego +
-// AI-doradca Fable. Fasada metryk: queries.js (JEDNO źródło liczb, guardrails §0).
+// Panel Statystyki (lumlum.dev/statystyki) — Kokpit sprzedaży dla Antoniego.
+// Fasada metryk: queries.js (JEDNO źródło liczb, guardrails §0). AI-doradca to
+// OSOBNY panel (apps/doradca) — konsumuje tę fasadę, tutaj go NIE ma.
 // Dwie bramki na jednej funkcji:
-//   • /api/stats/*  — MASZYNOWE, token (STATS_API_TOKEN), dla zewnętrznego
-//     doradcy (docs/statystyki-ai-handoff.md). Rejestrowane PRZED auth.gate,
-//     żeby Bearer-call nie leciał na /login.
-//   • /, /api/snapshot, /api/doradca/chat — SESYJNE (ciasteczko huba), front.
+//   • /api/stats/*  — MASZYNOWE, token (STATS_API_TOKEN), dla zewnętrznych
+//     konsumentów. Rejestrowane PRZED auth.gate, żeby Bearer-call nie leciał na /login.
+//   • /, /api/snapshot, /api/przeglad… — SESYJNE (ciasteczko huba), front.
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
@@ -13,7 +13,6 @@ const cors = require('cors');
 const { getClient } = require('./supabase');
 const { createAuth, clientPayload, panelLinks, isAdmin } = require('../../shared/server/auth');
 const Q = require('./queries');
-const doradca = require('./doradca');
 
 const app = express();
 app.use(cors());
@@ -89,7 +88,7 @@ app.get('/api/stats/ai-ops', requireToken, machine((db) => Q.aiOps(db)));
 const auth = createAuth({ getClient, panelKey: 'statystyki', loginTitle: 'Statystyki' });
 auth.register(app);
 
-// ── Front (Kokpit + Doradca) ─────────────────────────────────────────────────
+// ── Front (Kokpit) ───────────────────────────────────────────────────────────
 const APP_HTML = fs.readFileSync(path.join(__dirname, '..', 'app.html'), 'utf8');
 function injectGlobals(template, req) {
   return template.replace(
@@ -135,33 +134,6 @@ app.get('/api/sprzedaz', sesyjny((db, req) => {
   const owner = isAdmin(req.user) ? str(req.query.owner) : (req.user && req.user.name);
   return Q.sprzedaz(db, { ...oknoParams(req), owner });
 }));
-
-// Doradca — czat SSE. ADMIN-only: system prompt (docs/fable-doradca-lumlum.md)
-// zawiera marże/strategię właściciela; firmowy widok danych.
-app.post('/api/doradca/chat', auth.requireAdmin, async (req, res) => {
-  const { messages, deep } = req.body || {};
-  if (!Array.isArray(messages) || !messages.length) return res.status(400).json({ error: 'Brak wiadomości' });
-
-  res.set({ 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-  if (res.flushHeaders) res.flushHeaders();
-  const send = (event, data) => { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
-  let closed = false;
-  req.on('close', () => { closed = true; });
-
-  try {
-    await doradca.chat({
-      db: getClient(),
-      deep: Boolean(deep),
-      messages: messages.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '') })),
-      onEvent: (e) => { if (!closed) send(e.type, e); },
-    });
-  } catch (err) {
-    console.error('doradca error:', err.message);
-    if (!closed) send('error', { message: err.message });
-  } finally {
-    if (!closed) { send('end', {}); res.end(); }
-  }
-});
 
 const PORT = process.env.PORT || 3010;
 if (require.main === module) {
