@@ -90,6 +90,9 @@ function registerPushEndpoints(app, { getClient }) {
       if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth) {
         return res.status(400).json({ error: 'Niepełna subskrypcja push' });
       }
+      // silent=true: ciche odtworzenie subskrypcji przy wejściu (topbar) — bez
+      // testowego pusha, żeby nie strzelać powiadomieniem przy każdym otwarciu.
+      const silent = req.body?.silent === true;
       const supabase = getClient();
       const { error } = await supabase.from(SUBSCRIPTIONS_TABLE).upsert({
         user_id: req.user.id,
@@ -101,15 +104,17 @@ function registerPushEndpoints(app, { getClient }) {
       if (error) throw error;
 
       let test = null;
-      try {
-        test = await notifyUser(getClient, req.user.id, {
-          title: 'Nowa wiadomość (test)',
-          body: 'Powiadomienia działają — tak będzie wyglądać info o nowej wiadomości.',
-          url: '/wiadomosci',
-          tag: 'push-test',
-        });
-      } catch (err) {
-        console.error('Testowy push po subskrypcji nie wyszedł:', err.message);
+      if (!silent) {
+        try {
+          test = await notifyUser(getClient, req.user.id, {
+            title: 'Nowa wiadomość (test)',
+            body: 'Powiadomienia działają — tak będzie wyglądać info o nowej wiadomości.',
+            url: '/wiadomosci',
+            tag: 'push-test',
+          });
+        } catch (err) {
+          console.error('Testowy push po subskrypcji nie wyszedł:', err.message);
+        }
       }
       res.json({ ok: true, test });
     } catch (err) {

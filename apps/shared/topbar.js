@@ -29,12 +29,55 @@ window.LumTopbar = (() => {
     btn.title = 'Powiadomienia push na tym urządzeniu';
     btn.innerHTML = '<svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true"><path d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22zm8-5v-1l-1.7-1.7a2 2 0 0 1-.59-1.41V10a5.71 5.71 0 0 0-4.21-5.5V4a1.5 1.5 0 0 0-3 0v.5A5.71 5.71 0 0 0 6.29 10v2.89a2 2 0 0 1-.59 1.41L4 16v1z"/></svg>';
     const base = window.API_BASE || '';
+    // Świadome wyłączenie zapamiętujemy lokalnie — inaczej ciche odtwarzanie
+    // (poniżej) włączyłoby powiadomienia z powrotem przy następnym wejściu.
+    const OFF_KEY = 'lumlumPushOff';
+    const isOff = () => { try { return localStorage.getItem(OFF_KEY) === '1'; } catch (_) { return false; } };
+    const setOff = (v) => { try { v ? localStorage.setItem(OFF_KEY, '1') : localStorage.removeItem(OFF_KEY); } catch (_) { /* prywatne okno */ } };
+
+    // Zapis subskrypcji na serwerze. silent=true → serwer NIE wysyła testowego
+    // pusha (ciche odtwarzanie przy każdym wejściu nie może spamować testem).
+    async function saveSubscription(sub, { silent }) {
+      const res = await fetch(`${base}/api/push/subscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscription: sub.toJSON(), silent: Boolean(silent) }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+      return body;
+    }
+
+    // Utworzenie subskrypcji push na tym urządzeniu (SW + VAPID + zapis).
+    async function subscribeDevice(reg, { silent }) {
+      const keyBody = await fetch(`${base}/api/push/vapid-key`).then((r) => r.json());
+      if (!keyBody.key) throw new Error(keyBody.error || 'Brak klucza VAPID');
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(keyBody.key),
+      });
+      await saveSubscription(sub, { silent });
+      return sub;
+    }
+
+    // Ciche odtworzenie subskrypcji przy KAŻDYM wejściu, jeśli pozwolenie już
+    // dane i użytkownik świadomie nie wyłączył. iOS potrafi ubić subskrypcję/SW
+    // między uruchomieniami PWA (samo pozwolenie zostaje 'granted' na stałe) —
+    // bez tego dzwonek „gasł" i trzeba było klikać za każdym razem. Klik jest
+    // potrzebny RAZ (zgoda); potem odtwarza się samo, bez testowego pinga.
+    async function ensureSubscribed() {
+      if (!supported || isOff() || Notification.permission !== 'granted') return false;
+      const reg = await navigator.serviceWorker.register('/sw.js');
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) sub = await subscribeDevice(reg, { silent: true });
+      else await saveSubscription(sub, { silent: true }); // odśwież wiersz/last_used
+      return true;
+    }
 
     if (supported) {
-      navigator.serviceWorker.getRegistration('/')
-        .then((reg) => reg && reg.pushManager.getSubscription())
-        .then((sub) => btn.classList.toggle('on', Boolean(sub)))
-        .catch(() => {});
+      ensureSubscribed()
+        .then((on) => btn.classList.toggle('on', Boolean(on)))
+        .catch(() => { /* brak sieci/uprawnień — dzwonek zostaje „off" */ });
     }
 
     btn.addEventListener('click', async (e) => {
@@ -48,7 +91,9 @@ window.LumTopbar = (() => {
         const reg = await navigator.serviceWorker.register('/sw.js');
         const existing = await reg.pushManager.getSubscription();
         if (existing) {
-          // Wyłączenie na tym urządzeniu.
+          // Świadome wyłączenie na tym urządzeniu — zapamiętane, żeby ciche
+          // odtwarzanie nie włączyło z powrotem przy następnym wejściu.
+          setOff(true);
           await existing.unsubscribe();
           await fetch(`${base}/api/push/unsubscribe`, {
             method: 'POST',
@@ -63,21 +108,10 @@ window.LumTopbar = (() => {
           alert('Powiadomienia są zablokowane — włącz je w ustawieniach przeglądarki dla tej strony.');
           return;
         }
-        const keyBody = await fetch(`${base}/api/push/vapid-key`).then((r) => r.json());
-        if (!keyBody.key) throw new Error(keyBody.error || 'Brak klucza VAPID');
-        const sub = await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(keyBody.key),
-        });
-        const res = await fetch(`${base}/api/push/subscribe`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ subscription: sub.toJSON() }),
-        });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
-        // Serwer po zapisie od razu wysyła testowy push "Nowa wiadomość
-        // (test)" — użytkownik natychmiast widzi, że działa.
+        setOff(false);
+        // Pierwsze świadome włączenie → testowy push (silent=false), żeby od
+        // razu było widać, że działa.
+        await subscribeDevice(reg, { silent: false });
         btn.classList.add('on');
       } catch (err) {
         alert(`Nie udało się przełączyć powiadomień: ${err.message}`);
