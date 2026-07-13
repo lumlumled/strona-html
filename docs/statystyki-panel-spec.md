@@ -1,6 +1,8 @@
 # Spec: panel STATYSTYKI (kokpit decyzyjny + feed dla AI-doradcy)
 
-> Status: **SPEC / DESIGN — do budowy, nie teraz.** Ten plik = brief dla przyszłego czatu, który to zbuduje. Zwiad po danych zrobiony (lipiec 2026), każda metryka oznaczona: JEST policzalna z istniejących danych / wymaga Make. Powiązanie: [fable-doradca-lumlum.md](fable-doradca-lumlum.md) (panel = żywy scorecard z sekcji 7 briefu) i [backlog-priorytetyzacja-spec.md](backlog-priorytetyzacja-spec.md).
+> Status: **SPEC / DESIGN — do budowy, nie teraz.** Ten plik = brief dla przyszłego czatu, który to zbuduje. Zwiad po danych zrobiony (lipiec 2026), każda metryka oznaczona: JEST policzalna z istniejących danych / wymaga Make.
+>
+> ⚠️ **Autorytet dla buildu = [statystyki-doradca-build-guardrails.md](statystyki-doradca-build-guardrails.md)** (twarde definicje + pułapki danych, zweryfikowane na żywej bazie 2026-07-13: wyceny=433 kanoniczna / Wyceny B2C=70 legacy, owner=artefakt migracji, ratio przychodu 1.000, pipeline 120/270k/76d). Gdzie ten spec i guardrails się różnią — **wygrywa guardrails**. Mapa źródeł per zapytanie: [statystyki-data-catalog.md](statystyki-data-catalog.md). Powiązanie: [fable-doradca-lumlum.md](fable-doradca-lumlum.md) (panel = żywy scorecard z sekcji 7 briefu) i [backlog-priorytetyzacja-spec.md](backlog-priorytetyzacja-spec.md).
 
 ## Filozofia (dlaczego i po co)
 
@@ -29,7 +31,7 @@ Dwie zasady, inaczej to będzie ładny, martwy dashboard:
 | Metryka | Definicja / kolumny | Cel | Status |
 |---|---|---|---|
 | **Close rate** | kohortowa (patrz „twarde definicje") — z wycen `typ='WYCENA'` ile ma powiązane `ZAMÓWIENIE`/`paid` w 30 dni | **25–35%** | JEST (do policzenia) |
-| **Otwarty pipeline** | `count` + Σ `kwota_proponowana_brutto` + śr. wiek (dni od `created_at`); `typ='WYCENA' AND status IN ('Open','Waiting for payment')` | maleje ↓ (dziś ~268k / 76 dni) | JEST |
+| **Otwarty pipeline** | `count` + Σ `kwota_proponowana_brutto` + śr. wiek (dni od `created_at`); `typ='WYCENA' AND status='Open'` (uwaga: `Waiting for payment` to ZAMÓWIENIA, nie wyceny — nie wliczać) | maleje ↓ (zweryfikowane 2026-07-13: **120 / 270 079 zł / 76 dni**) | JEST |
 
 **Pod spodem:**
 - **Wyceny wysłane** (tydzień/miesiąc): count + Σ wartość. `typ='WYCENA'`, `created_at` w oknie. *(Proxy „wysłana" = istnienie wiersza; brak osobnego stanu „sent" — patrz definicje.)* — JEST
