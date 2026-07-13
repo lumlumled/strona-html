@@ -50,6 +50,32 @@ function creds() {
 let _mem = { access: null, accessExp: 0, refresh: process.env.FURGONETKA_REFRESH_TOKEN || null };
 let _store = null; // { load: async()=>{access,accessExp,refresh}, save: async(patch)=>void }
 function useTokenStore(store) { _store = store; }
+
+// Produkcyjny magazyn tokenów oparty o Supabase (tabela furgonetka_oauth, wiersz
+// id=1). Przetrwa zimne starty serverless i rotację single-use refresh_token.
+// Użycie w pipeline: furgonetka.useTokenStore(furgonetka.makeSupabaseTokenStore(db)).
+function makeSupabaseTokenStore(db) {
+  return {
+    load: async () => {
+      const { data } = await db.from('furgonetka_oauth').select('*').eq('id', 1).limit(1);
+      const row = data && data[0];
+      if (!row) return {};
+      return {
+        access: row.access_token || null,
+        accessExp: row.access_expires_at ? new Date(row.access_expires_at).getTime() : 0,
+        refresh: row.refresh_token || null,
+      };
+    },
+    save: async (patch) => {
+      const upd = { id: 1, updated_at: new Date().toISOString() };
+      if (patch.access !== undefined) upd.access_token = patch.access;
+      if (patch.refresh !== undefined) upd.refresh_token = patch.refresh;
+      if (patch.accessExp !== undefined) upd.access_expires_at = new Date(patch.accessExp).toISOString();
+      const { error } = await db.from('furgonetka_oauth').upsert(upd);
+      if (error) console.error('Furgonetka token save błąd:', error.message);
+    },
+  };
+}
 async function loadTokens() { return _store ? { ..._mem, ...(await _store.load()) } : _mem; }
 async function saveTokens(patch) { _mem = { ..._mem, ...patch }; if (_store) await _store.save(patch); }
 
@@ -181,14 +207,19 @@ async function calculatePrice(wycena) {
   return furgoFetch('/packages/calculate-price', { method: 'post', body });
 }
 
-// Najtańsza realna oferta kurierska: available=true, jest pricing.price_gross,
-// pomijamy „furgonetka_gielda" (aukcja, nie deterministyczny kurier).
-function wybierzNajtanszaOferte(pricing) {
+// Oferty kurierskie POSORTOWANE rosnąco po cenie: available=true, jest
+// pricing.price_gross, pomijamy „furgonetka_gielda" (aukcja). Zwraca listę do
+// fallbacku (najtańszy który REALNIE przyjmie paczkę — patrz orchestracja).
+function sortowaneOferty(pricing) {
   const offers = (pricing && pricing.services_prices) || [];
-  const ok = offers.filter((o) => o.available && o.pricing && o.pricing.price_gross != null
-    && o.service !== 'furgonetka_gielda');
-  ok.sort((a, b) => a.pricing.price_gross - b.pricing.price_gross);
-  return ok[0] || null;
+  return offers
+    .filter((o) => o.available && o.pricing && o.pricing.price_gross != null && o.service !== 'furgonetka_gielda')
+    .sort((a, b) => a.pricing.price_gross - b.pricing.price_gross);
+}
+
+// Najtańsza pojedyncza oferta (wygoda; orchestracja i tak używa fallbacku).
+function wybierzNajtanszaOferte(pricing) {
+  return sortowaneOferty(pricing)[0] || null;
 }
 
 // Utworzenie paczki (draft w koszyku) dla wybranej oferty. UWAGA: `POST /packages`
@@ -247,44 +278,60 @@ function mapTrackingStatus(rawStatus) {
 // ── Orkiestracja: „zamów zagraniczną przesyłkę w pełni automatycznie" ─────────
 // Zwraca znormalizowany wynik do zapisania w wyceny_shipments + do pusha.
 // Wołane z pipeline (krokPrzesylkaFurgonetka) TYLKO gdy jestZagranica.
-async function zamowPrzesylkeZagraniczna(wycena) {
+function packageIdOf(paczka) {
+  return paczka?.package_id ?? paczka?.id ?? (paczka?.packages && paczka.packages[0] && paczka.packages[0].package_id) ?? null;
+}
+
+async function zamowPrzesylkeZagraniczna(wycena, { autoOrder = true } = {}) {
   const pricing = await calculatePrice(wycena);
-  const oferta = wybierzNajtanszaOferte(pricing);
-  if (!oferta) throw new Error('Furgonetka: brak dostępnej oferty kuriera dla kraju ' + wycena.ship_country);
+  const oferty = sortowaneOferty(pricing);
+  if (!oferty.length) {
+    throw new Error(`Furgonetka: brak oferty kuriera dla ${wycena.ship_country} (poza-EU może wymagać danych celnych)`);
+  }
 
-  const paczka = await createPackage(wycena, oferta, { reference: wycena.id });
-  const packageId = paczka?.id ?? paczka?.package_id ?? paczka?.uuid; // TODO(sandbox)
-  if (!packageId) throw new Error('Furgonetka: createPackage nie zwrócił id: ' + JSON.stringify(paczka).slice(0, 200));
+  // create z FALLBACKIEM po ofertach: najtańszy, który REALNIE przyjmie paczkę
+  // (kurier ma limit wartości, np. swiatprzesylek 500 zł, albo nie wspiera pól).
+  let paczka = null; let oferta = null; let ostatniBlad = null; let odrzuconych = 0;
+  for (const o of oferty) {
+    try { paczka = await createPackage(wycena, o, { reference: wycena.id }); oferta = o; break; }
+    catch (e) { ostatniBlad = `${o.service}: ${e.message.slice(0, 120)}`; odrzuconych += 1; }
+  }
+  if (!paczka) throw new Error(`Furgonetka: żaden z ${oferty.length} kurierów nie przyjął paczki. Ostatni: ${ostatniBlad}`);
+  const packageId = packageIdOf(paczka);
+  if (!packageId) throw new Error(`Furgonetka: createPackage bez package_id: ${JSON.stringify(paczka).slice(0, 200)}`);
 
-  await orderPackage(packageId);
-  let pickup = null;
-  try { await schedulePickup(packageId); pickup = await getPickup(); }
-  catch (e) { pickup = { error: e.message }; } // odbiór nie może wywalić całości
-
-  let label = null;
-  try { label = await downloadLabel(packageId); }
-  catch (e) { label = null; } // etykieta dociągnie worker, jak nie od razu
+  // order = kupno (płatne). pickup + etykieta A6 best-effort (nie wywalają całości).
+  let ordered = false; let pickup = null; let label = null;
+  if (autoOrder) {
+    await orderPackage(packageId);
+    ordered = true;
+    try { await schedulePickup(packageId); pickup = await getPickup(); } catch (e) { pickup = { error: e.message }; }
+    try { label = await downloadLabel(packageId); } catch (_) { label = null; } // dociągnie worker
+  }
 
   return {
     provider: 'furgonetka',
     shipment_id: String(packageId),
     service: oferta.service ?? null,
-    tracking_number: paczka?.tracking_number ?? paczka?.package_no ?? null, // TODO(live)
+    tracking_number: paczka?.tracking_number ?? (paczka?.parcels && paczka.parcels[0] && paczka.parcels[0].package_no) ?? null,
     cena_kuriera: oferta.pricing?.price_gross ?? null,
-    pickup, // { date, time_from, time_to, ... } — do pusha „odbiór o …"
-    label,  // Buffer PDF A6 albo null
-    raw: { pricingCount: (pricing?.services_prices || []).length },
+    ordered,
+    pickup, // { … godzina odbioru … } — do pusha „kurier odbierze o HH:MM"
+    label,  // Buffer PDF A6 albo null (dociągnie worker po potwierdzeniu)
+    raw: { ofert: oferty.length, odrzuconych },
   };
 }
 
 module.exports = {
   getToken,
   useTokenStore,
+  makeSupabaseTokenStore,
   bootstrapPassword,
   furgoFetch,
   buildReceiver,
   buildParcel,
   calculatePrice,
+  sortowaneOferty,
   wybierzNajtanszaOferte,
   createPackage,
   orderPackage,
