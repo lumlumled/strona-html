@@ -2,6 +2,8 @@
 
 > To jest **osobny build** od panelu statystyk. Panel (`docs/statystyki-doradca-build-guardrails.md`) wystawia dane; ten doradca je konsumuje. Zależność twarda: **doradca rusza dopiero gdy działa `GET /api/stats/snapshot`** (i najlepiej grupy A–D). Do tego czasu można scaffoldować pod kontrakt, ale nie ma czego testować.
 
+> **STATUS (2026-07-13): ODŁOŻONE — na razie doradca żyje jako CZAT** (ten czat / claude.ai z promptem Fable). Antoni myśli nad docelową formą w hubie. Ten plik = spec na przyszłość, buildu nie zaczynamy teraz.
+
 ## Czym jest
 
 Czat w hubie (panel `/doradca` albo bok-w-bok z panelem statystyk), z którym Antoni rozmawia o firmie. Widzi żywe dane przez panel statystyk, odpowiada od razu, **idzie w głąb** i mówi rzeczy, których sam sobie nie powie (ślepe plamy, niewygodne prawdy). Nie jest raportem — jest doradcą.
@@ -21,6 +23,7 @@ Czat w hubie (panel `/doradca` albo bok-w-bok z panelem statystyk), z którym An
 - **Narzędzie = jedno:** `stats(group, params)` → mapuje na `/api/stats/*`, read-only, limit wyniku.
 - **WYMÓG GŁĘBI:** pozwól na **wiele kolejnych wywołań `stats()` w jednej odpowiedzi** (snapshot → anomalia → dociągnij grupę → skoreluj → odpowiedz). Sekcja 9 promptu (drugie dno, korelacje, ślepe plamy) tego wymaga. Płytki jednostrzałowiec = porażka.
 - **Streaming** — token po tokenie.
+- **Dyktowanie (głos) — wymóg.** Antoni woli MÓWIĆ niż pisać (jego wiadomości i tak są dyktowane). Na teraz (wersja-czat): dyktowanie w apce claude.ai / systemowe. W wersji w hubie: mikrofon w polu czatu → speech-to-text (Web Speech API na start, Whisper gdy trzeba lepiej po polsku) → wstawia tekst do inputu (edytowalny przed wysłaniem, bo dyktowanie miewa literówki). Opcjonalnie odpowiedź czytana głosem (TTS) — miły dodatek, nie v0.
 
 ## Pamięć i proaktywność (accountability — sekcja 9 promptu pkt 6 tego wymaga)
 

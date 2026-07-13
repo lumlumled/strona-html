@@ -57,6 +57,8 @@ const machine = (fn) => async (req, res) => {
 };
 const str = (v) => (v == null ? undefined : String(v).trim() || undefined);
 const int = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
+// Wspólne parametry okna czasu (selektor panelu): ?okres=1d|3d|7d|30d|90d albo ?from&to.
+const oknoParams = (req) => ({ okres: str(req.query.okres), from: str(req.query.from), to: str(req.query.to) });
 
 // Health bez tokena — sprawdzenie, czy funkcja żyje po deployu.
 app.get('/api/stats/health', (req, res) => {
@@ -69,12 +71,19 @@ app.get('/api/stats/pipeline', requireToken, machine((db, req) => Q.pipeline(db,
   owner: str(req.query.owner), limit: int(req.query.limit, 10),
 })));
 app.get('/api/stats/outreach', requireToken, machine((db, req) => Q.outreach(db, {
-  from: str(req.query.from), to: str(req.query.to), handlowiec: str(req.query.handlowiec),
+  ...oknoParams(req), handlowiec: str(req.query.handlowiec),
 })));
 app.get('/api/stats/leady', requireToken, machine((db) => Q.leady(db)));
 app.get('/api/stats/close-rate', requireToken, machine((db) => Q.closeRate(db)));
-app.get('/api/stats/organik', requireToken, machine((db) => Q.organik(db)));
-app.get('/api/stats/przeglad', requireToken, machine((db) => Q.przeglad(db)));
+app.get('/api/stats/organik', requireToken, machine((db, req) => Q.organik(db, oknoParams(req))));
+app.get('/api/stats/przeglad', requireToken, machine((db, req) => Q.przeglad(db, { weeks: int(req.query.weeks, 12) })));
+app.get('/api/stats/konwersje', requireToken, machine((db) => Q.konwersje(db)));
+app.get('/api/stats/kampanie', requireToken, machine((db, req) => Q.kampanie(db, oknoParams(req))));
+app.get('/api/stats/radar', requireToken, machine((db) => Q.b2bRadar(db)));
+app.get('/api/stats/forward', requireToken, machine((db) => Q.forward(db)));
+app.get('/api/stats/faktury', requireToken, machine((db) => Q.faktury(db)));
+app.get('/api/stats/marza', requireToken, machine((db) => Q.marzaRealna(db)));
+app.get('/api/stats/ai-ops', requireToken, machine((db) => Q.aiOps(db)));
 
 // ── Bramka sesji huba (ciasteczko Path=/) ────────────────────────────────────
 const auth = createAuth({ getClient, panelKey: 'statystyki', loginTitle: 'Statystyki' });
@@ -100,17 +109,32 @@ app.get('/api/snapshot', async (req, res) => {
   } catch (err) { console.error('snapshot error:', err.message); res.status(502).json({ error: err.message }); }
 });
 
-// Marketing/Organik (grupa F) — firmowy widok (bez scope per owner: to social całej firmy).
-app.get('/api/organik', async (req, res) => {
-  try { res.json(await Q.organik(getClient())); }
-  catch (err) { console.error('organik error:', err.message); res.status(502).json({ error: err.message }); }
-});
-
-// Przegląd (panel główny): momentum + korelacja content↔leady↔sprzedaż.
-app.get('/api/przeglad', async (req, res) => {
-  try { res.json(await Q.przeglad(getClient())); }
-  catch (err) { console.error('przeglad error:', err.message); res.status(502).json({ error: err.message }); }
-});
+// Sesyjne endpointy zakładek — firmowy widok (jak przeglad/organik); okno
+// czasu z selektora panelu przez oknoParams.
+const sesyjny = (fn) => async (req, res) => {
+  try { res.json(await fn(getClient(), req)); }
+  catch (err) { console.error('panel error:', err.message); res.status(502).json({ error: err.message }); }
+};
+app.get('/api/organik', sesyjny((db, req) => Q.organik(db, oknoParams(req))));
+app.get('/api/przeglad', sesyjny((db, req) => Q.przeglad(db, { weeks: int(req.query.weeks, 12) })));
+app.get('/api/konwersje', sesyjny((db) => Q.konwersje(db)));
+// Firmowe pieniądze (radar B2B, faktury, marża, prognoza, kampanie→przychód):
+// ADMIN-only — sprzedaże nie-admina są prywatne, agregaty firmowe tym bardziej.
+app.get('/api/kampanie', auth.requireAdmin, sesyjny((db, req) => Q.kampanie(db, oknoParams(req))));
+app.get('/api/radar', auth.requireAdmin, sesyjny((db) => Q.b2bRadar(db)));
+app.get('/api/forward', auth.requireAdmin, sesyjny((db) => Q.forward(db)));
+app.get('/api/faktury', auth.requireAdmin, sesyjny((db) => Q.faktury(db)));
+app.get('/api/marza', auth.requireAdmin, sesyjny((db) => Q.marzaRealna(db)));
+// Outreach z oknem czasu; nie-admin widzi wolumeny tylko swoje (jak snapshot).
+app.get('/api/outreach', sesyjny((db, req) => {
+  const handlowiec = isAdmin(req.user) ? str(req.query.handlowiec) : (req.user && req.user.name);
+  return Q.outreach(db, { ...oknoParams(req), handlowiec });
+}));
+// Sprzedaż z oknem czasu; scope per owner jak /api/snapshot.
+app.get('/api/sprzedaz', sesyjny((db, req) => {
+  const owner = isAdmin(req.user) ? str(req.query.owner) : (req.user && req.user.name);
+  return Q.sprzedaz(db, { ...oknoParams(req), owner });
+}));
 
 // Doradca — czat SSE. ADMIN-only: system prompt (docs/fable-doradca-lumlum.md)
 // zawiera marże/strategię właściciela; firmowy widok danych.

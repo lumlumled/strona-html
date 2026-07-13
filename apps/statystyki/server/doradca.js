@@ -43,18 +43,26 @@ const GROUPS = {
   outreach: (db, p) => Q.outreach(db, p || {}),
   leady: (db) => Q.leady(db),
   'close-rate': (db) => Q.closeRate(db),
+  konwersje: (db) => Q.konwersje(db),
+  kampanie: (db, p) => Q.kampanie(db, p || {}),
+  radar: (db) => Q.b2bRadar(db),
+  forward: (db) => Q.forward(db),
+  faktury: (db) => Q.faktury(db),
+  marza: (db) => Q.marzaRealna(db),
+  organik: (db, p) => Q.organik(db, p || {}),
+  przeglad: (db) => Q.przeglad(db),
 };
 
 const STATS_TOOL = {
   name: 'stats',
-  description: 'Żywe liczby LumLum (read-only). Wołaj WIELE razy pod rząd, żeby kopać w głąb: snapshot → anomalia → dociągnij grupę → skoreluj → odpowiedz. Grupy: snapshot (pełny rollup), sprzedaz, pipeline (otwarte wyceny + top do dzwonienia), outreach (telefony, dodzwonienia, martwe wyceny), leady (lejek), close-rate.',
+  description: 'Żywe liczby LumLum (read-only). Wołaj WIELE razy pod rząd, żeby kopać w głąb: snapshot → anomalia → dociągnij grupę → skoreluj → odpowiedz. Grupy: snapshot (pełny rollup), sprzedaz, pipeline (otwarte wyceny + top do dzwonienia), outreach (telefony, dodzwonienia, czas rozmowy, martwe wyceny), leady (lejek), close-rate, konwersje (krzywa umierania wyceny, ściana cenowa, dowód telefonu), kampanie (ad→lead→przychód + hooki), radar (B2B „powinien już zamówić"), forward (prognoza, cena zaniedbania, wejścia tygodnia), faktury, marza (realna wg cennika), organik, przeglad (momentum + korelacje).',
   input_schema: {
     type: 'object',
     properties: {
       group: { type: 'string', enum: Object.keys(GROUPS) },
       params: {
         type: 'object',
-        description: 'Opcjonalne filtry. pipeline: {olderThanDays,minKwota,owner,limit}; outreach: {from,to,handlowiec}; sprzedaz: {owner}. Owner="all" = całość (admin).',
+        description: 'Opcjonalne filtry. pipeline: {olderThanDays,minKwota,owner,limit}; outreach/kampanie/organik/sprzedaz: {okres:"1d|3d|7d|30d|90d"} albo {from,to}; outreach też {handlowiec}; sprzedaz: {owner}. Owner="all" = całość (admin).',
       },
     },
     required: ['group'],

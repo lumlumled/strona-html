@@ -1,6 +1,6 @@
-# Build: Panel Statystyk + AI-doradca — guardrails (WKLEJ DO CZATU, KTÓRY BUDUJE)
+# Build: Panel Statystyk — guardrails (WKLEJ DO CZATU, KTÓRY BUDUJE)
 
-> Cel: panel `/statystyki` z fasadą `/api/stats/*` (backend: Supabase + Zernio). **Zakres tego czatu = TYLKO panel + endpointy (warstwa danych).** AI-doradca to **OSOBNY build** (`docs/doradca-ai-build.md`) — nie buduj go tutaj; ten panel ma go tylko *nakarmić* czystymi endpointami. Dokument to twarde zasady, żeby build nie wpadł w miny w danych. Z analizy realnej bazy LumLum (lip 2026).
+> Cel: panel `/statystyki` z fasadą `/api/stats/*` (backend: Supabase + Zernio) — **czysty panel statystyk, nic więcej.** AI-doradca to osobna rzecz (`docs/doradca-ai-build.md`), NIE budowana tu i NIE kształtująca tego panelu. Dokument = twarde zasady, żeby build nie wpadł w miny w danych. Z analizy realnej bazy LumLum (lip 2026).
 
 ---
 
@@ -46,9 +46,9 @@ Bez tego doradca poda wiarygodnie wyglądające, ale niespójne liczby.
 
 ---
 
-## 4. Snapshot (Grupa G) — to jest sufit szybkości I trafności doradcy
+## 4. Snapshot (Grupa G) — obraz firmy na jeden rzut oka
 
-**Zasada: 80% pytań doradca ma odpowiadać z samego snapshotu G, BEZ round-tripu do A–F.** Jeśli G jest chudy, model dopytuje bazę co pytanie = wolno (dokładnie to, czego nie chcemy). Inwestuj w G.
+`GET /api/stats/snapshot` = jeden bogaty rollup na rano (ekran startowy panelu): KPI + stan pipeline'u + alerty, bez klikania po grupach. Przydatny sam w sobie i najczęściej otwierany — zrób go bogaty.
 
 Snapshot (liczony cronem rano + na żądanie) powinien zawierać co najmniej:
 - KPI: przychód MTD + delta vs poprzedni mies., AOV, close rate (kohortowy), liczba zamówień.
@@ -58,42 +58,23 @@ Snapshot (liczony cronem rano + na żądanie) powinien zawierać co najmniej:
 - Paid (gdy E gotowe): top 3 reklamy po PRZYCHODZIE i po CAC/ROAS, spend MTD.
 - `alerts[]`: martwe wyceny > próg, spadek dodzwonień, reklama z rosnącym CAC itd.
 
-Snapshot wstrzykiwany do promptu doradcy co turę → odpowiedź natychmiast; A–F tylko na doszczegółowienie („pokaż wszystkie wyceny 5k+ z maja").
+Grupy A–F służą do doszczegółowienia z panelu („pokaż wszystkie wyceny 5k+ z maja").
 
 ---
 
-## 5. Styk z AI-doradcą — panel TYLKO wystawia dane (doradca = OSOBNY build)
+## 5. AI-doradca — POZA ZAKRESEM tego panelu
 
-> **Nie budujesz doradcy w tym czacie.** Jedyny obowiązek panelu = wystawić czysty, stabilny **kontrakt danych**, pod który ktoś inny (build doradcy: `docs/doradca-ai-build.md` + `docs/fable-doradca-lumlum.md`) się podepnie.
-
-**Co panel MUSI wystawić (kontrakt — to jest Twoje zadanie):**
-- `GET /api/stats/snapshot` — bogaty rollup z sekcji 4 + `alerts[]`, jeden strzał, szybki. To główne źródło wiedzy doradcy.
-- `GET /api/stats/{grupa}` (A–F) z parametrami scope — na doszczegółowienie.
-- read-only, limit rozmiaru wyniku, auth huba, **stabilny, udokumentowany JSON** (doradca koduje pod ten kształt — zmiana pola bez zapowiedzi psuje doradcę).
-
-**Czego panel NIE robi:** nie zna promptu, nie streamuje, nie woła modelu, nie trzyma pamięci doradcy. To warstwa danych. Kropka.
-
-Poniższe (prompt/narzędzie/streaming/pamięć/tryb głęboki) należą do **osobnego buildu doradcy** — są tu wyłącznie po to, żebyś projektując kontrakt wiedział, pod co ktoś będzie kodował:
-
-- **Mózg = CAŁA treść `docs/fable-doradca-lumlum.md`, wklejona VERBATIM jako system prompt.** Zawiera charakter, strategię, cele, twarde zasady ORAZ **sekcję 9 „Tryb głęboki — ślepe plamy i niewygodne prawdy"** — wymagane zachowanie doradcy.
-- **Gdzie doradca szuka danych:** jedyne źródło to fasada `/api/stats/*`, grupy A–G rozpisane w `docs/statystyki-panel-spec.md` (backend: Supabase + Zernio). Doradca nie zna bazy — zna tylko `stats()`.
-- **Narzędzie = jedno**: `stats(group, params)` → `/api/stats/*`, read-only, limit wyniku.
-- **WYMÓG GŁĘBI: pozwól na WIELE kolejnych wywołań `stats()` w jednej odpowiedzi.** Doradca ma iść w głąb — łańcuch: zobacz snapshot → zauważ anomalię → dociągnij szczegół grupy → skoreluj z inną grupą → dopiero potem odpowiedz. NIE ograniczaj do jednego tool-shota; sekcja 9 promptu (drugie dno, korelacje, ślepe plamy, niewygodne prawdy) wymaga, żeby mógł kopać, zanim odpowie. Płytki, jedno-strzałowy doradca = porażka tego projektu.
-- **Kontekst = snapshot G** wstrzykiwany co turę (sekcja 4) — baza do szybkich odpowiedzi; głębsze grupy na doszczegółowienie/kopanie.
-- **Streaming (SSE)** — token po tokenie, daje uczucie „od razu".
-- **Szybki model** do czatu (Fable/Haiku/Sonnet); Opus na głęboką analizę na żądanie.
-- **Pamięć** (`doradca_memory`: ustalenia, obietnice, rzeczy odkładane — sekcja 9 pkt 6 „Co pomijasz" tego wymaga do accountability) i **proaktywność** (cron „plan na dziś" + tygodniowe „Co pomijasz" → push) = DOKŁADKA po v0, ale zaprojektuj schemat od razu.
-- Bezpieczeństwo: read-only, limity, auth huba, żadnego surowego SQL z modelu.
+Doradca AI to osobna rzecz, budowana osobno (`docs/doradca-ai-build.md`). **Nie buduj go tutaj i nie kształtuj pod niego panelu.** Panel ma być dobrym panelem statystyk — koniec. Jeśli kiedyś doradca powstanie, podepnie się pod te same publiczne endpointy `/api/stats/*` jak każdy inny konsument; nic specjalnego w panelu robić nie trzeba.
 
 ---
 
-## 6. Kolejność buildu (żeby doradca żył szybko na tym, co ważne)
+## 6. Kolejność buildu
 
-1. **A–D (Supabase, dane kompletne)** — endpointy sprzedaż/pipeline/outreach/leady + snapshot G nad A–D. **Doradca od razu użyteczny na najwyższej dźwigni** (268k pipeline, close rate, dodzwonienia). Zero zależności zewnętrznych.
-2. **E–F (Zernio)** — klient `/ads` + `/analytics`, mapowanie pól, atrybucja (sekcja 3). Doradca dostaje wzrok marketingowy.
-3. **Dokładki**: pamięć doradcy, proaktywny push, głębsze narzędzia.
+1. **A–D (Supabase, dane kompletne)** — endpointy sprzedaż/pipeline/outreach/leady + snapshot G. Najważniejsze liczby (268k pipeline, close rate, dodzwonienia) dostępne od razu. Zero zależności zewnętrznych.
+2. **E–F (Zernio)** — klient `/ads` + `/analytics`, mapowanie pól, atrybucja (sekcja 3) → wzrok marketingowy.
+3. **Dokładki**: głębsze widoki, eksporty.
 
-Efekt: działający „Big Brother" na sprzedaży/pipeline zanim dołożysz hydraulikę marketingu — właściwa kolejność.
+Efekt: panel użyteczny na sprzedaży/pipeline zanim dołożysz hydraulikę marketingu.
 
 ---
 
@@ -101,7 +82,7 @@ Efekt: działający „Big Brother" na sprzedaży/pipeline zanim dołożysz hydr
 
 - `/api/stats/*` grupy A–D zwracają liczby zgodne z definicjami z sekcji 1 (zwłaszcza close rate kohortowy).
 - `GET /api/stats/snapshot` (G) zwraca bogaty rollup z sekcji 4 + `alerts[]`.
-- Czat doradcy w hubie: streaming, snapshot w kontekście, jedno narzędzie `stats()`, prompt Fable, szybki model.
+- Panel `/statystyki` w hubie (za auth) pokazuje snapshot + grupy.
 - Ani jedna liczba nie pochodzi ze skażonych źródeł (Ilość telefonów, Wyceny B2C, owner-jako-wynik).
 
 ---

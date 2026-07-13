@@ -22,8 +22,10 @@
       --accent: #111111; --accent-contrast: #ffffff; --accent-soft: #ececea;
       --good: #16794a; --warn: #a8560a; --bad: #b3261e;
       --good-soft: rgba(22, 121, 74, 0.12); --bad-soft: rgba(179, 38, 30, 0.10);
-      /* Palety walidowane (dataviz) — FB / IG / TikTok, przechodzą light+dark */
+      --warn-soft: rgba(168, 86, 10, 0.12);
+      /* Palety walidowane (docs/statystyki-dataviz-guardrails.md) */
       --fb: #1877F2; --ig: #D81B60; --tt: #0091A0;
+      --chart: #2a78d6; /* jeden akcent analityczny (magnituda) */
       --grid: rgba(17, 17, 17, 0.08);
     }
     @media (prefers-color-scheme: dark) {
@@ -34,6 +36,8 @@
         --accent: #ffffff; --accent-contrast: #0a0a0a; --accent-soft: #262626;
         --good: #5cd39a; --warn: #e8a75c; --bad: #ff7a70;
         --good-soft: rgba(92, 211, 154, 0.14); --bad-soft: rgba(255, 122, 112, 0.14);
+        --warn-soft: rgba(232, 167, 92, 0.14);
+        --chart: #3987e5;
         --grid: rgba(255, 255, 255, 0.10);
       }
     }
@@ -45,7 +49,7 @@
     }
     main { flex: 1; width: 100%; max-width: 1080px; margin: 0 auto; padding: 1.1rem 1.1rem 4rem; }
 
-    .tabs { display: flex; gap: 0.4rem; margin: 0.2rem 0 1.1rem; }
+    .tabs { display: flex; gap: 0.4rem; margin: 0.2rem 0 1.1rem; flex-wrap: wrap; }
     .tab {
       appearance: none; border: 1px solid var(--border); background: var(--surface-1);
       color: var(--text-secondary); font: inherit; font-weight: 600; font-size: 0.9rem;
@@ -60,6 +64,25 @@
     }
     .subtab.active { color: var(--text-primary); border-color: var(--text-primary); }
 
+    /* Selektor okna czasu — jeden rząd nad treścią zakładki (dataviz: filtry nad wykresami) */
+    .chips { display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap; margin: 0 0 0.9rem; }
+    .chip {
+      appearance: none; border: 1px solid var(--border); background: var(--surface-1);
+      color: var(--text-secondary); font: inherit; font-weight: 600; font-size: 0.78rem;
+      padding: 0.3rem 0.75rem; border-radius: 999px; cursor: pointer;
+    }
+    .chip.active { color: var(--text-primary); border-color: var(--text-primary); }
+    .chips .range { display: none; gap: 0.3rem; align-items: center; }
+    .chips .range.open { display: inline-flex; }
+    .chips input[type="date"] {
+      font: inherit; font-size: 0.78rem; color: var(--text-primary);
+      background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 0.22rem 0.4rem;
+    }
+    .chips .apply {
+      appearance: none; border: none; background: var(--accent); color: var(--accent-contrast);
+      font: inherit; font-weight: 600; font-size: 0.78rem; padding: 0.3rem 0.7rem; border-radius: 999px; cursor: pointer;
+    }
+
     .muted { color: var(--text-muted); font-size: 0.82rem; }
     .updated { text-align: right; margin-bottom: 0.7rem; }
 
@@ -70,12 +93,15 @@
       padding: 1rem 1.1rem; display: flex; flex-direction: column; gap: 0.28rem;
     }
     .card.star { padding: 1.25rem 1.3rem; border-radius: 20px; }
+    .card.hero-bad { background: var(--bad-soft); }
     .k-label { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
     .k-value { font-size: 1.55rem; font-weight: 700; letter-spacing: -0.5px; line-height: 1.05; }
     .card.star .k-value { font-size: 2.5rem; }
     .k-sub { font-size: 0.8rem; color: var(--text-secondary); }
     .k-sub.good { color: var(--good); } .k-sub.bad { color: var(--bad); } .k-sub.warn { color: var(--warn); }
+    .k-note { font-size: 0.72rem; color: var(--text-muted); }
     .section-title { font-size: 0.95rem; font-weight: 700; margin: 1.1rem 0 0.5rem; letter-spacing: -0.2px; }
+    .section-title .muted { font-weight: 400; }
 
     /* Karta platformy (Marketing) — akcent kolorem platformy */
     .plat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0.7rem; margin-bottom: 0.4rem; }
@@ -89,7 +115,7 @@
     .p-metric { font-size: 0.8rem; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
     .p-metric b { color: var(--text-primary); font-weight: 600; }
 
-    /* Wykres */
+    /* Wykres liniowy (SVG) */
     .chart-wrap { background: var(--surface-1); border: 1px solid var(--border); border-radius: 16px; padding: 1rem 1.1rem 0.8rem; margin-bottom: 0.4rem; }
     .legend { display: flex; flex-wrap: wrap; gap: 0.2rem 1rem; margin-bottom: 0.5rem; }
     .legend span { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.8rem; color: var(--text-secondary); }
@@ -111,7 +137,32 @@
     .tooltip .tt-r i { width: 8px; height: 8px; border-radius: 2px; }
     .tooltip .tt-r b { font-variant-numeric: tabular-nums; }
 
-    /* Top posty */
+    /* Poziome słupki HTML (ordinal/magnituda — jeden hue, wartości podpisane wprost) */
+    .bars { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 0.4rem; }
+    .bar-row { display: grid; grid-template-columns: 110px 1fr auto; align-items: center; gap: 0.6rem; font-size: 0.84rem; }
+    .bar-row .lab { color: var(--text-secondary); }
+    .bar-track { height: 12px; border-radius: 999px; background: var(--accent-soft); overflow: hidden; }
+    .bar-fill { height: 100%; background: var(--chart); border-radius: 999px 4px 4px 999px; min-width: 2px; }
+    .bar-row .val { text-align: right; color: var(--text-primary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .bar-row .val .n { color: var(--text-muted); font-size: 0.76rem; }
+    .bar-row:hover .bar-track { outline: 1px solid var(--border); }
+
+    /* Tabele (kampanie, radar) — przewijane w poziomie na mobile */
+    .tbl-wrap { overflow-x: auto; background: var(--surface-1); border: 1px solid var(--border); border-radius: 16px; margin-bottom: 0.6rem; }
+    table.tbl { width: 100%; border-collapse: collapse; font-size: 0.84rem; min-width: 560px; }
+    .tbl th { text-align: left; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); padding: 0.6rem 0.8rem 0.35rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    .tbl td { padding: 0.5rem 0.8rem; border-bottom: 1px solid var(--grid); vertical-align: middle; }
+    .tbl tr:last-child td { border-bottom: none; }
+    .tbl td.num, .tbl th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .tbl tr:hover td { background: var(--surface-2); }
+    .tbl .sub { color: var(--text-muted); font-size: 0.74rem; }
+    .pill { display: inline-block; font-size: 0.7rem; font-weight: 700; padding: 0.14rem 0.55rem; border-radius: 999px; white-space: nowrap; }
+    .pill.crit { background: var(--bad-soft); color: var(--bad); }
+    .pill.warn { background: var(--warn-soft); color: var(--warn); }
+    .pill.ok { background: var(--accent-soft); color: var(--text-secondary); }
+    .tbl a.call { color: var(--accent); text-decoration: none; font-weight: 600; }
+
+    /* Posty / listy */
     .posts { display: flex; flex-direction: column; gap: 0.35rem; }
     .post-row {
       display: grid; grid-template-columns: 58px 1fr auto; align-items: center; gap: 0.7rem;
@@ -124,7 +175,7 @@
     .post-num { text-align: right; font-variant-numeric: tabular-nums; }
     .post-num .v { font-weight: 700; } .post-num .l { font-size: 0.74rem; color: var(--text-muted); }
 
-    .alerts { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.4rem; }
+    .alerts { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.6rem; }
     .alert { background: var(--bad-soft); border: 1px solid var(--border); border-radius: 12px; padding: 0.6rem 0.85rem; font-size: 0.88rem; line-height: 1.4; }
     .insights { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.9rem; }
     .insight { background: var(--accent-soft); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 12px; padding: 0.7rem 0.95rem; font-size: 0.9rem; line-height: 1.45; }
@@ -146,7 +197,8 @@
     .placeholder { background: var(--surface-1); border: 1px dashed var(--border); border-radius: 16px; padding: 2rem 1.2rem; text-align: center; color: var(--text-muted); }
     .placeholder b { color: var(--text-secondary); }
     .state { text-align: center; color: var(--text-muted); padding: 2.5rem 1rem; font-size: 0.92rem; }
-    @media (max-width: 560px) { .stars { grid-template-columns: 1fr; } .card.star .k-value { font-size: 2.1rem; } }
+    .build { display: inline-block; background: var(--warn-soft); color: var(--warn); font-size: 0.72rem; font-weight: 700; padding: 0.14rem 0.55rem; border-radius: 999px; }
+    @media (max-width: 560px) { .stars { grid-template-columns: 1fr; } .card.star .k-value { font-size: 2.1rem; } .bar-row { grid-template-columns: 82px 1fr auto; } }
   </style>
 </head>
 <body>
@@ -160,21 +212,27 @@
     </div>
 
     <section id="przeglad">
-      <div id="przeglad-body"><div class="state">Analizuję ostatnie tygodnie…</div></div>
+      <div class="chips" id="chips-przeglad"></div>
+      <div id="przeglad-body"><div class="state">Analizuję firmę…</div></div>
     </section>
 
     <section id="marketing" style="display:none">
       <div class="subtabs">
-        <button class="subtab active" data-sub="organic">Organic</button>
-        <button class="subtab" data-sub="paid">Paid</button>
+        <button class="subtab active" data-sub="organic">Organik</button>
+        <button class="subtab" data-sub="kampanie">Kampanie</button>
       </div>
-      <div id="organic-body"><div class="state">Ładuję organik…</div></div>
-      <div id="paid-body" style="display:none">
-        <div class="placeholder">Sekcja <b>Paid</b> — reklamy Meta/TikTok/Google.<br>Dorzuć dane z reklam, a podepniemy lejek per reklama (leady → wyceny → sprzedaż → CAC/ROAS).</div>
+      <div id="organic-pane">
+        <div class="chips" id="chips-organik"></div>
+        <div id="organic-body"><div class="state">Ładuję organik…</div></div>
+      </div>
+      <div id="kampanie-pane" style="display:none">
+        <div class="chips" id="chips-kampanie"></div>
+        <div id="kampanie-body"><div class="state">Ładuję kampanie…</div></div>
       </div>
     </section>
 
     <section id="outreach" style="display:none">
+      <div class="chips" id="chips-outreach"></div>
       <div class="muted updated" id="updated-o"></div>
       <div id="outreach-body"><div class="state">Ładuję dane…</div></div>
     </section>
@@ -189,12 +247,14 @@
   <script src="shared/topbar.js"></script>
   <script>
     const API_BASE = window.API_BASE || '';
+    const USER = window.LUMLUM_USER || {};
     if (window.LumTopbar) LumTopbar.mount({ active: 'statystyki', into: document.getElementById('site-header') });
 
     // ── Formatery ──
     const fmtInt = (n) => (n == null ? '—' : Math.round(n).toLocaleString('pl-PL'));
     const fmtZl = (n) => (n == null ? '—' : Math.round(n).toLocaleString('pl-PL') + ' zł');
     const fmtPct = (x) => (x == null ? '—' : Math.round(x * 100) + '%');
+    const fmtDur = (s) => (s == null ? '—' : `${Math.floor(s / 60)}:${String(Math.round(s) % 60).padStart(2, '0')}`);
     const fmtC = (n) => {
       if (n == null) return '—';
       if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 1 : 2).replace('.', ',') + ' mln';
@@ -203,7 +263,64 @@
     };
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const MONTHS_PL = ['sty', 'lut', 'mar', 'kwi', 'maj', 'cze', 'lip', 'sie', 'wrz', 'paź', 'lis', 'gru'];
-    const ymShort = (ym) => { const [y, m] = ym.split('-'); return MONTHS_PL[+m - 1] + ' ' + y.slice(2); };
+    const ymShort = (ym) => { const [y, m] = ym.split('-'); return MONTHS_PL[+m - 1] + ' ' + y.slice(2); };
+
+    async function getJSON(path) {
+      const res = await fetch(`${API_BASE}${path}`, { headers: { Accept: 'application/json' } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    }
+    function tile(label, value, sub, cls, note) {
+      return `<div class="card"><span class="k-label">${label}</span><span class="k-value">${value}</span>`
+        + (sub ? `<span class="k-sub ${cls || ''}">${sub}</span>` : '')
+        + (note ? `<span class="k-note">${esc(note)}</span>` : '') + '</div>';
+    }
+    // Delta „teraz vs poprzedni okres" — strzałka + kolor (good = rośnie).
+    function deltaSub(teraz, poprzedni, opis) {
+      if (poprzedni == null) return '';
+      const d = teraz - poprzedni;
+      const arw = d === 0 ? '→' : (d > 0 ? '▲' : '▼');
+      const cls = d === 0 ? '' : (d > 0 ? 'good' : 'bad');
+      return `<span class="k-sub ${cls}"><span class="arw">${arw} ${d > 0 ? '+' : ''}${fmtInt(d)}</span> ${esc(opis || 'vs poprzedni tydzień')}</span>`;
+    }
+    // Poziome słupki: rows = [{label, frac 0..1|null, val, sub}]
+    function barsHtml(rows) {
+      return `<div class="bars">${rows.map((r) => `
+        <div class="bar-row" title="${esc(r.title || r.label)}">
+          <span class="lab">${esc(r.label)}</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${r.frac == null ? 0 : Math.max(1, Math.round(r.frac * 100))}%"></div></div>
+          <span class="val">${r.val}${r.sub ? ` <span class="n">${esc(r.sub)}</span>` : ''}</span>
+        </div>`).join('')}</div>`;
+    }
+
+    // ── Okna czasu per zakładka (chips + własny zakres) ──
+    const OKNA = { outreach: { okres: '7d' }, organik: {}, kampanie: {}, sprzedaz: { okres: '7d' } };
+    const qs = (win) => {
+      if (win.from && win.to) return `from=${win.from}&to=${win.to}`;
+      return win.okres ? `okres=${win.okres}` : '';
+    };
+    function mountChips(elId, key, options, onChange) {
+      const el = document.getElementById(elId);
+      const cur = OKNA[key];
+      const isCustom = Boolean(cur.from);
+      el.innerHTML = options.map((o) =>
+        `<button class="chip ${!isCustom && (cur.okres || '') === (o.v || '') ? 'active' : ''}" data-v="${o.v || ''}">${o.l}</button>`).join('')
+        + `<button class="chip ${isCustom ? 'active' : ''}" data-v="custom">Własny</button>`
+        + `<span class="range ${isCustom ? 'open' : ''}"><input type="date" class="r-from" value="${cur.from || ''}"><span class="muted">→</span><input type="date" class="r-to" value="${cur.to || ''}"><button class="apply">OK</button></span>`;
+      el.querySelectorAll('.chip').forEach((b) => b.addEventListener('click', () => {
+        if (b.dataset.v === 'custom') { el.querySelector('.range').classList.toggle('open'); return; }
+        OKNA[key] = b.dataset.v ? { okres: b.dataset.v } : {};
+        mountChips(elId, key, options, onChange);
+        onChange();
+      }));
+      el.querySelector('.apply').addEventListener('click', () => {
+        const from = el.querySelector('.r-from').value, to = el.querySelector('.r-to').value;
+        if (!from || !to) return;
+        OKNA[key] = { from, to };
+        mountChips(elId, key, options, onChange);
+        onChange();
+      });
+    }
 
     // ── Zakładki ──
     const sections = ['przeglad', 'marketing', 'outreach', 'sprzedaz'];
@@ -219,47 +336,137 @@
       document.querySelectorAll('.subtab').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       const s = btn.dataset.sub;
-      document.getElementById('organic-body').style.display = s === 'organic' ? '' : 'none';
-      document.getElementById('paid-body').style.display = s === 'paid' ? '' : 'none';
+      document.getElementById('organic-pane').style.display = s === 'organic' ? '' : 'none';
+      document.getElementById('kampanie-pane').style.display = s === 'kampanie' ? '' : 'none';
+      if (s === 'kampanie' && !loaded.kampanie) { loaded.kampanie = true; loadKampanie(); }
     }));
-
     function ensureLoaded(t) {
       if (loaded[t]) return; loaded[t] = true;
-      if (t === 'przeglad') loadPrzeglad();
-      else if (t === 'marketing') loadOrganik();
-      else loadSnapshot(); // outreach + sprzedaż z jednego snapshotu
+      if (t === 'przeglad') { mountChipsPrzeglad(); loadPrzeglad(); }
+      else if (t === 'marketing') { mountChipsOrganik(); loadOrganik(); }
+      else if (t === 'outreach') { mountChipsOutreach(); loadOutreach(); }
+      else loadSprzedaz();
     }
 
-    async function getJSON(path) {
-      const res = await fetch(`${API_BASE}${path}`, { headers: { Accept: 'application/json' } });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
+    // Snapshot współdzielony (Przegląd / Outreach / Sprzedaż).
+    let _snap = null;
+    async function ensureSnap() { if (!_snap) _snap = await getJSON('/api/snapshot'); return _snap; }
+    const stamp = (id, g) => { const el = document.getElementById(id); if (el) el.textContent = g ? 'Zaktualizowano: ' + new Date(g).toLocaleString('pl-PL') : ''; };
+
+    // ════════════ PRZEGLĄD (dowództwo: cena zaniedbania + prognoza + wejścia) ════════════
+    // Tygodnie KALENDARZOWE pon–nd; selektor = ile tygodni wstecz oglądamy.
+    let PRZEGLAD_WEEKS = 12;
+    function mountChipsPrzeglad() {
+      const el = document.getElementById('chips-przeglad');
+      el.innerHTML = [4, 8, 12, 26].map((w) =>
+        `<button class="chip ${PRZEGLAD_WEEKS === w ? 'active' : ''}" data-w="${w}">${w} tyg.</button>`).join('')
+        + '<span class="muted">tydzień = pon–nd</span>';
+      el.querySelectorAll('.chip').forEach((b) => b.addEventListener('click', () => {
+        PRZEGLAD_WEEKS = Number(b.dataset.w);
+        mountChipsPrzeglad();
+        loadPrzeglad();
+      }));
+    }
+    async function loadPrzeglad() {
+      const body = document.getElementById('przeglad-body');
+      body.innerHTML = '<div class="state">Analizuję firmę…</div>';
+      try {
+        const [pr, s] = await Promise.all([getJSON(`/api/przeglad?weeks=${PRZEGLAD_WEEKS}`), ensureSnap()]);
+        renderPrzeglad(pr, s);
+      } catch (err) { body.innerHTML = `<div class="state">Nie udało się pobrać danych: ${esc(err.message)}</div>`; }
     }
 
-    function tile(label, value, sub, cls) {
-      return `<div class="card"><span class="k-label">${label}</span><span class="k-value">${value}</span>${sub ? `<span class="k-sub ${cls || ''}">${esc(sub)}</span>` : ''}</div>`;
+    function renderPrzeglad(pr, s) {
+      const cz = s.cena_zaniedbania || {};
+      const f = s.forecast || {};
+      const we = s.wejscia_tygodnia || {};
+
+      const heroCz = `<div class="card star ${cz.razem > 0 ? 'hero-bad' : ''}">
+        <span class="k-label">Cena zaniedbania (oczekiwana marża na stole)</span>
+        <span class="k-value">${fmtZl(cz.razem)}</span>
+        <span class="k-sub">${(cz.leady_nietkniete || {}).n ?? 0} nietkniętych leadów (~${fmtZl((cz.leady_nietkniete || {}).marza_szac)}) + ${(cz.martwy_pipeline_nieodgrzany || {}).n ?? 0} martwych wycen bez telefonu od 7 dni (~${fmtZl((cz.martwy_pipeline_nieodgrzany || {}).marza_szac)})</span>
+        <span class="k-note">szacunek: ${esc(cz.zalozenia || '')}</span>
+      </div>`;
+      const progDelta = (f.prognoza_tempo != null && f.poprzedni_miesiac != null)
+        ? `<span class="k-sub ${f.prognoza_tempo >= f.poprzedni_miesiac ? 'good' : 'bad'}">${f.prognoza_tempo >= f.poprzedni_miesiac ? '▲' : '▼'} vs poprzedni miesiąc ${fmtZl(f.poprzedni_miesiac)}</span>` : '';
+      const heroF = `<div class="card star">
+        <span class="k-label">Prognoza końca miesiąca (z tempa)</span>
+        <span class="k-value">${fmtZl(f.prognoza_tempo)}</span>
+        <span class="k-sub">MTD ${fmtZl(f.mtd)} · dzień ${esc(f.dzien || '—')}</span>
+        ${progDelta}
+        <span class="k-note">osobno: pipeline ważony close rate ~${fmtZl(f.pipeline_wazony)} (nie wliczony w prognozę)${f.zalozenie_cr ? ' · ' + esc(f.zalozenie_cr) : ''}</span>
+      </div>`;
+
+      const wejscia = [
+        tile('Telefony (7 dni)', fmtInt((we.telefony || {}).teraz), deltaSub((we.telefony || {}).teraz, (we.telefony || {}).poprzedni)),
+        tile('Wyceny wysłane (7 dni)', fmtInt((we.wyceny_wyslane || {}).teraz), deltaSub((we.wyceny_wyslane || {}).teraz, (we.wyceny_wyslane || {}).poprzedni)),
+        tile('Follow-upy martwych (7 dni)', fmtInt((we.followupy_martwych || {}).teraz), '<span class="k-sub">wyceny >14 dni odgrzane telefonem</span>'),
+      ].join('');
+
+      const alerts = (s.alerty || []).slice(0, 4).map((a) => `<div class="alert">${esc(a)}</div>`).join('');
+
+      const m = pr.momentum || {};
+      const momTile = (label, cur, dp, goodUp = true) => {
+        const up = dp >= 0, good = dp === 0 ? null : (goodUp ? up : !up);
+        const cls = good == null ? '' : (good ? 'good' : 'bad');
+        const arw = dp === 0 ? '→' : (up ? '▲' : '▼');
+        return `<div class="card"><span class="k-label">${label}</span><span class="k-value">${cur}</span><span class="k-sub ${cls}"><span class="arw">${arw} ${up ? '+' : ''}${dp}%</span> vs pełny pon–nd</span></div>`;
+      };
+      const tiles = [
+        momTile('Sprzedaż bez leada (tydz.)', fmtZl(m.bez_leada_zl ? m.bez_leada_zl.teraz : 0), m.bez_leada_zl ? m.bez_leada_zl.delta_pct : 0),
+        momTile('Sprzedaż razem (tydz.)', fmtZl(m.sprzedaz_zl ? m.sprzedaz_zl.teraz : 0), m.sprzedaz_zl ? m.sprzedaz_zl.delta_pct : 0),
+        momTile('Leady (tydz.)', m.leady ? m.leady.teraz : 0, m.leady ? m.leady.delta_pct : 0),
+        momTile('Zasięg organiczny', fmtC(m.zasieg ? m.zasieg.teraz : 0), m.zasieg ? m.zasieg.delta_pct : 0),
+        momTile('Zamówienia (tydz.)', m.sprzedaz_n ? m.sprzedaz_n.teraz : 0, m.sprzedaz_n ? m.sprzedaz_n.delta_pct : 0),
+      ].join('');
+      const insights = (pr.wnioski || []).map((w) => `<div class="insight">${esc(w)}</div>`).join('');
+      const nt = pr.najlepszy_tydzien || {};
+      const content = (nt.top_content || []).slice(0, 3).map((r) => {
+        const pl = PLAT[r.platform] || { n: r.platform, c: 'var(--text-muted)' };
+        const t = (r.title || '').replace(/\s+/g, ' ').slice(0, 80) || '(bez opisu)';
+        return `<div class="post-row" style="--pc:${pl.c}"><span class="post-plat">${pl.n}</span><span class="post-title"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(t)}</a></span><span class="post-num"><div class="v">${fmtC(r.views)}</div><div class="l">${fmtC(r.likes)} ❤</div></span></div>`;
+      }).join('');
+
+      document.getElementById('przeglad-body').innerHTML = `
+        <div class="stars">${heroCz}${heroF}</div>
+        <div class="section-title">Trzy liczby wejściowe tygodnia <span class="muted">— jedyne, na które masz wpływ rękami</span></div>
+        <div class="grid">${wejscia}</div>
+        ${alerts ? `<div class="section-title">Alerty</div><div class="alerts">${alerts}</div>` : ''}
+        <div class="section-title">Gdzie jesteśmy teraz <span class="muted">(bieżący tydzień od poniedziałku ${esc((pr.momentum || {})._uwaga ? '' : '')})</span></div>
+        <div class="grid">${tiles}</div>
+        <div class="section-title">Wnioski</div>
+        <div class="insights">${insights || '<div class="muted">Za mało danych.</div>'}</div>
+        <div class="section-title">Korelacja: zasięg ↔ sprzedaż bez leada <span class="muted">(${pr.weeks || 12} tyg. pon–nd, indeks 100 = średnia serii; „bez leada" = kanał prywatny/organik)</span></div>
+        <div class="chart-wrap" id="correl-wrap"></div>
+        <div class="section-title">Content przy szczycie sprzedaży bez leada${nt.label ? ' (tydz. od ' + esc(nt.label) + ')' : ''}</div>
+        <div class="posts">${content || '<div class="muted">Brak dopasowanego contentu.</div>'}</div>`;
+      renderCorrelChart(document.getElementById('correl-wrap'), pr.tygodnie || []);
     }
 
-    // ════════════ MARKETING / ORGANIC ════════════
+    // ════════════ MARKETING / ORGANIK ════════════
+    const PLAT = { facebook: { n: 'Facebook', c: 'var(--fb)' }, instagram: { n: 'Instagram', c: 'var(--ig)' }, tiktok: { n: 'TikTok', c: 'var(--tt)' } };
+    function mountChipsOrganik() {
+      mountChips('chips-organik', 'organik', [
+        { v: '7d', l: 'Tydzień' }, { v: '30d', l: 'Miesiąc' }, { v: '90d', l: 'Kwartał' }, { v: '', l: 'Całość' },
+      ], loadOrganik);
+    }
     async function loadOrganik() {
       const body = document.getElementById('organic-body');
-      try { renderOrganik(await getJSON('/api/organik')); }
+      body.innerHTML = '<div class="state">Ładuję organik…</div>';
+      try { renderOrganik(await getJSON(`/api/organik${qs(OKNA.organik) ? '?' + qs(OKNA.organik) : ''}`)); }
       catch (err) { body.innerHTML = `<div class="state">Nie udało się pobrać danych: ${esc(err.message)}</div>`; }
     }
 
-    const PLAT = { facebook: { n: 'Facebook', c: 'var(--fb)' }, instagram: { n: 'Instagram', c: 'var(--ig)' }, tiktok: { n: 'TikTok', c: 'var(--tt)' } };
-
     function renderOrganik(o) {
       const p = o.platformy || {};
-      const zakres = o.zakres || {};
-      const okres = zakres.od ? `${zakres.od} → ${zakres.do}` : '';
+      const okres = o.okno_filtra ? `${o.okno_filtra.od || '…'} → ${o.okno_filtra.do || 'dziś'}` : (o.zakres && o.zakres.od ? `${o.zakres.od} → ${o.zakres.do}` : '');
 
       const fb = p.facebook || {}, ig = p.instagram || {}, tt = p.tiktok || {};
       const platCard = (key, big, metrics) => {
         const pl = PLAT[key];
         return `<div class="card plat" style="--pc:${pl.c}">
           <div class="p-head"><span class="p-dot"></span><span class="p-name">${pl.n}</span></div>
-          <span class="p-big">${fmtC(big)}</span><span class="muted">wyświetleń / rok</span>
+          <span class="p-big">${fmtC(big)}</span><span class="muted">wyświetleń</span>
           <div class="p-metrics">${metrics.map((m) => `<span class="p-metric"><b>${fmtC(m[1])}</b> ${m[0]}</span>`).join('')}</div>
         </div>`;
       };
@@ -268,30 +475,310 @@
         platCard('instagram', ig.wyswietlenia, [['polubień', ig.polubienia], ['udostępnień', ig.udostepnienia], ['zapisań', ig.zapisania], ['postów', ig.postow]]) +
         platCard('tiktok', tt.wyswietlenia, [['polubień', tt.polubienia], ['+obserw.', tt.nowi_obserwatorzy], ['klik. w stronę', tt.klikniecia_strona], ['leady', tt.leady]]);
 
+      // TikTok żywy (kom_tiktok_stats): przyrost wyświetleń między dziennymi pomiarami.
+      const tz = o.tiktok_zywy || {};
+      const tzCard = tz.status === 'ok'
+        ? `<div class="card plat" style="--pc:var(--tt)">
+            <div class="p-head"><span class="p-dot"></span><span class="p-name">TikTok na żywo</span></div>
+            <span class="p-big">+${fmtC(tz.przyrost_wyswietlen)}</span>
+            <span class="muted">przyrost wyświetleń ${esc((tz.zakres || {}).od || '')} → ${esc((tz.zakres || {}).do || '')}</span>
+            <div class="p-metrics"><span class="p-metric"><b>${tz.filmy_z_pomiarem}</b> filmów z pomiarem</span></div>
+          </div>`
+        : `<div class="card plat" style="--pc:var(--tt)">
+            <div class="p-head"><span class="p-dot"></span><span class="p-name">TikTok na żywo</span></div>
+            <span class="muted">${esc(tz.status || 'brak danych')}</span>
+          </div>`;
+
       const posts = (o.top_posty || []).slice(0, 10).map((r) => {
         const pl = PLAT[r.platform] || { n: r.platform, c: 'var(--text-muted)' };
         const t = (r.title || '').replace(/\s+/g, ' ').slice(0, 90) || '(bez opisu)';
+        const er = r.views > 0 ? Math.round((r.likes / r.views) * 1000) / 10 : null;
         return `<div class="post-row" style="--pc:${pl.c}">
           <span class="post-plat">${pl.n}</span>
           <span class="post-title"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(t)}</a></span>
-          <span class="post-num"><div class="v">${fmtC(r.views)}</div><div class="l">${fmtC(r.likes)} ❤</div></span>
+          <span class="post-num"><div class="v">${fmtC(r.views)}</div><div class="l">${fmtC(r.likes)} ❤${er != null ? ' · ER ' + String(er).replace('.', ',') + '%' : ''}</div></span>
         </div>`;
       }).join('');
 
       document.getElementById('organic-body').innerHTML = `
         <div class="card star" style="margin-bottom:0.8rem">
-          <span class="k-label">Wyświetlenia organiczne (rok)</span>
+          <span class="k-label">Wyświetlenia organiczne</span>
           <span class="k-value">${fmtC(o.razem_wyswietlenia)}</span>
           <span class="k-sub">${esc(okres)} · FB + IG + TikTok</span>
         </div>
-        <div class="plat-grid">${cards}</div>
+        <div class="plat-grid">${cards}${tzCard}</div>
         <div class="section-title">Wyświetlenia miesięcznie</div>
         <div class="chart-wrap" id="chart-wrap"></div>
-        <div class="section-title">Najlepsze posty (po wyświetleniach)</div>
-        <div class="posts">${posts || '<div class="muted">Brak danych.</div>'}</div>
-        <div class="muted" style="margin-top:0.8rem">Dane organiczne z eksportów Meta/TikTok. Marketing „Paid" (reklamy) dorzucimy osobno.</div>`;
+        <div class="section-title">Najlepsze posty <span class="muted">(wyświetlenia · ER = polubienia/wyświetlenia)</span></div>
+        <div class="posts">${posts || '<div class="muted">Brak danych w tym oknie.</div>'}</div>
+        <div class="muted" style="margin-top:0.8rem">Dane z eksportów Meta/TikTok + żywy zbiór komunikatora. Skrypty wrzucane w opis filmu podepniemy pod hooki, gdy się pojawią.</div>`;
 
       renderTrendChart(document.getElementById('chart-wrap'), o.szereg_miesieczny || []);
+    }
+
+    // ════════════ MARKETING / KAMPANIE (paid → przychód) ════════════
+    function mountChipsKampanie() {
+      mountChips('chips-kampanie', 'kampanie', [
+        { v: '30d', l: 'Miesiąc' }, { v: '90d', l: 'Kwartał' }, { v: '', l: 'Całość' },
+      ], loadKampanie);
+    }
+    async function loadKampanie() {
+      const body = document.getElementById('kampanie-body');
+      if (!USER.isAdmin) { body.innerHTML = '<div class="placeholder">Sekcja <b>Kampanie</b> (przychody per reklama) jest dostępna tylko dla admina.</div>'; return; }
+      if (!document.getElementById('chips-kampanie').childElementCount) mountChipsKampanie();
+      body.innerHTML = '<div class="state">Ładuję kampanie…</div>';
+      try { renderKampanie(await getJSON(`/api/kampanie${qs(OKNA.kampanie) ? '?' + qs(OKNA.kampanie) : ''}`)); }
+      catch (err) { body.innerHTML = `<div class="state">Nie udało się pobrać danych: ${esc(err.message)}</div>`; }
+    }
+    function renderKampanie(k) {
+      const tiles = [
+        tile('Leady (okno)', fmtInt(k.leady_w_oknie), '<span class="k-sub">unikalne telefony</span>'),
+        tile('Z reklamy', fmtInt(k.z_reklamy), ''),
+        tile('Bez reklamy', fmtInt(k.bez_reklamy), '<span class="k-sub">organik / bezpośredni</span>'),
+      ].join('');
+
+      const hooki = (k.hooki || []).slice(0, 8);
+      const maxP = Math.max(1, ...hooki.map((h) => h.przychod));
+      const hookBars = barsHtml(hooki.map((h) => ({
+        label: h.hook, frac: h.przychod / maxP, val: fmtZl(h.przychod),
+        sub: `${h.leady} leadów · ${h.zamowienia} sprz.`,
+        title: `${h.hook}: ${h.leady} leadów, ${h.wyceny} wycen, ${h.zamowienia} sprzedaży, ${fmtZl(h.przychod)}`,
+      })));
+
+      const rows = (k.kampanie || []).map((c) => `
+        <tr>
+          <td><b>${esc(c.hook)}</b>${c.platforma ? ` <span class="sub">[${esc(c.platforma)}]</span>` : ''}<div class="sub">${esc(c.kampania.slice(0, 70))}${c.kampania.length > 70 ? '…' : ''}</div></td>
+          <td class="num">${fmtInt(c.leady)}</td>
+          <td class="num">${fmtInt(c.wyceny)}</td>
+          <td class="num">${fmtInt(c.zamowienia)}</td>
+          <td class="num"><b>${fmtZl(c.przychod)}</b></td>
+        </tr>`).join('');
+
+      document.getElementById('kampanie-body').innerHTML = `
+        <div class="grid">${tiles}</div>
+        <div class="section-title">Hooki po przychodzie <span class="muted">(kreacja przed pierwszym „–" w nazwie reklamy)</span></div>
+        ${hookBars}
+        <div class="section-title">Kampanie: reklama → lead → wycena → przychód</div>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Kampania</th><th class="num">Leady</th><th class="num">Wyceny</th><th class="num">Sprzedaże</th><th class="num">Przychód</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="5" class="sub">Brak kampanii w tym oknie.</td></tr>'}</tbody>
+        </table></div>
+        <div class="muted">${esc(k._uwaga || '')}</div>`;
+    }
+
+    // ════════════ OUTREACH ════════════
+    function mountChipsOutreach() {
+      mountChips('chips-outreach', 'outreach', [
+        { v: '1d', l: 'Dziś' }, { v: '3d', l: '3 dni' }, { v: '7d', l: 'Tydzień' }, { v: '30d', l: 'Miesiąc' },
+      ], loadOutreach);
+    }
+    async function loadOutreach() {
+      const body = document.getElementById('outreach-body');
+      body.innerHTML = '<div class="state">Ładuję dane…</div>';
+      try {
+        renderOutreach(await getJSON(`/api/outreach${qs(OKNA.outreach) ? '?' + qs(OKNA.outreach) : ''}`));
+      } catch (err) { body.innerHTML = `<div class="state">Nie udało się pobrać danych: ${esc(err.message)}</div>`; }
+    }
+
+    function renderOutreach(o) {
+      stamp('updated-o', Date.now());
+      const cr = o.czas_rozmowy || {};
+      const stl = o.speed_to_lead_med_min;
+      const tiles = [
+        tile('Telefony (okno)', fmtInt(o.telefony_okno), `<span class="k-sub">${(o.kierunek || {}).wychodzace ?? 0} wych. · ${(o.kierunek || {}).przychodzace ?? 0} przych.</span>`),
+        tile('% dodzwonień', fmtPct(o.pct_dodzwonien), '', o.pct_dodzwonien != null && o.pct_dodzwonien < 0.5 ? 'bad' : ''),
+        tile('Czas rozmowy', cr.mediana_s == null ? '—' : fmtDur(cr.mediana_s), cr.n ? `<span class="k-sub">mediana · śr. ${fmtDur(cr.sredni_s)} · ${cr.n} rozmów</span>` : '<span class="k-sub">brak rozmów w oknie</span>'),
+        tile('Speed-to-lead', stl == null ? '—' : stl + ' min', stl == null
+          ? `<span class="k-sub warn">buduje się (n=${o.speed_to_lead_n ?? 0})</span>`
+          : `<span class="k-sub ${stl > 60 ? 'bad' : 'good'}">mediana, zegar 9–21${stl > 60 ? ' · leady stygną' : ''}</span>`),
+        tile('Nowy → ruch statusu', o.nowy_do_ruchu_med_h == null ? '—' : o.nowy_do_ruchu_med_h + ' h',
+          o.nowy_do_ruchu_med_h == null ? `<span class="k-sub warn">buduje się (n=${o.nowy_do_ruchu_n ?? 0})</span>` : '<span class="k-sub">mediana od wpadnięcia leada</span>'),
+      ].join('');
+
+      const ph = o.telefony_per_handlowiec || {};
+      const phRows = Object.entries(ph).sort((a, b) => b[1].proby - a[1].proby).map(([h, v]) => `
+        <tr><td>${esc(h)}</td><td class="num">${v.proby}</td><td class="num">${v.odebrane}</td><td class="num">${v.proby ? Math.round(v.odebrane / v.proby * 100) + '%' : '—'}</td></tr>`).join('');
+      const phTable = phRows ? `
+        <div class="section-title">Telefony per handlowiec <span class="muted">(okno)</span></div>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Handlowiec</th><th class="num">Próby</th><th class="num">Odebrane</th><th class="num">%</th></tr></thead>
+          <tbody>${phRows}</tbody></table></div>` : '';
+
+      const gh = (o.godziny_dodzwonien || []).filter((g) => g.proby > 0);
+      const godziny = gh.length ? barsHtml(gh.map((g) => ({
+        label: g.label, frac: g.pct, val: g.pct == null ? '—' : fmtPct(g.pct), sub: `${g.proby} prób`,
+        title: `${g.label}: ${g.odebrane}/${g.proby} odebranych`,
+      }))) : '<div class="muted">Za mało telefonów na profil godzinowy.</div>';
+
+      const mn = o.martwe_wyceny_nieodgrzane || {};
+      const stany = [
+        tile('Leady nietknięte', fmtInt(o.leady_nietkniete), '<span class="k-sub">wczesny lejek, zero telefonów</span>', o.leady_nietkniete > 0 ? 'bad' : ''),
+        tile('Nowe leady', fmtInt(o.leady_nowe), '<span class="k-sub">czekają na 1. kontakt</span>', o.leady_nowe > 0 ? 'warn' : ''),
+        tile('Nie odebrał', fmtInt(o.leady_nie_odebral), '<span class="k-sub">nigdy nie dodzwonione</span>'),
+        tile('Martwe odgrzane (7 dni)', fmtInt(o.martwe_wyceny_tkniete_7d), '<span class="k-sub">wyceny >14 dni z telefonem</span>', o.martwe_wyceny_tkniete_7d === 0 ? 'bad' : 'good'),
+        tile('Martwe NIEodgrzane', fmtInt(mn.count), `<span class="k-sub bad">${fmtZl(mn.suma)} leży bez telefonu</span>`),
+      ].join('');
+
+      const kad = o.kadencja_wsrod_dzwonionych || {};
+      const kadRows = Object.entries(kad).filter(([k]) => k !== '0');
+      const maxK = Math.max(1, ...kadRows.map(([, v]) => v));
+      const kadencja = barsHtml(kadRows.map(([k, v]) => ({ label: `${k} prób`, frac: v / maxK, val: fmtInt(v), title: `${v} numerów z ${k} próbami` })));
+
+      document.getElementById('outreach-body').innerHTML = `
+        <div class="grid">${tiles}</div>
+        ${phTable}
+        <div class="section-title">Dodzwanialność po godzinach <span class="muted">(cała historia — o której warto dzwonić)</span></div>
+        ${godziny}
+        <div class="section-title">Zaległości do przedzwonienia <span class="muted">(stan na teraz, nie okno)</span></div>
+        <div class="grid">${stany}</div>
+        <div class="section-title">Kadencja prób <span class="muted">(ile razy dzwonimy do numeru)</span></div>
+        ${kadencja}
+        <div class="muted" style="margin-top:0.6rem">Telefony z Log zmian (webhook Zadarmy, od lip 2026) — historia rośnie z każdym dniem. Lejek statusów leadów mieszka w CRM, nie tu.</div>`;
+    }
+
+    // ════════════ SPRZEDAŻ (patrzymy w przód) ════════════
+    async function loadSprzedaz() {
+      const body = document.getElementById('sprzedaz-body');
+      try {
+        const [s, radar] = await Promise.all([
+          ensureSnap(),
+          USER.isAdmin ? getJSON('/api/radar').catch(() => null) : Promise.resolve(null),
+        ]);
+        renderSprzedaz(s, radar);
+        loadSprzedazOkno();
+      } catch (err) { body.innerHTML = `<div class="state">Nie udało się pobrać danych: ${esc(err.message)}</div>`; }
+    }
+    async function loadSprzedazOkno() {
+      const el = document.getElementById('okno-sprzedaz-tiles');
+      if (!el) return;
+      el.innerHTML = '<div class="state" style="padding:1rem">Liczę okno…</div>';
+      try {
+        const sp = await getJSON(`/api/sprzedaz${qs(OKNA.sprzedaz) ? '?' + qs(OKNA.sprzedaz) : ''}`);
+        const w = sp.okno || { count: 0, suma: 0, aov: null };
+        el.innerHTML = [
+          tile('Zamówienia (okno)', fmtInt(w.count), ''),
+          tile('Przychód (okno)', fmtZl(w.suma), ''),
+          tile('AOV (okno)', fmtZl(w.aov), ''),
+        ].join('');
+      } catch (err) { el.innerHTML = `<div class="muted">Nie udało się policzyć okna: ${esc(err.message)}</div>`; }
+    }
+
+    function renderSprzedaz(s, radarFull) {
+      stamp('updated-s', s.generated_at);
+      const sp = s.sprzedaz || {}, pi = s.pipeline_otwarty || {}, f = s.forecast || {}, kv = s.konwersje || {};
+
+      // Gwiazdy: PROGNOZA (przód) + close rate.
+      const crVal = sp.close_rate == null ? '—' : fmtPct(sp.close_rate);
+      const crSub = sp.close_rate == null
+        ? (sp.close_rate_status || 'buduje się') + (sp.close_rate_wyceny_w_panelu != null ? ` · ${sp.close_rate_wyceny_w_panelu} wycen z panelu` : '')
+        : (sp.close_rate >= 0.25 ? 'cel 25–35% osiągnięty' : 'cel 25–35% — pipeline przecieka');
+      const crCls = sp.close_rate == null ? 'warn' : (sp.close_rate >= 0.25 ? 'good' : 'bad');
+      const stars = `
+        <div class="card star"><span class="k-label">Prognoza końca miesiąca</span><span class="k-value">${fmtZl(f.prognoza_tempo)}</span>
+          <span class="k-sub">MTD ${fmtZl(f.mtd)} · dzień ${esc(f.dzien || '—')} · poprzedni mies. ${fmtZl(f.poprzedni_miesiac)}</span>
+          <span class="k-note">pipeline ważony close rate: ~${fmtZl(f.pipeline_wazony)} przychodu / ~${fmtZl(f.pipeline_wazony_marza)} marży (osobno)</span></div>
+        <div class="card star"><span class="k-label">Close rate (kohortowy)</span><span class="k-value">${crVal}</span><span class="k-sub ${crCls}">${esc(crSub)}</span></div>`;
+
+      const cd = kv.czas_do_domkniecia || {};
+      const mz = sp.marza_mtd;
+      const fakt = s.faktury;
+      const delta = sp.delta_do_tempa;
+      const deltaS = delta == null ? '' : `<span class="k-sub ${delta >= 0 ? 'good' : 'bad'}">${delta >= 0 ? '+' + fmtZl(delta) + ' nad tempem' : fmtZl(delta) + ' pod tempem'}</span>`;
+      const tiles = [
+        tile('Przychód (mies.)', fmtZl((sp.przychod_mies || {}).suma), deltaS),
+        tile('Zamówienia (mies.)', fmtInt((sp.przychod_mies || {}).count), ''),
+        tile('AOV', fmtZl(sp.aov), '<span class="k-sub">cel 2500+</span>', sp.aov && sp.aov >= 2500 ? 'good' : ''),
+        mz ? tile('Marża (mies., szac.)', fmtPct(mz.pct_marzy), `<span class="k-sub">~${fmtZl(mz.marza_netto_szac)} netto · SKU ${fmtPct(mz.pokrycie_sku_pct)}</span>`, '', 'wg dzisiejszego cennika') : '',
+        tile('Otwarty pipeline', fmtZl(pi.suma), `<span class="k-sub">${pi.count || 0} wycen · śr. wiek ${pi.sredni_wiek_dni ?? '—'} dni</span>`),
+        tile('Czas do domknięcia', cd.mediana_dni == null ? '—' : cd.mediana_dni + ' dni', cd.mediana_dni == null ? `<span class="k-sub warn">buduje się (n=${cd.n ?? 0})</span>` : `<span class="k-sub">mediana · n=${cd.n}</span>`),
+        tile('B2B', fmtPct(sp.b2b_pct), '<span class="k-sub">udział zamówień</span>'),
+        tile('Powroty', fmtPct(sp.powroty_pct), '<span class="k-sub">klienci ≥2 zam.</span>'),
+        fakt ? tile('Faktury nieopłacone', fmtInt((fakt.nieoplacone || {}).count), `<span class="k-sub ${((fakt.nieoplacone || {}).count || 0) > 0 ? 'warn' : ''}">${fmtZl((fakt.nieoplacone || {}).suma)}${(fakt.nieoplacone || {}).najstarsza_dni != null ? ' · najstarsza ' + fakt.nieoplacone.najstarsza_dni + ' dni' : ''}</span>`) : '',
+      ].filter(Boolean).join('');
+
+      // Dowód telefonu.
+      const dt = kv.dowod_telefonu || {};
+      const dtOk = dt.status === 'ok';
+      const rateTxt = (g) => (g && g.close_rate != null) ? fmtPct(g.close_rate) : '—';
+      const dowod = `
+        <div class="section-title">Dowód telefonu <span class="muted">(wyceny z telefonem w 7 dni vs bez — od ${esc(dt.od || 'startu logu')})</span></div>
+        <div class="grid">
+          ${tile('Tknięte telefonem', rateTxt(dt.tkniete_7d), `<span class="k-sub">${(dt.tkniete_7d || {}).domkniete ?? 0}/${(dt.tkniete_7d || {}).rozstrzygniete ?? 0} domkniętych</span>`, dtOk ? 'good' : '')}
+          ${tile('Bez telefonu', rateTxt(dt.nietkniete), `<span class="k-sub">${(dt.nietkniete || {}).domkniete ?? 0}/${(dt.nietkniete || {}).rozstrzygniete ?? 0} domkniętych</span>`)}
+        </div>
+        ${dtOk ? '' : `<div class="muted" style="margin-top:-0.4rem;margin-bottom:0.6rem"><span class="build">buduje się</span> ${esc(dt.status || '')}</div>`}`;
+
+      // Krzywa umierania wyceny.
+      const ku = kv.krzywa_umierania || {};
+      const kuBars = (ku.przedzialy || []).length ? barsHtml(ku.przedzialy.map((b) => ({
+        label: b.label, frac: b.pct, val: b.pct == null ? '—' : fmtPct(b.pct), sub: `${b.n} szt.`,
+        title: `${b.label}: ${b.n} domknięć`,
+      }))) : '<div class="muted">Brak danych.</div>';
+      const krzywa = `
+        <div class="section-title">Krzywa umierania wyceny <span class="muted">(po ilu dniach pada domknięcie)</span></div>
+        ${ku.status && ku.status !== 'ok' ? `<div class="muted" style="margin-bottom:0.4rem"><span class="build">buduje się</span> ${esc(ku.status)}</div>` : ''}
+        ${kuBars}`;
+
+      // Ściana cenowa.
+      const sc = kv.sciana_cenowa || {};
+      const scBars = (sc.przedzialy || []).length ? barsHtml(sc.przedzialy.map((b) => ({
+        label: b.label, frac: b.close_rate, val: b.close_rate == null ? '—' : fmtPct(b.close_rate),
+        sub: `${b.domkniete}/${b.rozstrzygniete}`,
+        title: `${b.label}: ${b.domkniete} z ${b.rozstrzygniete} rozstrzygniętych${b.close_rate == null ? ' (za mało, min 5)' : ''}`,
+      }))) : '<div class="muted">Brak danych.</div>';
+      const sciana = `
+        <div class="section-title">Ściana cenowa <span class="muted">(close rate per przedział kwoty — gdzie łamie się domykanie)</span></div>
+        ${sc.status && sc.status !== 'ok' ? `<div class="muted" style="margin-bottom:0.4rem"><span class="build">buduje się</span> ${esc(sc.status)}</div>` : ''}
+        ${scBars}`;
+
+      // Radar B2B.
+      const radar = radarFull || s.b2b_radar;
+      let radarHtml = '';
+      if (radar) {
+        const lista = radarFull ? (radarFull.lista || []) : (radar.top || []);
+        const pill = (st) => st === 'przeterminowany' ? '<span class="pill crit">⏰ przeterminowany</span>'
+          : st === 'do_odezwania' ? '<span class="pill warn">👋 do odezwania</span>' : '<span class="pill ok">ok</span>';
+        const rows = lista.map((fm) => `
+          <tr>
+            <td><b>${esc(fm.nazwa)}</b><div class="sub">NIP ${esc(fm.nip)}</div></td>
+            <td class="num">${fm.zamowien}</td>
+            <td class="num">${fm.cykl_dni != null ? fm.cykl_dni + ' dni' : '—'}</td>
+            <td class="num">${fm.dni_od_ostatniego} dni</td>
+            <td class="num">${fmtZl(fm.przychod)}</td>
+            <td>${pill(fm.status)}</td>
+            <td>${fm.telefon ? `<a class="call" href="tel:${esc(String(fm.telefon).replace(/\s/g, ''))}">Zadzwoń</a>` : ''}</td>
+          </tr>`).join('');
+        radarHtml = `
+          <div class="section-title">Radar B2B „powinien już zamówić" <span class="muted">(${radar.przeterminowane_n || 0} po terminie · ${radar.do_odezwania_n || 0} do odezwania · ${radar.firmy_n || 0} firm)</span></div>
+          <div class="tbl-wrap"><table class="tbl">
+            <thead><tr><th>Firma</th><th class="num">Zam.</th><th class="num">Cykl</th><th class="num">Od ostatniego</th><th class="num">Przychód</th><th>Status</th><th></th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="7" class="sub">Brak firm z NIP.</td></tr>'}</tbody>
+          </table></div>`;
+      }
+
+      const alerts = (s.alerty || []).length ? `<div class="alerts">${s.alerty.map((a) => `<div class="alert">${esc(a)}</div>`).join('')}</div>` : '';
+      const dead = (pi.top_do_dzwonienia || []);
+      const deadHtml = dead.length
+        ? `<div class="dead">${dead.map((d) => {
+            const tel = d.telefon ? `<a href="tel:${esc(String(d.telefon).replace(/\s/g, ''))}">Zadzwoń</a>` : '';
+            return `<div class="dead-row"><span class="kwota">${fmtZl(d.kwota)}</span><span class="imie">#${d.id} · ${esc(d.imie || 'bez nazwy')}</span><span class="wiek">${d.wiek_dni ?? '—'} dni</span>${tel}</div>`;
+          }).join('')}</div>` : '<div class="muted">Brak otwartych wycen.</div>';
+
+      document.getElementById('sprzedaz-body').innerHTML = `
+        <div class="stars">${stars}</div>${alerts}
+        <div class="section-title">Miesiąc + pipeline</div><div class="grid">${tiles}</div>
+        <div class="section-title">Okno czasu</div>
+        <div class="chips" id="chips-sprzedaz"></div>
+        <div class="grid" id="okno-sprzedaz-tiles"></div>
+        ${dowod}
+        ${krzywa}
+        ${sciana}
+        ${radarHtml}
+        <div class="section-title">Top martwych wycen do dzwonienia</div>${deadHtml}`;
+
+      mountChips('chips-sprzedaz', 'sprzedaz', [
+        { v: '1d', l: 'Dziś' }, { v: '7d', l: 'Tydzień' }, { v: '30d', l: 'Miesiąc' }, { v: '90d', l: 'Kwartał' },
+      ], loadSprzedazOkno);
     }
 
     // ── Wykres liniowy: 3 serie (FB/IG/TikTok), legenda + hover (dataviz) ──
@@ -310,27 +797,19 @@
       const x = (i) => padL + (n === 1 ? iw / 2 : (i / (n - 1)) * iw);
       const y = (v) => padT + ih - (v / nice) * ih;
 
-      // Legenda
       const legend = `<div class="legend">${series.map((s) => `<span><i style="background:${s.color}"></i>${s.name}</span>`).join('')}</div>`;
-
-      // Siatka pozioma + etykiety Y (4 linie)
       let grid = '', gy = '';
       for (let g = 0; g <= 4; g++) {
         const val = nice * g / 4, yy = y(val);
         grid += `<line class="grid-line" x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}"/>`;
         gy += `<text class="axis-t" x="${padL - 6}" y="${yy + 3}" text-anchor="end">${fmtC(val)}</text>`;
       }
-      // Etykiety X (co 2. miesiąc, żeby nie tłoczyć)
       let xl = '';
       szereg.forEach((m, i) => { if (i % 2 === 0 || i === n - 1) xl += `<text class="axis-t" x="${x(i)}" y="${H - 8}" text-anchor="middle">${ymShort(m.month)}</text>`; });
-
-      // Linie serii
       const paths = series.map((s) => {
         const d = szereg.map((m, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(m[s.key] || 0).toFixed(1)}`).join(' ');
         return `<path class="series" d="${d}" stroke="${s.color}"/>`;
       }).join('');
-
-      // Warstwa hover
       const dots = series.map((s) => `<circle class="cx-dot" data-k="${s.key}" r="4.5" fill="${s.color}" stroke="var(--surface-1)" stroke-width="2"/>`).join('');
       wrap.innerHTML = legend + `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Wyświetlenia miesięcznie per platforma">
         ${grid}${gy}${xl}${paths}
@@ -344,7 +823,7 @@
       const show = (on) => { cx.style.opacity = on ? '1' : '0'; cxDots.forEach((d) => d.style.opacity = on ? '1' : '0'); tip.style.opacity = on ? '1' : '0'; };
       hit.addEventListener('mousemove', (e) => {
         const r = svg.getBoundingClientRect();
-        const px = (e.clientX - r.left) / r.width * W; // viewBox X
+        const px = (e.clientX - r.left) / r.width * W;
         let i = Math.round((px - padL) / (iw / Math.max(1, n - 1)));
         i = Math.max(0, Math.min(n - 1, i));
         const m = szereg[i];
@@ -360,53 +839,13 @@
     }
     function niceMax(v) { const p = Math.pow(10, Math.floor(Math.log10(v))); const f = v / p; const nf = f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10; return nf * p; }
 
-    // ════════════ PRZEGLĄD (panel główny: momentum + korelacja) ════════════
-    async function loadPrzeglad() {
-      const body = document.getElementById('przeglad-body');
-      try { renderPrzeglad(await getJSON('/api/przeglad')); }
-      catch (err) { body.innerHTML = `<div class="state">Nie udało się pobrać danych: ${esc(err.message)}</div>`; }
-    }
-
-    function renderPrzeglad(pr) {
-      const m = pr.momentum || {};
-      const momTile = (label, cur, dp, goodUp = true) => {
-        const up = dp >= 0, good = dp === 0 ? null : (goodUp ? up : !up);
-        const cls = good == null ? '' : (good ? 'good' : 'bad');
-        const arw = dp === 0 ? '→' : (up ? '▲' : '▼');
-        return `<div class="card"><span class="k-label">${label}</span><span class="k-value">${cur}</span><span class="k-sub ${cls}"><span class="arw">${arw} ${up ? '+' : ''}${dp}%</span> vs tydzień temu</span></div>`;
-      };
-      const tiles = [
-        momTile('Leady (ten tydzień)', m.leady ? m.leady.teraz : 0, m.leady ? m.leady.delta_pct : 0),
-        momTile('Sprzedaż (ten tydzień)', fmtZl(m.sprzedaz_zl ? m.sprzedaz_zl.teraz : 0), m.sprzedaz_zl ? m.sprzedaz_zl.delta_pct : 0),
-        momTile('Zasięg organiczny', fmtC(m.zasieg ? m.zasieg.teraz : 0), m.zasieg ? m.zasieg.delta_pct : 0),
-        momTile('Zamówienia', m.sprzedaz_n ? m.sprzedaz_n.teraz : 0, m.sprzedaz_n ? m.sprzedaz_n.delta_pct : 0),
-      ].join('');
-      const insights = (pr.wnioski || []).map((w) => `<div class="insight">${esc(w)}</div>`).join('');
-      const nt = pr.najlepszy_tydzien || {};
-      const content = (nt.top_content || []).slice(0, 3).map((r) => {
-        const pl = PLAT[r.platform] || { n: r.platform, c: 'var(--text-muted)' };
-        const t = (r.title || '').replace(/\s+/g, ' ').slice(0, 80) || '(bez opisu)';
-        return `<div class="post-row" style="--pc:${pl.c}"><span class="post-plat">${pl.n}</span><span class="post-title"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(t)}</a></span><span class="post-num"><div class="v">${fmtC(r.views)}</div><div class="l">${fmtC(r.likes)} ❤</div></span></div>`;
-      }).join('');
-      document.getElementById('przeglad-body').innerHTML = `
-        <div class="section-title">Gdzie jesteśmy teraz</div>
-        <div class="grid">${tiles}</div>
-        <div class="section-title">Wnioski</div>
-        <div class="insights">${insights || '<div class="muted">Za mało danych.</div>'}</div>
-        <div class="section-title">Korelacja: content ↔ leady ↔ sprzedaż <span class="muted">(12 tyg., indeks 100 = średnia serii)</span></div>
-        <div class="chart-wrap" id="correl-wrap"></div>
-        <div class="section-title">Content przy szczycie leadów${nt.label ? ' (' + esc(nt.label) + ')' : ''}</div>
-        <div class="posts">${content || '<div class="muted">Brak dopasowanego contentu.</div>'}</div>`;
-      renderCorrelChart(document.getElementById('correl-wrap'), pr.tygodnie || []);
-    }
-
     function renderCorrelChart(wrap, tyg) {
       if (tyg.length < 2) { wrap.innerHTML = '<div class="muted">Za mało tygodni.</div>'; return; }
       const cs = getComputedStyle(document.body);
       const series = [
         { key: 'zasieg', name: 'Zasięg', color: cs.getPropertyValue('--fb').trim(), raw: (b) => b.zasieg, fmt: fmtC },
-        { key: 'leady', name: 'Leady', color: cs.getPropertyValue('--ig').trim(), raw: (b) => b.leady, fmt: fmtInt },
-        { key: 'sprzedaz', name: 'Sprzedaż', color: cs.getPropertyValue('--tt').trim(), raw: (b) => b.sprzedaz_zl, fmt: fmtZl },
+        { key: 'bez_leada', name: 'Sprzedaż bez leada', color: cs.getPropertyValue('--ig').trim(), raw: (b) => b.bez_leada_zl || 0, fmt: fmtZl },
+        { key: 'z_leada', name: 'Sprzedaż z lejka', color: cs.getPropertyValue('--tt').trim(), raw: (b) => b.z_leada_zl || 0, fmt: fmtZl },
       ];
       series.forEach((s) => { const vals = tyg.map(s.raw); const mean = vals.reduce((a, b) => a + b, 0) / vals.length || 1; s.idx = vals.map((v) => mean ? v / mean * 100 : 100); });
       const W = 760, H = 280, padL = 42, padR = 14, padT = 10, padB = 26, iw = W - padL - padR, ih = H - padT - padB, n = tyg.length;
@@ -432,73 +871,6 @@
         tip.style.left = Math.min(e.clientX + 14, window.innerWidth - 170) + 'px'; tip.style.top = (e.clientY - 10) + 'px'; show(true);
       });
       hit.addEventListener('mouseleave', () => show(false));
-    }
-
-    // ════════════ OUTREACH + SPRZEDAŻ (snapshot) ════════════
-    let snap = null;
-    async function loadSnapshot() {
-      if (snap) return;
-      try { snap = await getJSON('/api/snapshot'); renderOutreach(snap); renderSprzedaz(snap); }
-      catch (err) {
-        document.getElementById('outreach-body').innerHTML = document.getElementById('sprzedaz-body').innerHTML =
-          `<div class="state">Nie udało się pobrać danych: ${esc(err.message)}</div>`;
-      }
-    }
-    const stamp = (id, g) => { document.getElementById(id).textContent = g ? 'Zaktualizowano: ' + new Date(g).toLocaleString('pl-PL') : ''; };
-
-    function renderOutreach(s) {
-      stamp('updated-o', s.generated_at);
-      const ou = s.outreach || {}, ld = s.leady || {};
-      const stl = ou.speed_to_lead_med_min;
-      const tiles = [
-        tile('% dodzwonień', fmtPct(ou.pct_dodzwonien), '', ou.pct_dodzwonien != null && ou.pct_dodzwonien < 0.5 ? 'bad' : ''),
-        tile('Speed-to-lead', stl == null ? '—' : stl + ' min', stl == null ? 'za mało danych' : (stl > 60 ? 'leady stygną' : 'ok'), stl != null && stl > 60 ? 'bad' : ''),
-        tile('Telefony dziś', ou.telefony_dzis ?? 0, `${ou.telefony_tydzien ?? 0} w tygodniu`, ou.telefony_dzis === 0 ? 'bad' : ''),
-        tile('Leady nietknięte', ou.leady_nietkniete ?? '—', 'wczesny lejek, bez tel.', ou.leady_nietkniete > 0 ? 'bad' : ''),
-        tile('Nowe leady', ou.leady_nowe ?? 0, 'czekają na 1. kontakt', ou.leady_nowe > 0 ? 'warn' : ''),
-        tile('Martwe wyceny tknięte 7d', ou.martwe_wyceny_tkniete_7d ?? 0, 'odgrzane >14 dni', ou.martwe_wyceny_tkniete_7d === 0 ? 'bad' : 'good'),
-      ].join('');
-      const lejek = ld.lejek || {};
-      const maxL = Math.max(1, ...Object.values(lejek));
-      const funnel = Object.keys(lejek).length
-        ? `<div class="funnel">${Object.entries(lejek).sort((a, b) => b[1] - a[1]).map(([k, v]) =>
-            `<div class="funnel-row"><span>${esc(k)}</span><div class="funnel-bar"><div class="funnel-fill" style="width:${Math.round(v / maxL * 100)}%"></div></div><span>${v}</span></div>`).join('')}</div>` : '';
-      document.getElementById('outreach-body').innerHTML = `
-        <div class="grid">${tiles}</div>
-        <div class="section-title">Lejek leadów</div>${funnel}`;
-    }
-
-    function renderSprzedaz(s) {
-      stamp('updated-s', s.generated_at);
-      const sp = s.sprzedaz || {}, pi = s.pipeline_otwarty || {};
-      const crVal = sp.close_rate == null ? '—' : fmtPct(sp.close_rate);
-      const crSub = sp.close_rate == null
-        ? (sp.close_rate_status || 'buduje się') + (sp.close_rate_wyceny_w_panelu != null ? ` · ${sp.close_rate_wyceny_w_panelu} wycen z panelu` : '')
-        : (sp.close_rate >= 0.25 ? 'cel 25–35% osiągnięty' : 'cel 25–35% — pipeline przecieka');
-      const crCls = sp.close_rate == null ? 'warn' : (sp.close_rate >= 0.25 ? 'good' : 'bad');
-      const stars = `
-        <div class="card star"><span class="k-label">Close rate (kohortowy)</span><span class="k-value">${crVal}</span><span class="k-sub ${crCls}">${esc(crSub)}</span></div>
-        <div class="card star"><span class="k-label">Otwarty pipeline</span><span class="k-value">${fmtZl(pi.suma)}</span><span class="k-sub">${pi.count || 0} wycen · śr. wiek ${pi.sredni_wiek_dni ?? '—'} dni</span></div>`;
-      const delta = sp.delta_do_tempa;
-      const deltaSub = delta == null ? '' : (delta >= 0 ? `+${fmtZl(delta)} nad tempem` : `${fmtZl(delta)} pod tempem`);
-      const tiles = [
-        tile('Przychód (mies.)', fmtZl((sp.przychod_mies || {}).suma), deltaSub, delta >= 0 ? 'good' : 'bad'),
-        tile('Zamówienia (mies.)', (sp.przychod_mies || {}).count ?? 0, '', ''),
-        tile('AOV', fmtZl(sp.aov), 'cel 2500+', sp.aov && sp.aov >= 2500 ? 'good' : ''),
-        tile('B2B', fmtPct(sp.b2b_pct), 'udział zamówień', ''),
-        tile('Powroty', fmtPct(sp.powroty_pct), 'klienci ≥2 zam.', ''),
-      ].join('');
-      const alerts = (s.alerty || []).length ? `<div class="alerts">${s.alerty.map((a) => `<div class="alert">${esc(a)}</div>`).join('')}</div>` : '';
-      const dead = (pi.top_do_dzwonienia || []);
-      const deadHtml = dead.length
-        ? `<div class="dead">${dead.map((d) => {
-            const tel = d.telefon ? `<a href="tel:${esc(String(d.telefon).replace(/\s/g, ''))}">Zadzwoń</a>` : '';
-            return `<div class="dead-row"><span class="kwota">${fmtZl(d.kwota)}</span><span class="imie">#${d.id} · ${esc(d.imie || 'bez nazwy')}</span><span class="wiek">${d.wiek_dni ?? '—'} dni</span>${tel}</div>`;
-          }).join('')}</div>` : '<div class="muted">Brak otwartych wycen.</div>';
-      document.getElementById('sprzedaz-body').innerHTML = `
-        <div class="stars">${stars}</div>${alerts}
-        <div class="section-title">Sprzedaż (miesiąc)</div><div class="grid">${tiles}</div>
-        <div class="section-title">Top martwych wycen do dzwonienia</div>${deadHtml}`;
     }
 
     ensureLoaded('przeglad');
