@@ -231,35 +231,32 @@ async function leady(db) {
   return { total: rows.length, lejek, zrodlo: { z_reklamy: zReklamy, bez_reklamy: bezReklamy } };
 }
 
-// ── Close rate (UCZCIWIE): phone-match leady↔zamówienia ──────────────────────
-// PROBLEM DANYCH (guardrails/weryfikacja): wyceny↔zamówienia bez klucza, a
-// Deal stage 'Sprzedane' niepilnowane (2/407). Jedyny wiarygodny łącznik =
-// telefon. Liczymy: leady, które dostały wycenę → ile ma zamówienie po telefonie.
+// ── Close rate FORWARD (uczciwy, kohortowy) ──────────────────────────────────
+// Klucz ISTNIEJE: konwersja to ten sam id przeskakujący WYCENA→ZAMÓWIENIE
+// (kod: wyceny-endpoints.js:759). Liczymy TYLKO wyceny zrobione w panelu
+// (source ≠ import/shopify). Historia (import ze starego systemu) to dwa
+// NIEPOWIĄZANE worki — 252 zamówienia + 126 wycen zaciągnięte osobno, bez
+// zapisanego linku wycena→zamówienie; liczenie po niej dałoby fałszywe ~66%.
 async function closeRate(db) {
-  const [leadyRes, zamRes] = await Promise.all([
-    db.from(LEADY).select('"Deal stage","Phone number","Kwota wyceny","Data wysłania wyceny"'),
-    db.from(WYCENY).select('telefon_digits').eq('typ', 'ZAMÓWIENIE'),
-  ]);
-  if (leadyRes.error) throw leadyRes.error;
-  if (zamRes.error) throw zamRes.error;
-  const orderPhones = new Set((zamRes.data || []).map((r) => phone9(r.telefon_digits)).filter(Boolean));
-
-  // "Dostał wycenę" = Deal stage 'Wycena wysłana' LUB ma Kwotę/Datę wysłania wyceny.
-  const quoted = (leadyRes.data || []).filter((l) =>
-    l['Deal stage'] === LEAD_WYCENA_WYSLANA
-    || (l['Kwota wyceny'] && String(l['Kwota wyceny']).trim())
-    || (l['Data wysłania wyceny'] && String(l['Data wysłania wyceny']).trim()));
-  const converted = quoted.filter((l) => { const p = phone9(l['Phone number']); return p && orderPhones.has(p); }).length;
-
+  const { data, error } = await db.from(WYCENY).select('id,typ,status,source').neq('typ', 'NOTATKA');
+  if (error) throw error;
+  const HISTORIA = new Set(['import', 'shopify']); // stary system + self-serve = nie wyceny z panelu
+  const cohort = (data || []).filter((r) => !HISTORIA.has(r.source));
+  const domkniete = cohort.filter((r) => r.typ === 'ZAMÓWIENIE').length;
+  const stracone = cohort.filter((r) => r.typ === 'WYCENA' && r.status === 'Stracone').length;
+  const otwarte = cohort.filter((r) => r.typ === 'WYCENA' && r.status === 'Open').length;
+  const rozstrzygniete = domkniete + stracone;
+  const MIN_PROBA = 15;
+  const gotowe = rozstrzygniete >= MIN_PROBA;
   return {
-    metoda: 'phone-match leady↔zamówienia (NIEwiarygodny w v1)',
-    wyceny_wyslane: quoted.length,
-    domkniete_po_telefonie: converted,
-    // ŚWIADOMIE null: phone-match łapie tylko converted/quoted (bo 252 historyczne
-    // ZAMÓWIENIA-import nie mają telefonu), a Deal stage "Sprzedane" niepilnowane
-    // (2/407). Wystawienie tej liczby jako close rate = kłamstwo. Patrz _uwaga.
-    close_rate: null,
-    _uwaga: `Close rate NIEpoliczalny wiarygodnie w v1: brak twardego klucza wycena↔zamówienie; phone-match dopiął tylko ${converted}/${quoted.length}. FIX: zapisywać wynik sprzedaży na leadzie (Deal stage → Sprzedane) LUB telefon/lead_id na każdym zamówieniu — wtedy close rate policzalny kohortowo.`,
+    metoda: 'forward: wyceny z panelu, ten sam id po konwersji (kohortowy)',
+    wyceny_w_panelu: cohort.length,
+    domkniete,
+    stracone,
+    otwarte,
+    close_rate: gotowe ? round(domkniete / rozstrzygniete) : null,
+    status: gotowe ? 'ok' : `buduje się — za mało rozstrzygniętych wycen (${rozstrzygniete}/${MIN_PROBA})`,
+    _uwaga: 'Liczony TYLKO z wycen zrobionych w panelu (konwersja = ten sam id WYCENA→ZAMÓWIENIE, data utworzenia zachowana). Historia (import) nieodtwarzalna — osobne worki wycen i zamówień bez linku. Próbka rośnie z każdą nową wyceną.',
   };
 }
 
@@ -281,8 +278,9 @@ async function snapshot(db) {
     sprzedaz: {
       przychod_mies: sp.tenMiesiac, delta_do_tempa: round(sp.tenMiesiac.suma - sp.tempo.poprzedniDoTempa),
       aov: sp.aov,
-      close_rate: cr.close_rate, // null w v1 — patrz close_rate_status
-      close_rate_status: 'niepoliczalny wiarygodnie w v1 (brak klucza wycena↔zamówienie) — /api/stats/close-rate',
+      close_rate: cr.close_rate, // forward (wyceny z panelu); null dopóki próbka mała
+      close_rate_status: cr.status,
+      close_rate_wyceny_w_panelu: cr.wyceny_w_panelu,
       b2b_pct: sp.b2b.pct_zamowien, powroty_pct: sp.powroty.pct,
     },
     pipeline_otwarty: { count: pipe.count, suma: pipe.suma, sredni_wiek_dni: pipe.sredni_wiek_dni, top_do_dzwonienia: pipe.top_do_dzwonienia },
