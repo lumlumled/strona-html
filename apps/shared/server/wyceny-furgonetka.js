@@ -177,15 +177,19 @@ function buildPickup() {
   };
 }
 
-// Wymiary/waga jak kurier ShipX (50×35×18 cm, 3 kg) — pola: width/depth/height/
-// weight (NIE length!) + value (do ubezpieczenia). ULEPSZENIE (v2): waga z
-// pozycji × sku_cennik.weight_kg — dla zagranicy cena zależy od wagi mocniej.
+// Pudło = największe REALNIE używane (43×33×10 cm). Ustalone empirycznie na żywym
+// cenniku (2026-07-13): wszystkie realne pudełka LumLum (24,5×23×9 … 43×33×10)
+// mieszczą się w tym samym progu cenowym, więc dobór S/M/L nic nie oszczędza —
+// bierzemy największe, żeby zawsze się zmieściło. WAŻNE: cena kuriera = max(waga
+// rzeczywista, gabaryt = W×D×H/5000). Przy tym pudle gabaryt ≈ 2,84 kg, więc dla
+// cięższych zamówień to WAGA zaczyna decydować. ULEPSZENIE (v2): weight z pozycji
+// (Σ ilość × sku_cennik.weight_kg + narzut) — override przez env FURGONETKA_WEIGHT_KG.
 function buildParcel(wycena) {
   return {
-    width: 35,
-    depth: 50,
-    height: 18,
-    weight: 3,
+    width: 43,
+    depth: 33,
+    height: 10,
+    weight: Number(process.env.FURGONETKA_WEIGHT_KG) || 3,
     value: Number(wycena.kwota_sprzedazy_brutto ?? wycena.kwota_proponowana_brutto ?? 0) || 0,
   };
 }
@@ -207,13 +211,25 @@ async function calculatePrice(wycena) {
   return furgoFetch('/packages/calculate-price', { method: 'post', body });
 }
 
+// Kurierzy ZABRONIENI (nigdy nie do wyboru): furgonetka_gielda (aukcja) oraz
+// poczta/Pocztex — TWARDY zakaz Antoniego ("żadnego pocztexu"). Zawsze wyklucz
+// „poczta" (Poczta Polska oferuje Pocztex). Override/rozszerzenie env FURGONETKA_BLOCKED.
+const BLOKOWANI = new Set(
+  (process.env.FURGONETKA_BLOCKED || 'furgonetka_gielda,poczta,pocztex')
+    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+);
+function serwisZablokowany(service) {
+  const s = String(service || '').toLowerCase();
+  return BLOKOWANI.has(s) || s.includes('pocztex') || s.includes('poczta');
+}
+
 // Oferty kurierskie POSORTOWANE rosnąco po cenie: available=true, jest
-// pricing.price_gross, pomijamy „furgonetka_gielda" (aukcja). Zwraca listę do
-// fallbacku (najtańszy który REALNIE przyjmie paczkę — patrz orchestracja).
+// pricing.price_gross, bez kurierów zabronionych. Lista do fallbacku
+// (najtańszy który REALNIE przyjmie paczkę — patrz orchestracja).
 function sortowaneOferty(pricing) {
   const offers = (pricing && pricing.services_prices) || [];
   return offers
-    .filter((o) => o.available && o.pricing && o.pricing.price_gross != null && o.service !== 'furgonetka_gielda')
+    .filter((o) => o.available && o.pricing && o.pricing.price_gross != null && !serwisZablokowany(o.service))
     .sort((a, b) => a.pricing.price_gross - b.pricing.price_gross);
 }
 
