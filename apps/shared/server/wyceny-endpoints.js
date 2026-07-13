@@ -278,6 +278,41 @@ const EDITABLE_WYCENA_FIELDS = [
   'invoice_company_nip', 'invoice_company_name',
 ];
 
+// Push „Nowa wycena" — do adminów + ownera wyceny, ale NIGDY do osoby, która ją
+// właśnie utworzyła (zero self-pingów za własne kliknięcie). Czyli: gdy Lorenzo
+// dodaje wycenę, ping leci do Antoniego; gdy Antoni dodaje, nikogo nie budzi.
+// Wzorzec 1:1 z notifyWyceny/notifyFulfillment. Nigdy nie wywala zapisu wyceny —
+// błędy tylko logujemy. Notatki (typ NOTATKA) pomijamy.
+async function notifyWycenaCreated(db, wycena, actorName) {
+  try {
+    const push = require('./push');
+    if (!push || !push.notifyUser || !wycena || wycena.typ === 'NOTATKA') return;
+    const aktor = String(actorName || '').trim().toLowerCase();
+    const owner = String(wycena.owner || '').trim().toLowerCase();
+    const { data: users } = await db.from('app_users').select('id,name,role').eq('active', true);
+    const targets = (users || []).filter((u) => {
+      const n = String(u.name || '').trim().toLowerCase();
+      if (n === aktor) return false; // nie pinguj twórcy
+      return u.role === 'admin' || (owner && n === owner);
+    });
+    if (!targets.length) return;
+    const nazwa = wycena.imie_nazwisko
+      || [wycena.first_name, wycena.last_name].filter(Boolean).join(' ').trim();
+    const kwota = wycena.kwota_sprzedazy_brutto ?? wycena.kwota_proponowana_brutto;
+    const body = `#${wycena.id}`
+      + (nazwa ? ` · ${nazwa}` : '')
+      + (kwota != null && kwota !== '' ? ` · ${num(kwota)} zł` : '')
+      + (wycena.owner ? ` · ${wycena.owner}` : '');
+    for (const u of targets) {
+      await push.notifyUser(() => db, u.id, {
+        title: 'Nowa wycena', body, url: '/wyceny/', tag: `wycena-created-${wycena.id}`,
+      });
+    }
+  } catch (err) {
+    console.warn(`Push nowej wyceny ${wycena?.id} nie wyszedł:`, err.message);
+  }
+}
+
 function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isAdmin }) {
   function handleError(res, err, fallbackStatus = 400) {
     console.error(err);
@@ -604,6 +639,7 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       if (body.feedback_due !== undefined) {
         await applyFeedbackDue(supabase, data[0], body.feedback_due, req.user.name);
       }
+      await notifyWycenaCreated(supabase, data[0], req.user.name);
       res.json({ data: decorate(data[0]) });
     } catch (err) {
       handleError(res, err, 502);
@@ -754,6 +790,7 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       const { data, error } = await supabase.from('wyceny').insert(insert).select('*');
       if (error) throw error;
       await logEvent(supabase, idData, 'wycena.created', { source: 'quick-add', user: req.user.name, tekst: String(tekst || '').slice(0, 500) });
+      await notifyWycenaCreated(supabase, data[0], req.user.name);
       res.json({ data: decorate(data[0]), created: true });
     } catch (err) {
       handleError(res, err, 502);

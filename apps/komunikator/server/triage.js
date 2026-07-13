@@ -12,6 +12,13 @@
 // wskazówką "podobne → archive". Wiadomość z triage=NULL czeka na sweep()
 // w cronie — webhook ma limit czasu, LLM może nie zdążyć.
 const llm = require('./llm');
+const { notifyNewMessage } = require('./notify-push');
+
+// Push „Nowa wiadomość" tylko dla świeżo przychodzących zapytań w 'inbox'.
+// sweep dokłada starą historię (triage=NULL sprzed wdrożenia) — tam pushujemy
+// tylko wiadomości młodsze niż to okno, żeby backlog nie wystrzelił dziesiątek
+// powiadomień naraz.
+const PUSH_FRESH_MS = 60 * 60 * 1000;
 
 const KIND_POLICY = {
   comment: 'comment: BARDZO selektywnie. Domyślnie "archive". "inbox" TYLKO przy jasnych przesłankach, że autor chce kupić albo pyta o produkt pod zakup (cena, dostępność, zamówienie, wysyłka, dobór pod swoją sytuację).',
@@ -134,6 +141,8 @@ async function classifyInWebhook(db, thread, messageId, input, budgetMs = 2500) 
   try {
     const result = await withTimeout(classifyMessage(db, input), budgetMs);
     await applyTriage(db, thread, messageId, result);
+    // Świeża wiadomość real-time — jeśli trafia do 'inbox', dzwoń od razu.
+    if (result.triage === 'inbox') await notifyNewMessage(db, { thread, body: input.text });
     return result;
   } catch (err) {
     console.error('Triage (webhook):', err.message);
@@ -194,6 +203,13 @@ async function sweep(db, limit = 20) {
         await db.from('kom_messages').update({ triage: result.triage }).eq('id', msg.id);
       } else {
         await applyTriage(db, thread, msg.id, result);
+        // Push tylko dla świeżych zapytań w 'inbox' — sweep dokłada też starą
+        // historię (webhook nie zdążył sklasyfikować / import), której nie
+        // chcemy nagle wypushować.
+        const wiek = Date.now() - new Date(msg.created_at).getTime();
+        if (result.triage === 'inbox' && wiek < PUSH_FRESH_MS) {
+          await notifyNewMessage(db, { thread, body: msg.body });
+        }
       }
       classified += 1;
     } catch (err) {
