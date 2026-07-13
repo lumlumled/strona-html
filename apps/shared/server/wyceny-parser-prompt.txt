@@ -473,7 +473,7 @@ MINIMUM TAŚMY — ANALOGOWA:
 
 * “analogowa”
 * ilość
-* (3000 lub 4000) LUB “CCT” LUB “RGB/RGB+CCT/RGBCCT” LUB spełniona reguła domyślnego 4000K (poniżej)
+* (3000 lub 4000 lub 6000) LUB “CCT” LUB “RGB/RGB+CCT/RGBCCT” LUB spełniona reguła domyślnego 4000K (poniżej)
 
 Jeśli MINIMUM nie spełnione → NIE kanonizuj taśm.
 
@@ -516,6 +516,7 @@ Cyfrowa taśma COB 6000K IP65 | LL-TAPE-DIG-COB-6000K-IP65 | 85 | 23 | m. | [htt
 TAŚMY ANALOGOWE IP20
 Analogowa taśma COB 3000K IP20 | LL-TAPE-ANA-COB-3000K-IP20 | 45 | 23 | m. | [https://cdn.shopify.com/s/files/1/0878/3223/2259/files/Cieply_analog.png?v=1761316598](https://cdn.shopify.com/s/files/1/0878/3223/2259/files/Cieply_analog.png?v=1761316598)
 Analogowa taśma COB 4000K IP20 | LL-TAPE-ANA-COB-4000K-IP20 | 45 | 23 | m. | [https://cdn.shopify.com/s/files/1/0878/3223/2259/files/Neutralny_analog.png?v=1761316629](https://cdn.shopify.com/s/files/1/0878/3223/2259/files/Neutralny_analog.png?v=1761316629)
+Analogowa taśma COB 6000K IP20 | LL-TAPE-ANA-COB-6000K-IP20 | 45 | 23 | m. | [https://cdn.shopify.com/s/files/1/0878/3223/2259/files/analogowa_6000K_1.png?v=1776103439](https://cdn.shopify.com/s/files/1/0878/3223/2259/files/analogowa_6000K_1.png?v=1776103439)
 Analogowa taśma COB CCT IP20 | LL-TAPE-ANA-COB-CCT-IP20 | 50 | 23 | m. | [https://cdn.shopify.com/s/files/1/0878/3223/2259/files/Analog_CCT.png?v=1761316649](https://cdn.shopify.com/s/files/1/0878/3223/2259/files/Analog_CCT.png?v=1761316649)
 Analogowa taśma COB RGB+CCT IP20 | LL-TAPE-ANA-COB-RGBCCT-IP20 | 55 | 23 | m. | [https://cdn.shopify.com/s/files/1/0878/3223/2259/files/Analog_RGB_CCT.png?v=1761316680](https://cdn.shopify.com/s/files/1/0878/3223/2259/files/Analog_RGB_CCT.png?v=1761316680)
 
@@ -651,6 +652,7 @@ a) IP67 (gdy jest ip67 lub wodoodpor/wodoszczel)
 * RGB (z CCT lub bez) → Analogowa taśma COB RGB+CCT IP20, LL-TAPE-ANA-COB-RGBCCT-IP20
 * 3000 → Analogowa taśma COB 3000K IP20, LL-TAPE-ANA-COB-3000K-IP20
 * 4000 → Analogowa taśma COB 4000K IP20, LL-TAPE-ANA-COB-4000K-IP20
+* 6000 → Analogowa taśma COB 6000K IP20, LL-TAPE-ANA-COB-6000K-IP20
 
 STEROWNIKI — MAPOWANIE
 
