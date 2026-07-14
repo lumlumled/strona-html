@@ -300,6 +300,38 @@ async function downloadLabel(packageId) {
   return furgoFetch(`/packages/${encodeURIComponent(packageId)}/label?type=${encodeURIComponent(LABEL_FORMAT)}`, { wantBuffer: true });
 }
 
+// Odbiór kuriera dla ZAMÓWIONEJ paczki — ta sama zasada co dispatch InPost
+// (decyzja Antoniego 2026-07-14: „Drukuj etykietę" ma zamawiać kuriera).
+// Flow potwierdzony sondami na żywym API 2026-07-14:
+//   GET /packages/pickup?package_id=       → stan odbioru (order mógł już umówić),
+//   GET /packages/pickup-dates?package_id= → dostępne terminy,
+//   PUT /packages/pickup { packageParams: [{ package_id, pickup_date }] }.
+// Adres i godziny odbioru = konfiguracja KONTA Furgonetki (Walońska 7/84,
+// dane kontaktowe Antoniego) — nie wysyłamy ich w payloadzie.
+// ⚠️ Kształt odpowiedzi GET-ów zgadywany defensywnie (brak realnej paczki do
+// sondy) — surowe odpowiedzi lądują w wyceny_events do dostrojenia.
+async function zamowOdbior(packageId) {
+  try {
+    const stan = await furgoFetch(`/packages/pickup?package_id=${encodeURIComponent(packageId)}`);
+    const juz = stan && (stan.pickup_date || (stan.pickup && stan.pickup.date)
+      || (Array.isArray(stan) && stan[0] && (stan[0].pickup_date || stan[0].date)));
+    if (juz) return { date: juz, existing: true, raw: stan };
+  } catch (_) { /* brak umówionego odbioru — umawiamy niżej */ }
+  let date = null;
+  try {
+    const dates = await furgoFetch(`/packages/pickup-dates?package_id=${encodeURIComponent(packageId)}`);
+    const arr = Array.isArray(dates) ? dates : (dates && (dates.dates || dates.pickup_dates)) || [];
+    const first = arr[0];
+    date = typeof first === 'string' ? first : (first && (first.date || first.pickup_date)) || null;
+  } catch (_) { /* bez terminu — PUT bez pickup_date (Furgonetka wybierze) */ }
+  const body = { packageParams: [{ package_id: Number(packageId) || packageId, ...(date ? { pickup_date: date } : {}) }] };
+  const res = await furgoFetch('/packages/pickup', { method: 'put', body });
+  if (res && res.status === 'ERROR') {
+    throw new Error(`Furgonetka pickup ${packageId}: ${JSON.stringify(res.errors).slice(0, 250)}`);
+  }
+  return { date, existing: false, raw: res };
+}
+
 // Tracking: GET /packages/{package_id}/tracking → { tracking:[…] }.
 async function getTracking(packageId) {
   return furgoFetch(`/packages/${encodeURIComponent(packageId)}/tracking`);
@@ -385,6 +417,7 @@ module.exports = {
   orderPackage,
   cancelOrderCommand,
   downloadLabel,
+  zamowOdbior,
   getTracking,
   mapTrackingStatus,
   zamowPrzesylkeZagraniczna,

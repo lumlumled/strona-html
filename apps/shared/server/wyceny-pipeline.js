@@ -7,11 +7,11 @@
 //   PRZELEW:   proforma "transfer" + szybka płatność -> mail z linkiem ->
 //              po OPŁACENIU (webhook inFakt) przesyłka (bez COD), faktura VAT
 //              (paid), KSeF, delete proformy, mail z VAT i trackingiem.
-//   ZAGRANICA: routing przewoźnika (2026-07-14): InPost tylko PL+numer +48;
-//              zagranica/obcy numer -> Furgonetka FULL AUTO (najtańszy z
-//              allow-listy, order, etykieta A6, push z odbiorem) dla UE;
-//              poza UE (dane celne) i firma zagraniczna (odwrotne obciążenie)
-//              -> wstrzymanie + push do Antoniego.
+//   ZAGRANICA: routing przewoźnika (2026-07-14): Polska = TYLKO InPost;
+//              zagranica -> Furgonetka FULL AUTO (najtańszy z allow-listy,
+//              order, etykieta A6, push z odbiorem) dla UE; poza UE (dane
+//              celne) i firma zagraniczna (odwrotne obciążenie) ->
+//              wstrzymanie + push do Antoniego.
 //
 // Idempotencja: lock na wycenie (lock_token + lock_expires_at) + wznowienie
 // od brakującego kroku (istniejąca przesyłka/faktura nie jest tworzona
@@ -128,18 +128,13 @@ function jestZagranica(wycena) {
   return Boolean(wycena.ship_country && wycena.ship_country !== 'PL');
 }
 
-// ── Routing przewoźnika (spec furgonetka-zagranica, dogrywka 2026-07-13) ─────
-// InPost (ShipX) TYLKO gdy dostawa PL ORAZ polski numer (+48) — InPost wymaga
-// PL numeru do SMS-ów/paczkomatu. Wszystko inne = Furgonetka kurier.
-function telefonPolski(wycena) {
-  const e164 = String(wycena.telefon_e164 || '').replace(/^\+/, '');
-  if (e164) return /^48\d{9}$/.test(e164);
-  const digits = String(wycena.telefon_digits || '').replace(/\D/g, '');
-  // 9 cyfr = polski lokalny (konwencja bazy); brak numeru nie blokuje InPostu.
-  return !digits || /^\d{9}$/.test(digits) || /^48\d{9}$/.test(digits);
-}
+// ── Routing przewoźnika ──────────────────────────────────────────────────────
+// Decyzja Antoniego 2026-07-14 (nadpisuje dogrywkę ze spec): po Polsce TYLKO
+// i wyłącznie InPost — także przy obcym numerze telefonu (paczkomat i tak jest
+// ukrywany w formularzu bez polskiego prefiksu; SMS-y mogą nie dojść — trudno).
+// Furgonetka = wyłącznie dostawa za granicę.
 function jestFurgonetka(wycena) {
-  return jestZagranica(wycena) || !telefonPolski(wycena);
+  return jestZagranica(wycena);
 }
 
 // Duty-guard: UE (unia celna) = full auto; cała reszta (US, UK, CH, NO, UA, …)
@@ -272,6 +267,9 @@ async function krokPrzesylka(db, wycena, { codAmount, insuranceAmount, kind = 'o
 async function krokPrzesylkaFurgonetka(db, wycena, { kind = 'order' } = {}) {
   furgonetka.useTokenStore(furgonetka.makeSupabaseTokenStore(db));
   const wynik = await furgonetka.zamowPrzesylkeZagraniczna(wycena);
+  // Jeśli order sam umówił odbiór (pickup_date w paczce) — stemplujemy od razu,
+  // chip „kurier zamówiony" świeci, a „Drukuj etykietę" nie umawia drugi raz.
+  const pickupDate = wynik.pickup && wynik.pickup.date;
   const { data: rows, error } = await db.from('wyceny_shipments').insert({
     wycena_id: wycena.id,
     provider: 'furgonetka',
@@ -281,6 +279,8 @@ async function krokPrzesylkaFurgonetka(db, wycena, { kind = 'order' } = {}) {
     status: 'confirmed', // zamówiona = etykieta jest → od razu gotowa do pakowania
     raw_status: 'ordered',
     tracking_number: wynik.tracking_number || null,
+    dispatch_order_id: pickupDate ? `pickup:${pickupDate}` : null,
+    dispatch_ordered_at: pickupDate ? new Date().toISOString() : null,
   }).select('*');
   if (error) throw error;
   const shipment = rows[0];
@@ -446,8 +446,8 @@ async function startPipeline(db, wycenaId) {
       if (!shipment && !jestFurgonetka(wycena)) {
         shipment = await krokPrzesylka(db, wycena, { codAmount: kwotaFinalna, insuranceAmount: kwotaFinalna });
       } else if (!shipment) {
-        // Pobranie nie jeździ Furgonetką (v1 bez COD w payloadzie; formularz
-        // blokuje COD dla zagranicy — to głównie PL adres + obcy numer).
+        // Pobranie nie jeździ Furgonetką (v1 bez COD w payloadzie); formularz
+        // blokuje COD dla zagranicy, więc to czysty bezpiecznik na ręczne wyceny.
         await logEvent(db, wycenaId, 'pipeline.manual_shipping_needed', { kraj: wycena.ship_country || 'PL', powod: 'cod-poza-inpost' });
         await pushDoAdminow(db, {
           title: 'Pobranie poza InPostem — wyślij ręcznie',
@@ -854,5 +854,5 @@ async function runWorker(db) {
 
 module.exports = {
   startPipeline, onInvoicePaid, onDelivered, reship, runWorker, policzKwoty, markPaidAndShip,
-  telefonPolski, jestFurgonetka, wymagaCla, firmaNaFakturze,
+  jestFurgonetka, wymagaCla, firmaNaFakturze,
 };

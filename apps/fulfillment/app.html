@@ -192,10 +192,30 @@
       return m.adres || '';
     }
 
+    // Link śledzenia wg przewoźnika: InPost jak dotąd; Furgonetka → oficjalny
+    // tracker kuriera z allow-listy (dpd/fedex/ups/dhl).
+    function trackingHref(ship) {
+      const nr = encodeURIComponent(ship.tracking_number);
+      if ((ship.provider || 'shipx') !== 'furgonetka') return `https://inpost.pl/sledzenie-przesylek?number=${nr}`;
+      const s = String(ship.service || '').toLowerCase();
+      if (s === 'dpd') return `https://tracktrace.dpd.com.pl/parcelDetails?p1=${nr}`;
+      if (s === 'fedex') return `https://www.fedex.com/fedextrack/?trknbr=${nr}`;
+      if (s === 'ups') return `https://www.ups.com/track?tracknum=${nr}`;
+      if (s === 'dhl') return `https://www.dhl.com/pl-pl/home/tracking.html?tracking-id=${nr}`;
+      return 'https://furgonetka.pl/zlokalizuj';
+    }
+
     // Komunikat o zleceniu odbioru (kurier zamawia się przy pierwszym druku
-    // etykiety / spakowaniu danego dnia; RAZ dziennie, okno 15:00-17:00).
+    // etykiety / spakowaniu danego dnia; InPost RAZ dziennie, okno 15:00-17:00;
+    // Furgonetka per paczka - najbliższy dostępny termin).
     function opiszKuriera(kurier) {
       if (!kurier) return;
+      if (kurier.furgonetka && kurier.furgonetka.length) {
+        const ok = kurier.furgonetka.filter((f) => !f.error);
+        const zle = kurier.furgonetka.filter((f) => f.error);
+        if (ok.length) alert('Odbiór Furgonetki zamówiony: ' + ok.map((f) => `#${f.wycena_id} ${String(f.service || '').toUpperCase()}${f.date ? ' na ' + f.date : ''}`).join(', '));
+        if (zle.length) alert('Furgonetka - NIE udało się zamówić odbioru: ' + zle.map((f) => `#${f.wycena_id}`).join(', ') + '. Zamów w panelu Furgonetki.');
+      }
       if (kurier.dispatch === 'zamowiony') {
         alert(`Kurier zamówiony na dziś 15:00-17:00 (paczek: ${kurier.paczek}).`);
       } else if (kurier.dispatch === 'za-pozno') {
@@ -270,6 +290,9 @@
       const payL = PAYMENT_LABELS[o.payment_method] || o.payment_method || '';
       if (payL) top.appendChild(h('span', o.paid ? 'chip good' : 'chip', o.paid ? `${payL} · opłacone` : payL));
       if (o.brak_etykiety) top.appendChild(h('span', 'chip warn', 'brak etykiety'));
+      if (o.shipment && o.shipment.provider === 'furgonetka') {
+        top.appendChild(h('span', 'chip warn', `Furgonetka · ${String(o.shipment.service || 'kurier').toUpperCase()}`));
+      }
       if (o.bucket === 'do_spakowania' || o.bucket === 'spakowane') {
         if (o.shipment && o.shipment.label_printed_at) top.appendChild(h('span', 'chip good', 'etykieta wydrukowana'));
         if (o.shipment && o.shipment.dispatch_order_id) top.appendChild(h('span', 'chip good', 'kurier zamówiony'));
@@ -295,7 +318,7 @@
         const t = h('span', 'track');
         t.innerHTML = 'Tracking: ';
         const a = h('a', null, ship.tracking_number);
-        a.href = `https://inpost.pl/sledzenie-przesylek?number=${encodeURIComponent(ship.tracking_number)}`;
+        a.href = trackingHref(ship);
         a.target = '_blank'; a.rel = 'noopener';
         t.appendChild(a);
         foot.appendChild(t);

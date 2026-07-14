@@ -129,6 +129,8 @@ function serializeOrder(w, shipments, bucket, cennikBySku) {
     items: serializeItems(w.items, cennikBySku),
     shipment: ship ? {
       id: ship.shipment_id,
+      provider: ship.provider || 'shipx',
+      service: ship.service || '',
       tracking_number: ship.tracking_number || '',
       status: ship.status,
       raw_status: ship.raw_status || '',
@@ -158,21 +160,16 @@ function godzinaWarszawy(d) {
   return Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Warsaw', hour: '2-digit', hour12: false }).format(d));
 }
 
-async function zamowKuriera(supabase, { user } = {}) {
+async function zamowKurieraInPost(supabase, rows, { user } = {}) {
   const teraz = new Date();
   const dzis = dataWarszawa(teraz);
-  const { data: ships, error } = await supabase.from('wyceny_shipments').select('*');
-  if (error) throw error;
-  const all = ships || [];
-  if (all.some((s) => s.dispatch_ordered_at && dataWarszawa(new Date(s.dispatch_ordered_at)) === dzis)) {
+  if (rows.some((s) => s.dispatch_ordered_at && dataWarszawa(new Date(s.dispatch_ordered_at)) === dzis)) {
     return { dispatch: 'juz-zamowiony' };
   }
   if (godzinaWarszawy(teraz) >= DISPATCH_CUTOFF_HOUR) return { dispatch: 'za-pozno' };
-  // Tylko InPost (Furgonetka ma własny odbiór ustawiany przy orderze), tylko
-  // confirmed (wymóg ShipX) i bez wcześniejszego zlecenia — przesyłka może być
-  // w JEDNYM zleceniu, inaczej 400 dla całego zlecenia.
-  const doOdbioru = all.filter((s) => (s.provider || 'shipx') !== 'furgonetka'
-    && String(s.status) === 'confirmed'
+  // Tylko confirmed (wymóg ShipX) i bez wcześniejszego zlecenia — przesyłka
+  // może być w JEDNYM zleceniu, inaczej 400 dla całego zlecenia.
+  const doOdbioru = rows.filter((s) => String(s.status) === 'confirmed'
     && !s.nadana_at && !s.delivered_at && s.tracking_number && !s.dispatch_order_id);
   if (!doOdbioru.length) return { dispatch: 'brak-paczek' };
   const shipx = require('./wyceny-shipx');
@@ -189,6 +186,46 @@ async function zamowKuriera(supabase, { user } = {}) {
     payload: { dispatch_order_id: String(order.id), paczek: doOdbioru.length, user: user || null },
   })));
   return { dispatch: 'zamowiony', dispatch_order_id: String(order.id), paczek: doOdbioru.length };
+}
+
+// Odbiory Furgonetki (zagranica): per PACZKA, bez okna 15:00 (Furgonetka sama
+// daje najbliższy termin) i bez flagi dziennej — idempotencja na
+// dispatch_order_id przesyłki. Order zwykle umawia odbiór sam (stempel w
+// krokPrzesylkaFurgonetka); to jest dogrywka z „Drukuj etykietę"/„Oznacz".
+async function zamowOdbioryFurgonetki(supabase, rows, { user } = {}) {
+  const czeka = rows.filter((s) => String(s.status) === 'confirmed'
+    && !s.nadana_at && !s.delivered_at && !s.dispatch_order_id);
+  if (!czeka.length) return null;
+  const furgo = require('./wyceny-furgonetka');
+  furgo.useTokenStore(furgo.makeSupabaseTokenStore(supabase));
+  const wyniki = [];
+  for (const s of czeka) {
+    try {
+      const p = await furgo.zamowOdbior(s.shipment_id);
+      const nowIso = new Date().toISOString();
+      await supabase.from('wyceny_shipments').update({
+        dispatch_order_id: `pickup:${p.date || 'auto'}`, dispatch_ordered_at: nowIso, updated_at: nowIso,
+      }).eq('id', s.id);
+      await supabase.from('wyceny_events').insert({
+        wycena_id: s.wycena_id, kind: 'dispatch.ordered',
+        payload: { provider: 'furgonetka', package_id: s.shipment_id, pickup_date: p.date || null, existing: p.existing || false, user: user || null, raw: p.raw ? JSON.parse(JSON.stringify(p.raw)) : null },
+      });
+      wyniki.push({ wycena_id: s.wycena_id, service: s.service || '', date: p.date || null });
+    } catch (err) {
+      console.error(`Furgonetka pickup ${s.shipment_id}:`, err.message);
+      wyniki.push({ wycena_id: s.wycena_id, service: s.service || '', error: err.message.slice(0, 160) });
+    }
+  }
+  return wyniki;
+}
+
+async function zamowKuriera(supabase, { user } = {}) {
+  const { data: ships, error } = await supabase.from('wyceny_shipments').select('*');
+  if (error) throw error;
+  const all = ships || [];
+  const inpost = await zamowKurieraInPost(supabase, all.filter((s) => (s.provider || 'shipx') !== 'furgonetka'), { user });
+  const furgonetka = await zamowOdbioryFurgonetki(supabase, all.filter((s) => s.provider === 'furgonetka'), { user });
+  return { ...inpost, furgonetka };
 }
 
 function registerFulfillmentEndpoints(app, { getClient, requireAdmin }) {

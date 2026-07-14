@@ -85,12 +85,13 @@ Z tego jedyne „poza Europą" = **US**. Logika serwera i tak obsługuje dowolny
   (swiatprzesylek, ambroexpress, gls) ani Poczty/**Pocztexu** (twardy zakaz).
   `sortowaneOferty` filtruje po `FURGONETKA_ALLOWED`. ⚠️ DHL na koncie
   NIEDOSTĘPNY (`dhl niedost`) — Antoni musi go aktywować w panelu Furgonetki.
-- **Routing przewoźnika** (korekta — nie tylko po kraju):
-  - dostawa PL **i** telefon polski (+48) → **InPost (ShipX)**, paczkomat OK,
-  - dostawa PL **ale telefon zagraniczny** → **Furgonetka kurier** (InPost wymaga
-    PL numeru do SMS/paczkomatu),
+- **Routing przewoźnika** — ⚠️ NADPISANE 2026-07-14 (decyzja Antoniego:
+  „po Polsce tylko i wyłącznie InPost"):
+  - dostawa PL → **InPost (ShipX)** ZAWSZE, niezależnie od prefiksu telefonu
+    (paczkomat i tak ukrywany w formularzu bez polskiego numeru),
   - dostawa zagranica → **Furgonetka kurier**.
-  → warunek Furgonetki: `ship_country != PL` **LUB** `telefon nie +48`.
+  → warunek Furgonetki: `ship_country != PL`.
+  (Stara wersja z dogrywki 13.07 — „PL + obcy numer → Furgonetka" — wycofana.)
 - **Pudło:** 43×33×10 cm (największe realne). Wszystkie realne pudełka LumLum są
   w tym samym progu cenowym — dobór S/M/L nic nie daje. Waga override
   `FURGONETKA_WEIGHT_KG` (v2: z pozycji × `sku_cennik.weight_kg`).
