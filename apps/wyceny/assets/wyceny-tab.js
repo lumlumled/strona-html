@@ -302,11 +302,10 @@ window.WycenyTab = (() => {
     kwota.style.color = 'var(--text-primary)';
     const stage = WycenaKarta.utils.stageChip(wycena.process_stage);
     stage.classList.add('row-stage');
-    // "Link wysłany" (FORM_SENT) chowamy na mobile — mało istotny przy ciasnym
-    // ekranie; status wyceny i tak jest w pigułce po prawej. Inne etapy zostają.
-    if (wycena.process_stage === 'FORM_SENT') stage.classList.add('stage-form-sent');
-    // Na mobile prawa kolumna to status nad kwotą — reszta (właściciel, etap,
-    // źródło) schowana pod @media, żeby wiersz był czytelny w dwóch liniach.
+    // Na mobile z etapów zostaje tylko "Błąd pipeline" (na czerwono) — reszta
+    // (m.in. "Link wysłany") schowana pod @media. Patrz .row-stage:not(.stage-error).
+    if (wycena.process_stage === 'ERROR') stage.classList.add('stage-error');
+    // Prawa kolumna: status + kółeczko właściciela nad kwotą (siatka w @media).
     rightAnchor.append(ownerBadge(wycena.owner), kwota, stage, buildStatusPill(wycena));
 
     summary.append(chevron, lp, typChip, zrodloChip, summaryMain, buildDates(wycena), rightAnchor);
