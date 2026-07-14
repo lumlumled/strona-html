@@ -98,8 +98,24 @@ window.KontaktPanel = (() => {
     });
   }
 
-  function renderList(container, items, customer, note) {
+  function renderList(container, items, customer, note, lead) {
     container.innerHTML = '';
+
+    // Szybkie dodanie rozmowy (transkrypcji) — prowadzi do strony /rozmowa
+    // w Backlogu z prefillowanym numerem (docs/plan-kontakt-karta-leada.md);
+    // linki między panelami z LUMLUM_LINKS (działają lokalnie i na Vercelu).
+    if (lead && lead._telefon_digits) {
+      const actions = document.createElement('div');
+      actions.className = 'lk-kontakt-actions';
+      const add = document.createElement('a');
+      add.className = 'lk-notatka-btn';
+      const base = (window.LUMLUM_LINKS && window.LUMLUM_LINKS['backlog-b2c']) || '/backlog-b2c';
+      add.href = `${base}/rozmowa?telefon=${encodeURIComponent(lead._telefon_digits)}`;
+      add.textContent = '🎙 Dodaj rozmowę (transkrypcję)';
+      add.addEventListener('click', (e) => e.stopPropagation());
+      actions.appendChild(add);
+      container.appendChild(actions);
+    }
 
     if (customer) {
       const head = document.createElement('div');
@@ -177,7 +193,7 @@ window.KontaktPanel = (() => {
     const kartaItems = itemsZKolumny(lead, utils);
 
     // 1) Natychmiast: to, co karta ma pod ręką (bez czekania na sieć).
-    renderList(container, kartaItems, null, 'Szukam wiadomości (mail/DM)…');
+    renderList(container, kartaItems, null, 'Szukam wiadomości (mail/DM)…', lead);
 
     // 2) Równolegle: komunikator + (dla starych leadów z pustą kolumną,
     //    ale z połączeniami) fallback z Log zmian.
@@ -219,7 +235,7 @@ window.KontaktPanel = (() => {
     }
 
     items.sort((a, b) => (b.ts ? b.ts.getTime() : 0) - (a.ts ? a.ts.getTime() : 0));
-    renderList(container, items, customer, items.length ? note : (note || 'Brak zarejestrowanego kontaktu.'));
+    renderList(container, items, customer, items.length ? note : (note || 'Brak zarejestrowanego kontaktu.'), lead);
   }
 
   // Publiczne wejście — z bezpiecznikiem na podwójne wywołanie (dopis

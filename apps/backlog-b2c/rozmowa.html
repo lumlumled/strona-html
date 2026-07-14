@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Dodaj rozmowę — LumLum</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+  <style>
+    /* Paleta 1:1 z apps/wyceny/szybka.html — jasny/ciemny wg systemu. */
+    :root {
+      color-scheme: light dark;
+      --surface-1: #ffffff;
+      --surface-2: #f0f0ee;
+      --page: #f5f5f4;
+      --text-primary: #111111;
+      --text-secondary: #52514e;
+      --text-muted: #8a8984;
+      --border: rgba(17, 17, 17, 0.12);
+      --accent: #111111;
+      --accent-contrast: #ffffff;
+      --accent-soft: #ececea;
+      --good: #0ca30c;
+      --bad: #b5433f;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-1: #161616;
+        --surface-2: #202020;
+        --page: #0a0a0a;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted: #8a8984;
+        --border: rgba(255, 255, 255, 0.14);
+        --accent: #ffffff;
+        --accent-contrast: #0a0a0a;
+        --accent-soft: #262626;
+        --good: #16c116;
+        --bad: #e08585;
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--page);
+      color: var(--text-primary);
+      min-height: 100dvh;
+    }
+    .rz-wrap {
+      width: 100%;
+      max-width: 640px;
+      margin: 0 auto;
+      padding: max(1.4rem, env(safe-area-inset-top)) 1.2rem calc(2.5rem + env(safe-area-inset-bottom));
+      display: flex;
+      flex-direction: column;
+      gap: 1.1rem;
+    }
+    .rz-top { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
+    .rz-top a { color: var(--text-muted); text-decoration: none; font-size: 0.85rem; }
+    .rz-top a:hover { color: var(--text-primary); }
+    h1 { font-size: 1.25rem; font-weight: 700; }
+    .rz-sub { color: var(--text-muted); font-size: 0.85rem; line-height: 1.5; }
+    .rz-card {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.8rem;
+    }
+    label { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; display: block; margin-bottom: 0.25rem; }
+    input, textarea, select {
+      font: inherit;
+      font-size: 0.95rem;
+      width: 100%;
+      color: var(--text-primary);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.55rem 0.65rem;
+    }
+    input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+    textarea { min-height: 11rem; resize: vertical; }
+    .rz-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; }
+    @media (max-width: 480px) { .rz-row { grid-template-columns: 1fr; } }
+    .rz-match { font-size: 0.85rem; border-radius: 10px; padding: 0.5rem 0.65rem; background: var(--accent-soft); color: var(--text-secondary); }
+    .rz-match.lead { color: var(--good); font-weight: 600; }
+    .rz-match.organic { font-weight: 600; }
+    .rz-kierunek { display: flex; gap: 0.4rem; }
+    .rz-kierunek button {
+      flex: 1;
+      font: inherit;
+      font-size: 0.85rem;
+      padding: 0.45rem 0.6rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+    .rz-kierunek button.on { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+    .rz-submit {
+      font: inherit;
+      font-size: 0.95rem;
+      font-weight: 700;
+      padding: 0.7rem 1rem;
+      border: none;
+      border-radius: 999px;
+      background: var(--accent);
+      color: var(--accent-contrast);
+      cursor: pointer;
+    }
+    .rz-submit:disabled { opacity: 0.5; cursor: default; }
+    .rz-msg { font-size: 0.85rem; color: var(--text-muted); min-height: 1.2em; }
+    .rz-msg.err { color: var(--bad); }
+    .rz-wynik { border-color: var(--good); }
+    .rz-wynik h2 { font-size: 0.95rem; }
+    .rz-wynik .rz-pole { font-size: 0.88rem; line-height: 1.5; }
+    .rz-wynik .rz-pole b { color: var(--text-secondary); font-weight: 600; }
+    .rz-lista h2 { font-size: 0.95rem; margin-bottom: 0.2rem; }
+    .rz-kontakt { border-top: 1px solid var(--border); padding: 0.6rem 0; font-size: 0.88rem; }
+    .rz-kontakt-head { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; cursor: pointer; }
+    .rz-kontakt-head .tel { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .rz-kontakt-head .tag { font-size: 0.72rem; background: var(--accent-soft); border-radius: 999px; padding: 0.05rem 0.5rem; color: var(--text-muted); }
+    .rz-kontakt-body { display: none; margin-top: 0.4rem; color: var(--text-secondary); line-height: 1.5; white-space: pre-wrap; }
+    .rz-kontakt.open .rz-kontakt-body { display: block; }
+    .rz-empty { color: var(--text-muted); font-style: italic; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <div class="rz-wrap">
+    <div class="rz-top">
+      <h1>🎙 Dodaj rozmowę</h1>
+      <a id="rz-back" href="./">← Backlog</a>
+    </div>
+    <p class="rz-sub">Wklej transkrypcję rozmowy (WisprFlow itp.) — system przeanalizuje ją jak rozmowę
+      z Zadarmy: dopasuje po numerze do leada (status, historia, najbliższa akcja), a numer spoza bazy
+      zapisze jako nowy kontakt organic. Rozmowy przez Zadarmę zapisują się same — tu dodajesz te spoza niej.</p>
+
+    <div class="rz-card">
+      <div>
+        <label for="rz-telefon">Telefon klienta</label>
+        <input id="rz-telefon" type="tel" inputmode="tel" placeholder="np. 604 650 590" autocomplete="off">
+      </div>
+      <div id="rz-match" class="rz-match" hidden></div>
+      <div class="rz-row" id="rz-nowy-pola" hidden>
+        <div>
+          <label for="rz-imie">Imię (opcjonalnie)</label>
+          <input id="rz-imie" type="text" placeholder="np. Krzysiek">
+        </div>
+        <div>
+          <label for="rz-zrodlo">Źródło</label>
+          <input id="rz-zrodlo" type="text" value="organic">
+        </div>
+      </div>
+      <div>
+        <label>Kierunek</label>
+        <div class="rz-kierunek" id="rz-kierunek">
+          <button type="button" data-k="przychodzące" class="on">📞 Klient dzwonił</button>
+          <button type="button" data-k="wychodzące">📤 Ja dzwoniłem</button>
+        </div>
+      </div>
+      <div>
+        <label for="rz-tresc">Transkrypcja rozmowy</label>
+        <textarea id="rz-tresc" placeholder="Wklej pełną transkrypcję rozmowy…"></textarea>
+      </div>
+      <button type="button" class="rz-submit" id="rz-submit">Przeanalizuj i zapisz</button>
+      <div class="rz-msg" id="rz-msg"></div>
+    </div>
+
+    <div class="rz-card rz-wynik" id="rz-wynik" hidden></div>
+
+    <div class="rz-card rz-lista">
+      <h2>Kontakty organic</h2>
+      <div id="rz-lista"></div>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      'use strict';
+      const API = window.API_BASE || '';
+      const $ = (id) => document.getElementById(id);
+      const telefonEl = $('rz-telefon');
+      const matchEl = $('rz-match');
+      const nowyPola = $('rz-nowy-pola');
+      const trescEl = $('rz-tresc');
+      const msgEl = $('rz-msg');
+      const wynikEl = $('rz-wynik');
+      const submitEl = $('rz-submit');
+
+      // Prefill z karty leada: /rozmowa?telefon=48...
+      const params = new URLSearchParams(location.search);
+      if (params.get('telefon')) telefonEl.value = params.get('telefon');
+
+      let kierunek = 'przychodzące';
+      $('rz-kierunek').addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-k]');
+        if (!btn) return;
+        kierunek = btn.dataset.k;
+        $('rz-kierunek').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === btn));
+      });
+
+      // Podgląd dopasowania na żywo (debounce) — od razu widać, czy piszemy
+      // do leada, do istniejącego kontaktu organic, czy tworzymy nowy.
+      let matchTimer = null;
+      let lastMatch = null;
+      function checkMatch() {
+        clearTimeout(matchTimer);
+        matchTimer = setTimeout(async () => {
+          const digits = telefonEl.value.replace(/\D/g, '');
+          if (digits.length < 9) {
+            matchEl.hidden = true;
+            nowyPola.hidden = true;
+            lastMatch = null;
+            return;
+          }
+          try {
+            const res = await fetch(`${API}/api/rozmowy/szukaj?telefon=${digits}`);
+            const body = await res.json();
+            lastMatch = body.dopasowanie;
+            matchEl.hidden = false;
+            matchEl.className = 'rz-match';
+            if (body.dopasowanie === 'lead') {
+              matchEl.classList.add('lead');
+              matchEl.textContent = `✓ Lead #${body.id_leada}${body.nazwa ? ` · ${body.nazwa}` : ''}${body.status ? ` · ${body.status}` : ''} — rozmowa dopisze się do leada`;
+              nowyPola.hidden = true;
+            } else if (body.dopasowanie === 'kontakt_organic') {
+              matchEl.classList.add('organic');
+              matchEl.textContent = `✓ Kontakt organic${body.nazwa ? ` · ${body.nazwa}` : ''}${body.status ? ` · ${body.status}` : ''} — rozmowa dopisze się do kontaktu`;
+              nowyPola.hidden = true;
+            } else {
+              matchEl.textContent = 'Numer spoza bazy — powstanie nowy kontakt organic';
+              nowyPola.hidden = false;
+            }
+          } catch (_) {
+            matchEl.hidden = true;
+          }
+        }, 350);
+      }
+      telefonEl.addEventListener('input', checkMatch);
+      if (telefonEl.value) checkMatch();
+
+      function setMsg(text, isErr) {
+        msgEl.textContent = text || '';
+        msgEl.classList.toggle('err', Boolean(isErr));
+      }
+
+      function pole(label, value) {
+        if (!value) return '';
+        const div = document.createElement('div');
+        div.className = 'rz-pole';
+        const b = document.createElement('b');
+        b.textContent = `${label}: `;
+        div.appendChild(b);
+        div.appendChild(document.createTextNode(value));
+        return div.outerHTML;
+      }
+
+      submitEl.addEventListener('click', async () => {
+        const digits = telefonEl.value.replace(/\D/g, '');
+        const tresc = trescEl.value.trim();
+        if (digits.length < 9) return setMsg('Podaj poprawny numer telefonu', true);
+        if (!tresc) return setMsg('Wklej transkrypcję rozmowy', true);
+        submitEl.disabled = true;
+        setMsg('Analizuję rozmowę…');
+        wynikEl.hidden = true;
+        try {
+          const res = await fetch(`${API}/api/rozmowy/reczna`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              telefon: digits,
+              tresc,
+              kierunek,
+              zrodlo: nowyPola.hidden ? undefined : $('rz-zrodlo').value.trim(),
+              imie: nowyPola.hidden ? undefined : $('rz-imie').value.trim(),
+            }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+          setMsg('');
+          const naglowek = body.dopasowanie === 'lead'
+            ? `✓ Zapisano na leadzie${body.nazwa ? ` · ${body.nazwa}` : ''}`
+            : body.dopasowanie === 'kontakt_organic'
+              ? `✓ Zapisano na kontakcie organic${body.nazwa ? ` · ${body.nazwa}` : ''}`
+              : `✓ Nowy kontakt organic${body.nazwa ? ` · ${body.nazwa}` : ''} (źródło: ${body.zrodlo})`;
+          wynikEl.innerHTML = `<h2>${naglowek}</h2>`
+            + pole('Status', body.status)
+            + pole('Podsumowanie', body.skrocony_opis || body.opis)
+            + pole('Najbliższa akcja', body.akcja)
+            + pole('Data feedbacku', body.data_feedbacku);
+          wynikEl.hidden = false;
+          trescEl.value = '';
+          checkMatch();
+          loadKontakty();
+        } catch (err) {
+          setMsg(`Nie zapisano: ${err.message}`, true);
+        } finally {
+          submitEl.disabled = false;
+        }
+      });
+
+      // Lista kontaktów organic — klik rozwija ocenę AI + historię.
+      async function loadKontakty() {
+        const box = $('rz-lista');
+        try {
+          const res = await fetch(`${API}/api/rozmowy/kontakty-organic`);
+          const body = await res.json();
+          const rows = body.data || [];
+          box.innerHTML = '';
+          if (!rows.length) {
+            box.innerHTML = '<p class="rz-empty">Jeszcze pusto — pierwszy numer spoza bazy wyląduje tutaj.</p>';
+            return;
+          }
+          rows.forEach((k) => {
+            const item = document.createElement('div');
+            item.className = 'rz-kontakt';
+            const head = document.createElement('div');
+            head.className = 'rz-kontakt-head';
+            const tel = document.createElement('span');
+            tel.className = 'tel';
+            tel.textContent = k.telefon;
+            head.appendChild(tel);
+            [k.imie, k.zrodlo, k.status, k.ostatni_kontakt].filter(Boolean).forEach((t) => {
+              const tag = document.createElement('span');
+              tag.className = 'tag';
+              tag.textContent = t;
+              head.appendChild(tag);
+            });
+            const bodyDiv = document.createElement('div');
+            bodyDiv.className = 'rz-kontakt-body';
+            bodyDiv.textContent = [
+              k.ocena_ai ? `Podsumowanie: ${k.ocena_ai}` : '',
+              k.najblizsza_akcja ? `Najbliższa akcja: ${k.najblizsza_akcja}${k.najblizsza_akcja_termin ? ` (${k.najblizsza_akcja_termin})` : ''}` : '',
+              k.historia_rozmow ? `\nHistoria:\n${k.historia_rozmow}` : '',
+            ].filter(Boolean).join('\n');
+            head.addEventListener('click', () => item.classList.toggle('open'));
+            item.append(head, bodyDiv);
+            box.appendChild(item);
+          });
+        } catch (err) {
+          box.innerHTML = `<p class="rz-empty">Błąd wczytywania: ${err.message}</p>`;
+        }
+      }
+      loadKontakty();
+    })();
+  </script>
+</body>
+</html>

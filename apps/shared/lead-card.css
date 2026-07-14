@@ -507,6 +507,11 @@ table.lk-produkty th { color: var(--text-muted); font-weight: 600; text-transfor
 .lk-kontakt-head a { color: var(--accent); text-decoration: none; font-size: 0.75rem; }
 .lk-kontakt-head a:hover { text-decoration: underline; }
 
+/* Przycisk "Dodaj rozmowę" — link do strony /rozmowa w Backlogu, styl
+   pigułki jak lk-notatka-btn (tu na <a>, stąd text-decoration). */
+.lk-kontakt-actions { margin-top: 0.55rem; }
+.lk-kontakt-actions a { text-decoration: none; display: inline-block; }
+
 /* Wiadomość wychodząca (my) — kropka osi czasu w kolorze akcentu. */
 .lk-historia-rozmow-entry.lk-kontakt-out::before {
   background: var(--accent);

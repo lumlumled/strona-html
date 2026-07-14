@@ -180,3 +180,26 @@
 .lumlum-topbar .tb-bell.on { color: #ffffff; }
 .lumlum-topbar .tb-bell:disabled { opacity: 0.5; cursor: default; }
 .lumlum-topbar .tb-bell ~ .tb-user { margin-left: 0.3rem; }
+
+/* Plus "dodaj rozmowę" (strona /rozmowa w Backlogu). Gdy jest, przejmuje
+   margin-left:auto od dzwoneczka — dwa auto dzieliłyby przestrzeń między
+   siebie (patrz komentarz przy .tb-bell), więc dzwonek za plusem dostaje
+   zwykły odstęp. */
+.lumlum-topbar .tb-plus {
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: 1.9rem;
+  height: 1.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 1.25rem;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.lumlum-topbar .tb-plus:hover { background: rgba(255, 255, 255, 0.12); color: #ffffff; }
+.lumlum-topbar .tb-plus ~ .tb-bell { margin-left: 0.3rem; }

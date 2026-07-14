@@ -164,6 +164,31 @@ telefonów muszą pomijać nowe zrodła").
 4. Ops: skrzynka lorenzo@lumlum.co (konto Workspace) + `/api/gmail/auth`;
    weryfikacja SMS-in w panelu Zadarmy.
 
+### D8. Szybkie dodawanie rozmowy z dowolnego miejsca + kontakty organic
+(dodane 2026-07-14 po decyzji Antoniego)
+
+- **Plus (+) w topbarze** (wzorzec: szybka wycena) → strona
+  `/backlog-b2c/rozmowa`: pole telefonu + wklejka transkrypcji + kierunek.
+  Ten sam link jako przycisk "🎙 Dodaj rozmowę" w panelu Kontakt na karcie
+  leada (prefill telefonu przez `?telefon=`).
+- **Dopasowanie po telefonie**: lead → pełny pipeline (jak webhook);
+  numer spoza bazy → **NIE tworzymy leada w Leady B2C** (decyzja Antoniego),
+  tylko wiersz w nowej tabeli **`kontakty_organic`** (telefon unikalny,
+  imię, `zrodlo` domyślnie `'organic'` - można podać inne, status/ocena_ai/
+  historia_rozmow/najbliższa akcja lustrzane wobec leada, ta sama analiza).
+- **Webhook Zadarmy zna kontakty organic**: numer z kontakty_organic nie
+  tworzy już duplikatu leada - rozmowa dopisuje się do kontaktu (jeden
+  klient = jedno miejsce). Ślad w Logi automatyzacji
+  (dopasowano_kontakt_organic).
+- **Log zmian**: `zrodlo='rozmowa_reczna'`, transkrypcja, handlowiec z sesji,
+  `czas_trwania_s=null` (nie 0 - nie fałszować średnich), disposition
+  'answered'; dopasowano_tabela = Leady B2C albo kontakty_organic.
+- Kod: `apps/shared/server/call-analysis.js` (analiza+lejek, jedna prawda
+  dla webhooka i ręcznej ścieżki), `apps/backlog-b2c/server/rozmowy.js`
+  (endpointy: POST /api/rozmowy/reczna, GET szukaj, GET kontakty-organic),
+  `apps/backlog-b2c/rozmowa.html` (strona). Promocja kontaktu organic →
+  lead = v2 (świadomie poza zakresem).
+
 ## Etapy wdrożenia
 
 1. **Etap 1 - Oś czasu (read-only).** Endpoint dla-leada + panel Kontakt w

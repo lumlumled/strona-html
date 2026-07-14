@@ -223,7 +223,22 @@ window.LumTopbar = (() => {
     document.addEventListener('click', () => menu.classList.remove('open'));
 
     userWrap.append(userBtn, menu);
-    bar.append(home, nav, buildPushBell(), userWrap);
+
+    // Plus "dodaj rozmowę" — szybkie wklejenie transkrypcji rozmowy spoza
+    // Zadarmy (strona /rozmowa w Backlogu, docs/plan-kontakt-karta-leada.md);
+    // wzorzec jak szybka wycena. Widoczny dla użytkowników z Backlogiem —
+    // tam żyje pipeline analizy i sama strona.
+    const parts = [home, nav];
+    if (user.isAdmin || (user.panels || []).includes('backlog-b2c')) {
+      const plus = document.createElement('a');
+      plus.className = 'tb-plus';
+      plus.href = `${links['backlog-b2c'] || '/backlog-b2c'}/rozmowa`;
+      plus.title = 'Dodaj rozmowę (wklej transkrypcję)';
+      plus.textContent = '+';
+      parts.push(plus);
+    }
+    parts.push(buildPushBell(), userWrap);
+    bar.append(...parts);
 
     // Otwarcie appki czyści plakietkę na ikonie (nadaną przez push-sw.js).
     if (navigator.clearAppBadge) navigator.clearAppBadge().catch(() => {});

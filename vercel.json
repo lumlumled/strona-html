@@ -6,7 +6,7 @@
       "maxDuration": 30
     },
     "api/backlog-b2c.js": {
-      "includeFiles": "{apps/backlog-b2c/app.html,apps/backlog-b2c/assets/**,apps/shared/**}",
+      "includeFiles": "{apps/backlog-b2c/app.html,apps/backlog-b2c/rozmowa.html,apps/backlog-b2c/assets/**,apps/shared/**}",
       "maxDuration": 180
     },
     "api/crm.js": {
