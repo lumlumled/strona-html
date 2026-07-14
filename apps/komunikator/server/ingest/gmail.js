@@ -58,6 +58,16 @@ async function mailboxFor(db, email) {
   throw new Error(`Wątek nie wskazuje skrzynki nadawczej (podłączone: ${boxes.map((b) => b.email).join(', ')})`);
 }
 
+// Skrzynka zalogowanego użytkownika (kom_mailboxes.app_user_id) — wysyłka
+// z karty leada idzie ZAWSZE z własnej skrzynki piszącego (Lorenzo ze swojej,
+// Antoni ze swojej), nie z "jedynej podłączonej". Brak skrzynki → null,
+// wołający decyduje o komunikacie (panel pokazuje "Podepnij Gmail").
+async function mailboxForUser(db, appUserId) {
+  if (appUserId == null) return null;
+  const boxes = await listMailboxes(db);
+  return boxes.find((b) => b.app_user_id === appUserId) || null;
+}
+
 // ── OAuth ────────────────────────────────────────────────────────────────────
 
 function authUrl() {
@@ -419,6 +429,35 @@ async function sendReply(db, { mailbox, to, subject, text, gmailThreadId, lastGm
   return { id: sent.id, threadId: sent.threadId, from: auth.email };
 }
 
+// NOWY mail (nie odpowiedź): bez "Re:", bez In-Reply-To/References i bez
+// threadId — Gmail założy świeży wątek. Używane przez wysyłkę z karty leada
+// (apps/shared/server/kontakt-endpoints.js), gdy klient nie ma jeszcze
+// wątku mailowego w komunikatorze.
+async function sendNew(db, { mailbox, to, subject, text }) {
+  const box = await mailboxFor(db, mailbox);
+  const auth = await ensureAccessToken(db, box);
+  if (!auth) throw new Error(`Skrzynka ${box.email} bez ważnego tokenu — połącz ponownie na /wiadomosci/api/gmail/auth`);
+
+  const mime = [
+    `From: ${auth.email}`,
+    `To: ${to}`,
+    `Subject: ${encodeSubject(String(subject || '').trim())}`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    Buffer.from(String(text), 'utf8').toString('base64'),
+  ].join('\r\n');
+
+  const raw = Buffer.from(mime, 'utf8').toString('base64')
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const sent = await gmailFetch(auth.token, '/messages/send', {
+    method: 'POST',
+    body: JSON.stringify({ raw }),
+  });
+  return { id: sent.id, threadId: sent.threadId, from: auth.email };
+}
+
 // ── Push w czasie rzeczywistym (users.watch → Pub/Sub → nasz webhook) ───────
 // Gmail publikuje powiadomienie na topic Pub/Sub przy każdej zmianie w INBOX;
 // subskrypcja push woła /api/webhooks/gmail, a ten odpala syncGmail() —
@@ -458,4 +497,4 @@ async function ensureWatch(db) {
   return out;
 }
 
-module.exports = { authUrl, exchangeCode, syncGmail, ensureWatch, status, sendReply, markMessagesRead };
+module.exports = { authUrl, exchangeCode, syncGmail, ensureWatch, status, sendReply, sendNew, mailboxForUser, markMessagesRead };

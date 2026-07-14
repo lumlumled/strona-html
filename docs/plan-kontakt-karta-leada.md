@@ -191,18 +191,24 @@ telefonów muszą pomijać nowe zrodła").
 
 ## Etapy wdrożenia
 
-1. **Etap 1 - Oś czasu (read-only).** Endpoint dla-leada + panel Kontakt w
-   karcie + zapis crm_lead_id. Zero wysyłki, zero ryzyka. Od razu widać
-   maile przy leadzie.
-2. **Etap 2 - Rozmowa ręczna.** Refactor call-analysis.js →
-   `/api/leady/rozmowa-reczna` (wklejka tekstu). Największa wartość
-   dla Antoniego.
-3. **Etap 3 - Mail z karty.** Composer + `/api/kontakt/mail` + wpis do
-   Historii rozmów. Wymaga skrzynki Lorenzo (ops).
-4. **Etap 4 - SMS.** Migracja kanału + wysyłka Zadarma + (jeśli możliwy)
-   odbiór webhookiem + push do ownera.
-
-Kolejność 2↔3 zamienna; 4 na końcu (jedyny z zewnętrzną niewiadomą).
+1. **Etap 1 - Oś czasu (read-only).** ✅ NA PRODZIE 2026-07-14 (a1ce909).
+2. **Etap 2 - Rozmowa ręczna + szybkie dodawanie (D8).** ✅ NA PRODZIE
+   2026-07-14 (f1c20ab + b68e8de).
+3. **Etap 3 - Mail z karty.** ✅ ZBUDOWANE 2026-07-14: composer w panelu
+   Kontakt (zakładki Mail/SMS, domyślnie ostatni kanał pisany),
+   `POST /api/kontakt/mail` (skrzynka usera z kom_mailboxes.app_user_id;
+   odpowiedź w wątku TYLKO gdy wątek należy do skrzynki piszącego, inaczej
+   nowy mail z tematem), gmail.sendNew + mailboxForUser, wpis `[Mail→]`
+   do Historii rozmów (RPC), kom_messages/kom_threads jak przy ingest.
+   Ops nadal: skrzynka lorenzo@lumlum.co (bez niej Lorenzo widzi
+   "podepnij Gmail").
+4. **Etap 4 - SMS (wysyłka).** ✅ ZBUDOWANE 2026-07-14: migracja 010 (kanał
+   'sms' + zdjęty CHECK sent_by), `POST /api/kontakt/sms` przez Zadarma
+   `/v1/sms/send/` (konto firmowe; nadawca per user = v2), licznik znaków
+   GSM/UCS-2, wpis `[SMS→]` do Historii. ⚠️ NIE wysłano testowego SMS-a
+   (tylko walidacja kredencjałów przez /v1/info/balance) - pierwszy test
+   zrobić na WŁASNY numer. Odbiór SMS (webhook) = do sprawdzenia w panelu
+   Zadarmy, dalej otwarte.
 
 ## Poza zakresem (świadomie)
 

@@ -993,7 +993,7 @@ window.LeadKarta = (() => {
       + (historiaCount ? ` · ${historiaCount}` : '');
     const historia = buildNestedDetails(historiaLabel, (container) => (
       window.KontaktPanel
-        ? window.KontaktPanel.load(apiBase, lead, container)
+        ? window.KontaktPanel.load(apiBase, lead, container, { readOnly })
         : loadHistoria(apiBase, lead, container)
     ));
 
@@ -1020,7 +1020,7 @@ window.LeadKarta = (() => {
       if (container) {
         // Panel Kontakt renderuje scaloną oś czasu — odśwież całość (ma
         // bezpiecznik na podwójne wywołanie, gdy open poniżej odpali loader).
-        if (window.KontaktPanel) window.KontaktPanel.load(apiBase, lead, container);
+        if (window.KontaktPanel) window.KontaktPanel.load(apiBase, lead, container, { readOnly });
         else renderHistoriaFromColumn(parseHistoriaRozmow(lead['Historia rozmów']), container);
       }
       historia.open = true;

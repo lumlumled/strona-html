@@ -188,7 +188,7 @@ window.KontaktPanel = (() => {
     }
   }
 
-  async function render(apiBase, lead, container) {
+  async function render(apiBase, lead, container, opts = {}) {
     const utils = window.LeadKarta && window.LeadKarta.utils;
     const kartaItems = itemsZKolumny(lead, utils);
 
@@ -236,16 +236,158 @@ window.KontaktPanel = (() => {
 
     items.sort((a, b) => (b.ts ? b.ts.getTime() : 0) - (a.ts ? a.ts.getTime() : 0));
     renderList(container, items, customer, items.length ? note : (note || 'Brak zarejestrowanego kontaktu.'), lead);
+
+    // Composer Mail/SMS (Etapy 3-4 planu) — tylko z prawem edycji i tylko,
+    // gdy endpoint zwrócił dane o wysyłce. Domyślny kanał = ostatni kanał
+    // PISANY klienta (telefon nigdy — spójnie z planem follow-upów).
+    if (!opts.readOnly && !komRes._error && komRes.wysylka) {
+      const ostatniPisany = (komRes.messages || []).find((m) => m.channel === 'email' || m.channel === 'sms');
+      const domyslny = ostatniPisany ? ostatniPisany.channel : (lead['Email'] ? 'email' : 'sms');
+      container.appendChild(buildComposer(apiBase, lead, komRes.wysylka, domyslny, () => load(apiBase, lead, container, opts)));
+    }
+  }
+
+  // ── Composer: mail ze skrzynki usera / SMS przez Zadarmę ──────────────────
+  function buildComposer(apiBase, lead, wysylka, domyslnyKanal, onSent) {
+    const box = document.createElement('div');
+    box.className = 'lk-kontakt-composer';
+
+    const tabs = document.createElement('div');
+    tabs.className = 'lk-kontakt-tabs';
+    const tabMail = document.createElement('button');
+    tabMail.type = 'button';
+    tabMail.textContent = '✉️ Mail';
+    const tabSms = document.createElement('button');
+    tabSms.type = 'button';
+    tabSms.textContent = '📱 SMS';
+    tabs.append(tabMail, tabSms);
+
+    const info = document.createElement('div');
+    info.className = 'lk-kontakt-composer-info';
+
+    const tematInput = document.createElement('input');
+    tematInput.type = 'text';
+    tematInput.className = 'lk-kontakt-temat';
+    tematInput.placeholder = 'Temat maila';
+
+    const ta = document.createElement('textarea');
+    ta.className = 'lk-kontakt-tresc-input';
+
+    const actions = document.createElement('div');
+    actions.className = 'lk-notatka-actions';
+    const send = document.createElement('button');
+    send.type = 'button';
+    send.className = 'lk-notatka-send';
+    send.textContent = 'Wyślij';
+    const licznik = document.createElement('span');
+    licznik.className = 'lk-notatka-msg';
+    const msg = document.createElement('span');
+    msg.className = 'lk-notatka-msg';
+    actions.append(send, licznik, msg);
+    const setMsg = (t, err) => { msg.textContent = t || ''; msg.classList.toggle('err', Boolean(err)); };
+
+    let kanal = null;
+    const mailMozliwy = Boolean(lead['Email']);
+    const setKanal = (k) => {
+      kanal = k;
+      tabMail.classList.toggle('on', k === 'email');
+      tabSms.classList.toggle('on', k === 'sms');
+      setMsg('');
+      if (k === 'email') {
+        tematInput.hidden = wysylka.mail.tryb === 'watek';
+        ta.placeholder = 'Treść maila…';
+        if (!wysylka.mail.skrzynka) {
+          info.innerHTML = '';
+          info.append('Brak podpiętej skrzynki Gmail — ');
+          const a = document.createElement('a');
+          a.href = '/wiadomosci/api/gmail/auth';
+          a.textContent = 'podepnij Gmail';
+          info.appendChild(a);
+          send.disabled = true;
+        } else if (!mailMozliwy) {
+          info.textContent = 'Lead nie ma adresu e-mail — uzupełnij pole Email na karcie.';
+          send.disabled = true;
+        } else {
+          info.textContent = wysylka.mail.tryb === 'watek'
+            ? `Odpowiedź w wątku „${wysylka.mail.temat}" · z ${wysylka.mail.skrzynka} · do ${lead['Email']}`
+            : `Nowy mail z ${wysylka.mail.skrzynka} do ${lead['Email']}`;
+          send.disabled = false;
+        }
+      } else {
+        tematInput.hidden = true;
+        ta.placeholder = 'Treść SMS-a…';
+        if (!wysylka.sms.skonfigurowany) {
+          info.textContent = 'SMS nieskonfigurowany (brak kluczy Zadarmy na serwerze).';
+          send.disabled = true;
+        } else {
+          info.textContent = `SMS z firmowego numeru Zadarma na ${lead._telefon_formatted || lead._telefon_digits}`;
+          send.disabled = false;
+        }
+      }
+      aktualizujLicznik();
+    };
+    tabMail.addEventListener('click', (e) => { e.stopPropagation(); setKanal('email'); });
+    tabSms.addEventListener('click', (e) => { e.stopPropagation(); setKanal('sms'); });
+
+    // Licznik znaków SMS: GSM-7 = 160/153, z polskimi znakami (UCS-2) 70/67.
+    function aktualizujLicznik() {
+      if (kanal !== 'sms') { licznik.textContent = ''; return; }
+      const t = ta.value;
+      const gsm = /^[\x20-\x7e\n\r]*$/.test(t);
+      const limit = gsm ? 160 : 70;
+      const nastepne = gsm ? 153 : 67;
+      const czesci = t.length <= limit ? 1 : Math.ceil(t.length / nastepne);
+      licznik.textContent = `${t.length} zn. · ${czesci} SMS${gsm ? '' : ' (polskie znaki = krótsze części)'}`;
+    }
+    ta.addEventListener('input', aktualizujLicznik);
+    ta.addEventListener('click', (e) => e.stopPropagation());
+    tematInput.addEventListener('click', (e) => e.stopPropagation());
+
+    send.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const tresc = ta.value.trim();
+      if (!tresc) return setMsg('Pusta treść', true);
+      if (kanal === 'email' && wysylka.mail.tryb === 'nowy' && !tematInput.value.trim()) {
+        return setMsg('Podaj temat nowego maila', true);
+      }
+      send.disabled = true;
+      setMsg('Wysyłam…');
+      try {
+        const res = await fetch(`${apiBase}/api/kontakt/${kanal === 'email' ? 'mail' : 'sms'}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lead_id: lead['ID Leada'],
+            telefon: lead._telefon_digits || '',
+            email: lead['Email'] || '',
+            temat: tematInput.value.trim(),
+            tresc,
+          }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+        // Serwer dopisał linię do kolumny — odśwież lokalną kopię, żeby
+        // ponowny render (i licznik sekcji) nie zgubił świeżego wpisu.
+        onSent();
+      } catch (err) {
+        setMsg(`Nie wysłano: ${err.message}`, true);
+        send.disabled = false;
+      }
+    });
+
+    box.append(tabs, info, tematInput, ta, actions);
+    setKanal(domyslnyKanal === 'sms' ? 'sms' : 'email');
+    return box;
   }
 
   // Publiczne wejście — z bezpiecznikiem na podwójne wywołanie (dopis
   // notatki odświeża panel i jednocześnie otwiera sekcję, która ma własny
   // lazy-loader; druga próba w trakcie pierwszej jest pomijana).
-  async function load(apiBase, lead, container) {
+  async function load(apiBase, lead, container, opts = {}) {
     if (container._kontaktLoading) return;
     container._kontaktLoading = true;
     try {
-      await render(apiBase, lead, container);
+      await render(apiBase, lead, container, opts);
     } catch (err) {
       container.innerHTML = `<p class="lk-empty-note">Błąd wczytywania: ${err.message}</p>`;
     } finally {

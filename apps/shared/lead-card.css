@@ -518,6 +518,53 @@ table.lk-produkty th { color: var(--text-muted); font-weight: 600; text-transfor
   border-color: var(--accent);
 }
 
+/* Composer Mail/SMS pod osią czasu (Etapy 3-4 planu Kontakt). */
+.lk-kontakt-composer {
+  margin-top: 0.8rem;
+  padding-top: 0.7rem;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.lk-kontakt-tabs { display: flex; gap: 0.35rem; }
+
+.lk-kontakt-tabs button {
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.22rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.lk-kontakt-tabs button.on {
+  background: var(--accent);
+  color: var(--surface-1);
+  border-color: var(--accent);
+}
+
+.lk-kontakt-composer-info { font-size: 0.75rem; color: var(--text-muted); }
+.lk-kontakt-composer-info a { color: var(--accent); }
+
+.lk-kontakt-temat,
+.lk-kontakt-tresc-input {
+  font: inherit;
+  font-size: 0.88rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  padding: 0.5rem 0.6rem;
+  width: 100%;
+}
+
+.lk-kontakt-tresc-input { min-height: 4.2rem; resize: vertical; }
+
 /* Długie treści (maile) zwinięte do kilku linii; klik rozwija/zwija. */
 .lk-kontakt-tresc { cursor: pointer; }
 

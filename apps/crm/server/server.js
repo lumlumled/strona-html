@@ -197,8 +197,9 @@ app.get('/api/leady', requireLeadyView, async (req, res) => {
 registerLeadyEndpoints(app, { getClient, requireView: requireLeadyView, requireEdit: requireLeadyEdit });
 
 // Panel Kontakt na karcie leada — wiadomości komunikatora dopasowane do
-// leada (apps/shared/server/kontakt-endpoints.js); odczyt = prawo podglądu.
-registerKontaktEndpoints(app, { getClient, requireView: requireLeadyView });
+// leada (apps/shared/server/kontakt-endpoints.js); odczyt = prawo podglądu,
+// wysyłka maila/SMS-a = prawo edycji arkusza.
+registerKontaktEndpoints(app, { getClient, requireView: requireLeadyView, requireEdit: requireLeadyEdit });
 
 // ── AI: dyktowanie + uniwersalny filtr/odpowiedzi ───────────────────────────
 
