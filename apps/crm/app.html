@@ -503,7 +503,14 @@
       /* Zwinięty wiersz na małym ekranie: bez myślnika i daty feedbacku,
          żeby imię + telefon + status mieściły się bez ucinania. */
       .summary-dash, .summary-feedback, .wyceny-dates { display: none; }
-      .summary-name { max-width: 9rem; }
+      /* Checkbox "zaopiekowane" chowamy na mobile — na wąskim ekranie tylko
+         zabierał miejsce imieniu (segregacja i tak jest lokalna/nietrwała). */
+      .close-checkbox { display: none; }
+      /* Delikatnie ciaśniejszy lewy blok: krawędź → strzałka → numer → imię. */
+      .lead summary { gap: 0.4rem; padding-left: 0.55rem; padding-right: 0.55rem; }
+      .chevron { width: 0.9rem; }
+      .lp { min-width: 1.1rem; }
+      .summary-name { max-width: 11rem; }
     }
   </style>
 </head>
