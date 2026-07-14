@@ -328,7 +328,11 @@
 
     @media (max-width: 720px) {
       .content { padding: 1.25rem 1rem 3rem; }
-      .summary-dash, .summary-feedback, .wyceny-dates { display: none; }
+      /* Na wąskim ekranie chowamy redundancje, żeby zmieściła się kluczowa
+         treść: myślnik, daty, chip "Wycena" (każdy wiersz to wycena) oraz
+         "Link wysłany". Kwota (.summary-feedback) też schowana — jak w oryginale. */
+      .summary-dash, .summary-feedback, .wyceny-dates,
+      .typ-wycena, .stage-form-sent { display: none; }
       .summary-name { max-width: 9rem; }
     }
   </style>

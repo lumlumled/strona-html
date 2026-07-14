@@ -266,7 +266,12 @@ window.WycenyTab = (() => {
     const chevron = h('span', 'chevron');
     const lp = h('span', 'lp', `#${wycena.id}`);
 
-    const typChip = h('span', 'wk-chip' + (wycena.typ === 'ZAMÓWIENIE' ? ' info' : ''), TYP_LABELS[wycena.typ] || wycena.typ);
+    // "Wycena" jest redundantne (cały panel to wyceny) — chip oznaczamy klasą
+    // typ-wycena, żeby schować go na mobile. Zamówienie/Notatka niosą sens → zostają.
+    const isPlainWycena = !wycena.typ || wycena.typ === 'WYCENA';
+    const typChip = h('span',
+      'wk-chip' + (wycena.typ === 'ZAMÓWIENIE' ? ' info' : '') + (isPlainWycena ? ' typ-wycena' : ''),
+      TYP_LABELS[wycena.typ] || wycena.typ);
 
     const zrodlo = wycena._zrodlo || 'nieprzypisane';
     const zrodloChip = h('span', `wk-chip zrodlo-chip zrodlo-${zrodlo}`, ZRODLO_LABELS[zrodlo] || zrodlo);
@@ -285,6 +290,9 @@ window.WycenyTab = (() => {
     kwota.style.fontWeight = '700';
     kwota.style.color = 'var(--text-primary)';
     const stage = WycenaKarta.utils.stageChip(wycena.process_stage);
+    // "Link wysłany" (FORM_SENT) chowamy na mobile — mało istotny przy ciasnym
+    // ekranie; status wyceny i tak jest w pigułce po prawej. Inne etapy zostają.
+    if (wycena.process_stage === 'FORM_SENT') stage.classList.add('stage-form-sent');
     rightAnchor.append(ownerBadge(wycena.owner), kwota, stage, buildStatusPill(wycena));
 
     summary.append(chevron, lp, typChip, zrodloChip);
