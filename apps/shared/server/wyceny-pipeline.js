@@ -16,6 +16,7 @@
 const crypto = require('crypto');
 const infakt = require('./wyceny-infakt');
 const shipx = require('./wyceny-shipx');
+const furgonetka = require('./wyceny-furgonetka');
 const mailer = require('./wyceny-mailer');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -521,6 +522,30 @@ async function reship(db, wycenaId) {
 }
 
 // ── Worker (pg_cron -> POST /formularz/api/cron/worker) ─────────────────────
+// Odczyt statusu przesyłki NIEZALEŻNIE od przewoźnika. Zwraca { raw, mapped }.
+// ShipX: tracking po numerze przesyłki. Furgonetka: tracking po package_id
+// (=shipment_id), a stan bierzemy jako NAJBARDZIEJ zaawansowany ze zdarzeń
+// (kolejność w tablicy /tracking nie jest gwarantowana). OBIE ścieżki mapują
+// TYLKO literalne "delivered" na doręczoną — żadnego fałszywego domknięcia z
+// „nadana" (naprawa starego buga Make: „doręczono" przy samym nadaniu).
+async function odczytajTracking(s) {
+  if (s.provider === 'furgonetka') {
+    const t = await furgonetka.getTracking(s.shipment_id);
+    const arr = Array.isArray(t && t.tracking) ? t.tracking : (Array.isArray(t) ? t : []);
+    const rank = { created: 0, problem: 1, sent: 2, delivered: 3 };
+    let raw = '', mapped = 'created';
+    for (const ev of arr) {
+      const r = String((ev && (ev.status ?? ev.code ?? ev.state ?? ev.name ?? ev.event)) || '').trim();
+      const m = furgonetka.mapTrackingStatus(r);
+      if (rank[m] >= rank[mapped]) { mapped = m; if (r) raw = r; }
+    }
+    return { raw, mapped };
+  }
+  const tracking = await shipx.getTracking(s.tracking_number);
+  const raw = tracking.tracking_status || tracking.status || '';
+  return { raw, mapped: shipx.mapTrackingStatus(raw) };
+}
+
 async function runWorker(db) {
   const oknoNadania = wOknieNadania();
   const oknoDoreczenia = wOknieDoreczenia();
@@ -534,7 +559,11 @@ async function runWorker(db) {
     .select('*').in('status', ['created', 'confirmed']).is('delivered_at', null);
   for (const s of created || []) {
     try {
-      if (!s.tracking_number) {
+      if (s.provider === 'furgonetka') {
+        // Furgonetka: numer nadania jest od razu przy zamówieniu, tracking
+        // czytamy po package_id (=shipment_id) — nie dociągamy numeru z ShipX.
+        if (!s.shipment_id) continue;
+      } else if (!s.tracking_number) {
         const fresh = await shipx.getShipment(s.shipment_id);
         if (fresh.tracking_number) {
           await db.from('wyceny_shipments').update({
@@ -548,11 +577,9 @@ async function runWorker(db) {
         continue;
       }
       if (!oknoNadania) continue; // poza oknem 17–18 nie sprawdzamy nadania
-      // 2) tracking z JAWNYM mapowaniem (tylko "delivered" = doręczona)
-      const tracking = await shipx.getTracking(s.tracking_number);
-      const raw = tracking.tracking_status || tracking.status || '';
-      const mapped = shipx.mapTrackingStatus(raw);
-      await logEvent(db, s.wycena_id, 'tracking.read', { tracking: s.tracking_number, raw, mapped });
+      // tracking z JAWNYM mapowaniem per przewoźnik (tylko "delivered" = doręczona)
+      const { raw, mapped } = await odczytajTracking(s);
+      await logEvent(db, s.wycena_id, 'tracking.read', { tracking: s.tracking_number || s.shipment_id, provider: s.provider, raw, mapped });
       raport.tracking += 1;
       if (mapped === 'delivered') {
         await onDelivered(db, s);
@@ -585,14 +612,14 @@ async function runWorker(db) {
   // przesyłki nadane — sprawdzaj do doręczenia, tylko w oknie 10–16.
   const { data: sent } = oknoDoreczenia
     ? await db.from('wyceny_shipments')
-        .select('*').eq('status', 'sent').is('delivered_at', null).not('tracking_number', 'is', null)
+        .select('*').eq('status', 'sent').is('delivered_at', null)
     : { data: [] };
   for (const s of sent || []) {
     try {
-      const tracking = await shipx.getTracking(s.tracking_number);
-      const raw = tracking.tracking_status || tracking.status || '';
-      const mapped = shipx.mapTrackingStatus(raw);
-      await logEvent(db, s.wycena_id, 'tracking.read', { tracking: s.tracking_number, raw, mapped });
+      // ShipX potrzebuje numeru trackingu; Furgonetka śledzi po package_id.
+      if (s.provider !== 'furgonetka' && !s.tracking_number) continue;
+      const { raw, mapped } = await odczytajTracking(s);
+      await logEvent(db, s.wycena_id, 'tracking.read', { tracking: s.tracking_number || s.shipment_id, provider: s.provider, raw, mapped });
       raport.tracking += 1;
       if (mapped === 'delivered') {
         await onDelivered(db, s);
