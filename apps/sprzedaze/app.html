@@ -231,10 +231,14 @@
       font-variant-numeric: tabular-nums;
     }
 
-    /* Dostarczone i Zamknięte na zielono (domknięte pozytywnie); Stracone
-       stonowana czerwień. */
+    /* Dostarczone i Zamknięte na zielono (domknięte pozytywnie); Czeka na
+       płatność bursztynowo (akcja: pilnuj wpłaty); Stracone stonowana czerwień. */
     .sale-segment[data-seg="dostarczone"] .segment-title,
-    .sale-segment[data-seg="zamkniete"] .segment-title { color: var(--good); }
+    .sale-segment[data-seg="zamkniete"] .segment-title,
+    .sale-segment[data-seg="dostarczone"] .segment-count,
+    .sale-segment[data-seg="zamkniete"] .segment-count { color: var(--good); }
+    .sale-segment[data-seg="czeka"] .segment-title,
+    .sale-segment[data-seg="czeka"] .segment-count { color: #d98416; }
     .sale-segment[data-seg="stracone"] .segment-title { color: #9a3b3b; }
 
     .sale {
@@ -525,15 +529,22 @@
       const status = String(w.status || '').toLowerCase();
       if (status === 'stracone') return 'stracone';
       const ships = w._shipments || [];
-      const delivered = ships.some((s) => String(s.status) === 'delivered' || s.delivered_at);
+      // Doręczone: NASZA przesyłka delivered LUB pipeline oznaczył DELIVERED.
+      // Zamówienia sklepu/importu nie mają naszej przesyłki — jedynym sygnałem
+      // doręczenia jest process_stage (dlatego wcześniej lądowały w „Do wysłania").
+      const delivered = ships.some((s) => String(s.status) === 'delivered' || s.delivered_at)
+        || String(w.process_stage) === 'DELIVERED';
       if (delivered) {
         const dt = Math.max(0, ...ships.map((s) => (s.delivered_at ? new Date(s.delivered_at).getTime() : 0)));
         return dt && Date.now() - dt < DOSTARCZONE_MS ? 'dostarczone' : 'zamkniete';
       }
       if (status === 'closed') return 'zamkniete';
+      if (status === 'waiting for payment' && !w.paid) return 'czeka';
       const nadane = ships.some((s) => ['sent', 'delivered'].includes(String(s.status)) || s.nadana_at);
       if (nadane) return 'wyslane';
-      if (status === 'waiting for payment' && !w.paid) return 'czeka';
+      // Sklep/import bez NASZEJ przesyłki nie są do pakowania przez nas (Shopify
+      // realizuje sam, import to historia) — do „Zamknięte", nie „Do wysłania".
+      if ((w.source === 'shopify' || w.source === 'import') && ships.length === 0) return 'zamkniete';
       return 'dowyslania';
     }
 

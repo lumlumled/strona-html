@@ -10,13 +10,13 @@
 //                     jeszcze NIE spakowane (packed_at puste).
 //   spakowane       — packed_at ustawione („Oznacz spakowane"): spakowane,
 //                     czeka na kuriera, jeszcze NIE nadane.
-//   wyslane         — nadane (tracking sent / nadana_at / ręcznie); trzymamy 5
+//   wyslane         — nadane (tracking sent / nadana_at / ręcznie); trzymamy 7
 //                     dni po doręczeniu, potem znika (zamknięte).
 //   czeka_na_platnosc — przelew nieopłacony (przycisk „Oznacz opłacone").
 // Nadanie/doręczenie łapie worker z trackingu w oknach 17–18 / 10–16, albo
 // oznaczasz ręcznie tutaj (natychmiast).
 
-const HISTORIA_MS = 5 * 24 * 60 * 60 * 1000; // wysłane trzymamy 5 dni po doręczeniu
+const HISTORIA_MS = 7 * 24 * 60 * 60 * 1000; // wysłane trzymamy 7 dni po doręczeniu
 
 function num(v) {
   const n = Number(String(v ?? '').replace(/\s/g, '').replace(',', '.'));
