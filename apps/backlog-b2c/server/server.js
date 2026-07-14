@@ -791,6 +791,16 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     // handlowca. Tworzymy nowy lead automatycznie (kolumna "Źródło" oznacza,
     // że to nie z formularza — patrz kategoria "rozmowy_spoza_bazy" w cronie
     // Umowy), żeby każde połączenie miało swój case w backlogu.
+    // Status nowo tworzonego leada wg tej samej logiki lejka co dla
+    // istniejącego (patrz statusAfter wyżej) — wcześniej wpisywany na sztywno
+    // 'Nowy', przez co odebrana i przeanalizowana rozmowa z nieznanego numeru
+    // lądowała jako "Nowy" mimo bogatej analizy (lead 433, 14.07). Nieodebrane
+    // → 'Nie odebrał'; odebrane z analizą → status z analizy; odebrane bez
+    // analizy (transkrypcja padła) → 'Po pierwszym tel' (rozmowa się odbyła).
+    const nowyLeadStatus = label === 'no_answer'
+      ? 'Nie odebrał'
+      : (analysis?.status || 'Po pierwszym tel');
+
     let createdLead = null;
     if (!lead && !wycena && !kontaktOrganic && customerDigits) {
       // "ID Leada" (dawniej "ID Wyceny" — przemianowane w bazie, to zwykły
@@ -810,7 +820,7 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
         .insert({
           'Phone number': Number(customerDigits),
           Date: warsawDateStr(new Date()),
-          'Deal stage': 'Nowy',
+          'Deal stage': nowyLeadStatus,
           // Notes zostaje puste — to ręczna notatka handlowca. Podsumowanie
           // rozmowy idzie do skróconego opisu (Ocena AI kontaktu) i do
           // Historii rozmów.
@@ -861,7 +871,10 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       zrodlo: 'zadarma_webhook',
       telefon: customerDigits || null,
       status_przed: statusBefore,
-      status_po: statusAfter,
+      // Dla nowo utworzonego leada status_po = jego faktyczny status startowy
+      // (nie null) — inaczej Log zmian pokazywałby null→null przy rozmowie,
+      // która realnie nadała status (patrz nowyLeadStatus).
+      status_po: createdLead ? nowyLeadStatus : statusAfter,
       opis,
       opis_przed: opisBefore,
       opis_po: opisBefore,
