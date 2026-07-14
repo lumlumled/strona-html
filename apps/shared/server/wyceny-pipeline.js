@@ -45,10 +45,11 @@ function wOknieNadania() {
   const h = warsawHour();
   return h >= 17 && h < 18;
 }
-// Okno „czy dostarczona" (sent -> delivered): 10:00–15:59.
+// Okno „czy dostarczona" (sent -> delivered): 11:00–16:59, co przebieg workera
+// (cron */20 → co 20 min). Kończy się tuż przed oknem nadania (17:00).
 function wOknieDoreczenia() {
   const h = warsawHour();
-  return h >= 10 && h < 16;
+  return h >= 11 && h < 17;
 }
 
 // Push „Nowe do spakowania" — do adminów (Antoni) + env FULFILLMENT_NOTIFY /
