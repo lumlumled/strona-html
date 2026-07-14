@@ -116,6 +116,26 @@ async function getTracking(trackingNumber) {
   return shipxFetch(`/tracking/${trackingNumber}`);
 }
 
+// Zlecenie odbioru (zamawianie kuriera): kurier przyjeżdża pod adres nadawcy
+// po WSZYSTKIE podane przesyłki. Wymogi ShipX: przesyłki w statusie confirmed,
+// każda w maksymalnie JEDNYM zleceniu (inaczej 400 validation_failed dla
+// całego zlecenia); name/phone/address wymagane — ShipX robi z nich
+// dispatch_point. Okno 15:00-17:00 = decyzja z plan-furgonetka-jutro §3.
+async function createDispatchOrder(shipmentIds, { comment } = {}) {
+  return shipxFetch(`/organizations/${orgId()}/dispatch_orders`, {
+    method: 'post',
+    body: {
+      shipments: shipmentIds.map(String),
+      name: SENDER.company_name,
+      phone: SENDER.phone,
+      email: SENDER.email,
+      address: SENDER.address,
+      office_hours: '15:00 - 17:00',
+      comment: comment || undefined,
+    },
+  });
+}
+
 // ── JAWNE mapowanie statusów ShipX ───────────────────────────────────────────
 // Naprawa znanego buga starego systemu (świeża paczka oznaczana jako
 // doręczona): TYLKO status "delivered" znaczy doręczona. Każdy odczyt
@@ -147,5 +167,6 @@ module.exports = {
   getShipment,
   downloadLabel,
   getTracking,
+  createDispatchOrder,
   mapTrackingStatus,
 };

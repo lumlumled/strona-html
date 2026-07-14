@@ -58,6 +58,9 @@ function bucketOf(w, ship, now) {
   // Doręczone: nasza przesyłka delivered LUB pipeline oznaczył DELIVERED
   // (Shopify/import nie mają naszej przesyłki — sygnałem jest process_stage).
   if (doreczona(ship) || String(w.process_stage) === 'DELIVERED') {
+    // Import z backfillu ma delivered_at ze skryptu migracji (bez nadana_at) —
+    // nie zaśmieca „Wysłanych"; prawdziwy przepływ stawia nadana_at przy nadaniu.
+    if (!jestNasze(w) && !(ship && ship.nadana_at)) return null;
     const dt = ship && ship.delivered_at ? new Date(ship.delivered_at).getTime() : 0;
     return dt && now - dt < HISTORIA_MS ? 'wyslane' : null; // po 7 dniach: zamknięte (znika)
   }
@@ -66,8 +69,9 @@ function bucketOf(w, ship, now) {
   // Czeka na płatność — DOWOLNE źródło (import/sklep też), żeby pilnować wpłaty.
   if (status === 'waiting for payment' && !w.paid) return 'czeka_na_platnosc';
 
-  // Sklep/import bez naszej przesyłki nie są do pakowania przez nas — poza kolejką.
-  if (!jestNasze(w)) return null;
+  // Sklep/import bez naszej przesyłki nie są do pakowania przez nas — poza
+  // kolejką. Z NASZĄ przesyłką (markPaidAndShip na imporcie, np. #1809) — nasze.
+  if (!jestNasze(w) && !ship) return null;
 
   const gotowe = !jestPrzelew(w) || w.paid;
   if (!gotowe) return 'czeka_na_platnosc';
@@ -131,9 +135,58 @@ function serializeOrder(w, shipments, bucket, cennikBySku) {
       nadana_at: ship.nadana_at || null,
       delivered_at: ship.delivered_at || null,
       cod_amount: ship.cod_amount || null,
+      label_printed_at: ship.label_printed_at || null,
+      dispatch_order_id: ship.dispatch_order_id || null,
+      dispatch_ordered_at: ship.dispatch_ordered_at || null,
     } : null,
     brak_etykiety: !ship, // gotowe do spakowania, ale przesyłki jeszcze nie ma (zagranica / świeżo opłacone)
   };
+}
+
+// ── Zlecenie odbioru kuriera (plan-furgonetka-jutro §3) ──────────────────────
+// Pierwsze „Drukuj etykietę"/„Oznacz spakowane" danego dnia (przed 15:00)
+// zamawia kuriera InPost na WSZYSTKIE potwierdzone, nienadane przesyłki bez
+// zlecenia — jeden podjazd bierze całość, okno 15:00-17:00. Idempotencja RAZ
+// dziennie: znacznik dispatch_ordered_at (data warszawska). Po 15:00 nie
+// zamawiamy (info w panelu); jutrzejszy pierwszy druk/spakowanie zamówi.
+const DISPATCH_CUTOFF_HOUR = 15;
+
+function dataWarszawa(d) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Warsaw' }).format(d);
+}
+function godzinaWarszawy(d) {
+  return Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Warsaw', hour: '2-digit', hour12: false }).format(d));
+}
+
+async function zamowKuriera(supabase, { user } = {}) {
+  const teraz = new Date();
+  const dzis = dataWarszawa(teraz);
+  const { data: ships, error } = await supabase.from('wyceny_shipments').select('*');
+  if (error) throw error;
+  const all = ships || [];
+  if (all.some((s) => s.dispatch_ordered_at && dataWarszawa(new Date(s.dispatch_ordered_at)) === dzis)) {
+    return { dispatch: 'juz-zamowiony' };
+  }
+  if (godzinaWarszawy(teraz) >= DISPATCH_CUTOFF_HOUR) return { dispatch: 'za-pozno' };
+  // Tylko confirmed (wymóg ShipX) i bez wcześniejszego zlecenia — przesyłka
+  // może być w JEDNYM zleceniu, inaczej 400 dla całego zlecenia.
+  const doOdbioru = all.filter((s) => String(s.status) === 'confirmed'
+    && !s.nadana_at && !s.delivered_at && s.tracking_number && !s.dispatch_order_id);
+  if (!doOdbioru.length) return { dispatch: 'brak-paczek' };
+  const shipx = require('./wyceny-shipx');
+  const order = await shipx.createDispatchOrder(doOdbioru.map((s) => s.shipment_id), {
+    comment: `LumLum fulfillment ${dzis}`,
+  });
+  const nowIso = new Date().toISOString();
+  const { error: uErr } = await supabase.from('wyceny_shipments')
+    .update({ dispatch_order_id: String(order.id), dispatch_ordered_at: nowIso, updated_at: nowIso })
+    .in('id', doOdbioru.map((s) => s.id));
+  if (uErr) throw uErr;
+  await supabase.from('wyceny_events').insert(doOdbioru.map((s) => ({
+    wycena_id: s.wycena_id, kind: 'dispatch.ordered',
+    payload: { dispatch_order_id: String(order.id), paczek: doOdbioru.length, user: user || null },
+  })));
+  return { dispatch: 'zamowiony', dispatch_order_id: String(order.id), paczek: doOdbioru.length };
 }
 
 function registerFulfillmentEndpoints(app, { getClient, requireAdmin }) {
@@ -153,24 +206,22 @@ function registerFulfillmentEndpoints(app, { getClient, requireAdmin }) {
         .order('created_at', { ascending: false });
       if (error) throw error;
 
-      // Pakujemy własne zamówienia; DOKŁADAMY czekające na płatność z dowolnego
-      // źródła (import/sklep), żeby pilnować wpłaty (bucketOf schowa nie-nasze,
-      // które na płatność nie czekają).
-      const rows = (wyceny || []).filter((w) => jestNasze(w)
-        || (String(w.status || '').toLowerCase() === 'waiting for payment' && !w.paid));
-      const ids = rows.map((w) => w.id);
-      let shipments = [];
-      if (ids.length) {
-        const { data, error: sErr } = await supabase.from('wyceny_shipments')
-          .select('*').in('wycena_id', ids).order('created_at', { ascending: true });
-        if (sErr) throw sErr;
-        shipments = data || [];
-      }
+      // Przesyłki bierzemy WSZYSTKIE (mała tabela — same nasze, od migracji):
+      // import z naszą przesyłką też pakujemy my, a które to są, wiemy dopiero
+      // po złączeniu. Shopify wierszy tu nie tworzy, więc nie wpadnie.
+      const { data: shipments, error: sErr } = await supabase.from('wyceny_shipments')
+        .select('*').order('created_at', { ascending: true });
+      if (sErr) throw sErr;
       const shipByWycena = new Map();
-      shipments.forEach((s) => {
+      (shipments || []).forEach((s) => {
         if (!shipByWycena.has(s.wycena_id)) shipByWycena.set(s.wycena_id, []);
         shipByWycena.get(s.wycena_id).push(s);
       });
+      // Pakujemy własne zamówienia; DOKŁADAMY import/sklep z naszą przesyłką
+      // oraz czekające na płatność z dowolnego źródła (pilnowanie wpłaty).
+      const rows = (wyceny || []).filter((w) => jestNasze(w)
+        || shipByWycena.has(w.id)
+        || (String(w.status || '').toLowerCase() === 'waiting for payment' && !w.paid));
 
       // Zdjęcia pozycji bez image_url — dociągnij z cennika po SKU (jedno zapytanie).
       const brakSku = new Set();
@@ -222,7 +273,42 @@ function registerFulfillmentEndpoints(app, { getClient, requireAdmin }) {
           payload: { source: 'fulfillment-manual', user: req.user?.name || null },
         });
       }
-      res.json({ ok: true });
+      // Spakowane = gotowe do odbioru: próbuj zamówić kuriera (raz dziennie).
+      // Błąd zamawiania NIE cofa spakowania — pakiet i tak jest gotowy.
+      let kurier = null;
+      try { kurier = await zamowKuriera(supabase, { user: req.user?.name }); }
+      catch (err) { console.error('Fulfillment kurier:', err); kurier = { dispatch: 'blad', error: err.message }; }
+      res.json({ ok: true, kurier });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  // POST /api/fulfillment/:id/etykieta-wydrukowana — znacznik po kliknięciu
+  // „Drukuj etykietę" (pierwszy raz) + próba zamówienia kuriera (raz dziennie).
+  app.post('/api/fulfillment/:id(\\d+)/etykieta-wydrukowana', guard, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const supabase = getClient();
+      const { data: ships, error } = await supabase.from('wyceny_shipments')
+        .select('*').eq('wycena_id', id).neq('kind', 'reship').order('created_at', { ascending: true });
+      if (error) throw error;
+      const ship = (ships || [])[ships && ships.length ? ships.length - 1 : 0];
+      if (!ship) return res.status(400).json({ error: 'Brak przesyłki dla tego zamówienia.' });
+      if (!ship.label_printed_at) {
+        const nowIso = new Date().toISOString();
+        const { error: uErr } = await supabase.from('wyceny_shipments')
+          .update({ label_printed_at: nowIso, updated_at: nowIso }).eq('id', ship.id);
+        if (uErr) throw uErr;
+        await supabase.from('wyceny_events').insert({
+          wycena_id: id, kind: 'label.printed',
+          payload: { user: req.user?.name || null, shipment_id: ship.shipment_id },
+        });
+      }
+      let kurier = null;
+      try { kurier = await zamowKuriera(supabase, { user: req.user?.name }); }
+      catch (err) { console.error('Fulfillment kurier:', err); kurier = { dispatch: 'blad', error: err.message }; }
+      res.json({ ok: true, kurier });
     } catch (err) {
       handleError(res, err);
     }

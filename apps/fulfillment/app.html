@@ -192,6 +192,19 @@
       return m.adres || '';
     }
 
+    // Komunikat o zleceniu odbioru (kurier zamawia się przy pierwszym druku
+    // etykiety / spakowaniu danego dnia; RAZ dziennie, okno 15:00-17:00).
+    function opiszKuriera(kurier) {
+      if (!kurier) return;
+      if (kurier.dispatch === 'zamowiony') {
+        alert(`Kurier zamówiony na dziś 15:00-17:00 (paczek: ${kurier.paczek}).`);
+      } else if (kurier.dispatch === 'za-pozno') {
+        alert('Po 15:00 - kurier NIE zamówiony na dziś. Pierwszy druk etykiety / spakowanie jutro przed 15:00 zamówi odbiór.');
+      } else if (kurier.dispatch === 'blad') {
+        alert(`Nie udało się zamówić kuriera: ${kurier.error || 'nieznany błąd'}. Spróbuj ponownie albo zamów w Menedżerze Paczek.`);
+      }
+    }
+
     async function action(url, btn, okLabel) {
       const prev = btn.textContent;
       btn.disabled = true; btn.textContent = '…';
@@ -200,6 +213,7 @@
         const body = await res.json().catch(() => ({}));
         if (res.status === 401) { window.location.href = `${API_BASE}/login`; return; }
         if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+        opiszKuriera(body.kurier);
         await load();
       } catch (err) {
         alert(err.message);
@@ -210,15 +224,21 @@
     // Etykieta przez natywny share sheet (iOS → Drukuj/AirPrint). window.open
     // z PWA otwiera podgląd PDF bez paska udostępniania, więc nie ma jak
     // dojść do drukowania; na desktopie (brak share plików) fallback do karty.
-    async function openLabel(shipmentId, btn) {
+    // Klik dodatkowo znaczy "etykieta wydrukowana" i zamawia kuriera (serwer,
+    // raz dziennie) — ten POST leci w tle, bo iOS wymaga otwarcia share sheeta
+    // zaraz po geście użytkownika.
+    async function openLabel(o, btn) {
       const prev = btn.textContent;
       btn.disabled = true; btn.textContent = '…';
+      let mark = null;
       try {
-        const res = await fetch(`${API_BASE}/api/wyceny/label/${shipmentId}`);
+        const res = await fetch(`${API_BASE}/api/wyceny/label/${o.shipment.id}`);
         if (res.status === 401) { window.location.href = `${API_BASE}/login`; return; }
         if (!res.ok) throw new Error(`Etykieta: błąd ${res.status}`);
         const blob = await res.blob();
-        const file = new File([blob], `etykieta-${shipmentId}.pdf`, { type: 'application/pdf' });
+        mark = fetch(`${API_BASE}/api/fulfillment/${o.id}/etykieta-wydrukowana`, { method: 'POST' })
+          .then((r) => (r.ok ? r.json() : null)).catch(() => null);
+        const file = new File([blob], `etykieta-${o.shipment.id}.pdf`, { type: 'application/pdf' });
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
           await navigator.share({ files: [file] });
         } else {
@@ -228,9 +248,13 @@
         }
       } catch (err) {
         if (!err || err.name !== 'AbortError') alert(err && err.message || 'Nie udało się pobrać etykiety');
-      } finally {
-        btn.disabled = false; btn.textContent = prev;
       }
+      if (mark) {
+        const body = await mark;
+        opiszKuriera(body && body.kurier);
+        await load();
+      }
+      btn.disabled = false; btn.textContent = prev;
     }
 
     function card(o) {
@@ -242,6 +266,10 @@
       const payL = PAYMENT_LABELS[o.payment_method] || o.payment_method || '';
       if (payL) top.appendChild(h('span', o.paid ? 'chip good' : 'chip', o.paid ? `${payL} · opłacone` : payL));
       if (o.brak_etykiety) top.appendChild(h('span', 'chip warn', 'brak etykiety'));
+      if (o.bucket === 'do_spakowania' || o.bucket === 'spakowane') {
+        if (o.shipment && o.shipment.label_printed_at) top.appendChild(h('span', 'chip good', 'etykieta wydrukowana'));
+        if (o.shipment && o.shipment.dispatch_order_id) top.appendChild(h('span', 'chip good', 'kurier zamówiony'));
+      }
       top.appendChild(h('span', 'card-kwota', money(o.kwota)));
       c.appendChild(top);
 
@@ -277,7 +305,7 @@
       } else if (o.bucket === 'do_spakowania') {
         if (ship && ship.id) {
           const lbl = h('button', 'btn', 'Drukuj etykietę');
-          lbl.onclick = () => openLabel(ship.id, lbl);
+          lbl.onclick = () => openLabel(o, lbl);
           foot.appendChild(lbl);
         }
         const b = h('button', 'btn primary', 'Oznacz spakowane');
@@ -286,7 +314,7 @@
       } else if (o.bucket === 'spakowane') {
         if (ship && ship.id) {
           const lbl = h('button', 'btn', 'Drukuj etykietę');
-          lbl.onclick = () => openLabel(ship.id, lbl);
+          lbl.onclick = () => openLabel(o, lbl);
           foot.appendChild(lbl);
         }
         const b = h('button', 'btn primary', 'Oznacz nadane');
@@ -295,7 +323,7 @@
       } else if (o.bucket === 'wyslane') {
         if (ship && ship.id) {
           const lbl = h('button', 'btn', 'Etykieta');
-          lbl.onclick = () => openLabel(ship.id, lbl);
+          lbl.onclick = () => openLabel(o, lbl);
           foot.appendChild(lbl);
         }
         if (ship && ship.delivered_at) {
