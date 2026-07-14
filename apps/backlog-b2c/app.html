@@ -3076,7 +3076,10 @@
       // edycja w CRM, nowa wycena). Nakładamy aktualny stan z Leady B2C na
       // wyrenderowany case bez przeładowania strony. Wyceny historyczne
       // pominięte — ich pigułka pokazuje status WYCENY, nie leada.
-      if (akcjaPhoneKey && !isWycenaHistoryczna) {
+      // Klucz telefonu liczony lokalnie — akcjaPhoneKey z sekcji akcji żyje w
+      // węższym bloku i nie jest tu widoczny.
+      const liveLeadPhoneKey = normalizePhone(c.telefon);
+      if (liveLeadPhoneKey && !isWycenaHistoryczna) {
         let formLinkEl = formLink;
         const applyLiveLead = (a) => {
           if (!a) return;
@@ -3103,9 +3106,9 @@
             formLinkEl = anchor;
           }
         };
-        if (!akcjaUpdatersByPhone.has(akcjaPhoneKey)) akcjaUpdatersByPhone.set(akcjaPhoneKey, []);
-        akcjaUpdatersByPhone.get(akcjaPhoneKey).push(applyLiveLead);
-        if (akcjeByPhone) applyLiveLead(akcjeByPhone.get(akcjaPhoneKey) || null);
+        if (!akcjaUpdatersByPhone.has(liveLeadPhoneKey)) akcjaUpdatersByPhone.set(liveLeadPhoneKey, []);
+        akcjaUpdatersByPhone.get(liveLeadPhoneKey).push(applyLiveLead);
+        if (akcjeByPhone) applyLiveLead(akcjeByPhone.get(liveLeadPhoneKey) || null);
       }
 
       lead.addEventListener('toggle', closeAllStatusMenus);
