@@ -852,6 +852,30 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
     }
   });
 
+  // POST /api/wyceny/:id/oznacz-oplacone — przelew wpłynął (poza inFakt): oznacz
+  // opłacone + utwórz przesyłkę (markPaidAndShip, jak automatyczna płatność) →
+  // zamówienie wpada do „Do spakowania". Dostępne we WSZYSTKICH panelach z
+  // wyceny-endpoints (Sprzedaże, Wyceny, Fulfillment), bo karta woła je przez
+  // opts.apiBase. Sklep (Shopify) ma własny flow — odrzucamy; import dopuszczamy.
+  app.post('/api/wyceny/:id(\\d+)/oznacz-oplacone', requireEdit, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const supabase = getClient();
+      const { data, error } = await scoped(supabase.from('wyceny').select('*'), req).eq('id', id).limit(1);
+      if (error) throw error;
+      if (!data || !data.length) return res.status(404).json({ error: 'Nie znaleziono zamówienia' });
+      if (data[0].source === 'shopify') {
+        return res.status(400).json({ error: 'Zamówienie ze sklepu (Shopify) ma własny fulfillment — nie oznaczamy go tutaj.' });
+      }
+      const { markPaidAndShip } = require('./wyceny-pipeline');
+      const result = await markPaidAndShip(supabase, id);
+      await logEvent(supabase, id, 'invoice.paid', { manual: true, source: 'panel-oznacz-oplacone', user: req.user && req.user.name });
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
   // Proxy plików: PDF faktury (inFakt) i etykiety (ShipX) wymagają naszych
   // sekretów — panel dostaje je przez te endpointy, nic nie idzie na Drive.
   app.get('/api/wyceny/invoice-pdf/:uuid', requireView, async (req, res) => {

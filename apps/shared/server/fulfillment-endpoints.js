@@ -291,8 +291,11 @@ function registerFulfillmentEndpoints(app, { getClient, requireAdmin }) {
       if (error) throw error;
       const w = data && data[0];
       if (!w) return res.status(404).json({ error: 'Nie znaleziono zamówienia' });
-      if (w.source === 'shopify' || w.source === 'import') {
-        return res.status(400).json({ error: 'To zamówienie ma własny fulfillment (sklep/import) — nie oznaczamy go tutaj.' });
+      // Sklep (Shopify) ma własną płatność/fulfillment — nie oznaczamy tu.
+      // Import (migracja z Make) TAK: bywa realnym zamówieniem czekającym na
+      // przelew (np. #1809), które trzeba domknąć ręcznie po wpłacie.
+      if (w.source === 'shopify') {
+        return res.status(400).json({ error: 'Zamówienie ze sklepu (Shopify) ma własny fulfillment — nie oznaczamy go tutaj.' });
       }
       const { markPaidAndShip } = require('./wyceny-pipeline');
       const result = await markPaidAndShip(supabase, id);

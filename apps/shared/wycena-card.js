@@ -508,6 +508,35 @@ window.WycenaKarta = (() => {
     }
     wrap.appendChild(list);
 
+    // „Oznacz jako opłacone" — gdy przelew czeka na wpłatę (proforma wysłana,
+    // status „Czeka na płatność"). Po kliknięciu: oznacz opłacone + utwórz
+    // przesyłkę (jak automatyczna płatność) → wpada do „Do spakowania". Ten sam
+    // endpoint co przycisk w Fulfillment. Widoczne w Sprzedażach i na karcie.
+    if (!opts.readOnly && !wycena.paid
+        && String(wycena.status || '').toLowerCase() === 'waiting for payment') {
+      const payActions = el('div', 'wk-actions');
+      const payBtn = el('button', 'wk-btn primary', 'Oznacz jako opłacone');
+      payBtn.type = 'button';
+      payBtn.title = 'Przelew wpłynął — oznacz opłacone i przygotuj do wysyłki';
+      payBtn.addEventListener('click', async () => {
+        if (!confirm(`Oznaczyć zamówienie #${wycena.id} jako opłacone? Utworzy przesyłkę i przeniesie do „Do spakowania".`)) return;
+        payBtn.disabled = true;
+        payBtn.textContent = 'Oznaczam…';
+        try {
+          const res = await fetch(`${opts.apiBase || ''}/api/wyceny/${wycena.id}/oznacz-oplacone`, { method: 'POST' });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+          if (opts.onChanged) opts.onChanged();
+        } catch (err) {
+          alert(`Nie udało się: ${err.message}`);
+          payBtn.disabled = false;
+          payBtn.textContent = 'Oznacz jako opłacone';
+        }
+      });
+      payActions.appendChild(payBtn);
+      wrap.appendChild(payActions);
+    }
+
     // "Zamów kuriera ponownie" — dosyłka/reklamacja na te same dane, bez
     // faktury i bez zmiany statusów (panel Sprzedaże; endpoint w pipeline).
     if (opts.mode === 'sprzedaze' && !opts.readOnly && (wycena._shipments || []).length) {
