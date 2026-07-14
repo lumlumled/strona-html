@@ -602,6 +602,29 @@ async function findWycenaByPhone(supabase, phoneDigits) {
   return data[0] || null;
 }
 
+// Znacznik "rozmowa w analizie" (tabela rozmowy_w_toku, migracja
+// add-rozmowy-w-toku.js). Webhook Zadarmy wstawia go na czas
+// transkrypcji+analizy odebranego połączenia; panel pokazuje przy case'ie
+// kręcące się kółko. Nigdy nie wywala webhooka — spinner to warstwa UX.
+async function markRozmowaWToku(supabase, phoneDigits, kierunek) {
+  if (!phoneDigits) return;
+  try {
+    await supabase.from('rozmowy_w_toku')
+      .upsert({ telefon: phoneDigits, kierunek: kierunek || null, started_at: new Date().toISOString() }, { onConflict: 'telefon' });
+  } catch (err) {
+    console.warn('Nie wstawiono znacznika rozmowy_w_toku:', err.message);
+  }
+}
+
+async function clearRozmowaWToku(supabase, phoneDigits) {
+  if (!phoneDigits) return;
+  try {
+    await supabase.from('rozmowy_w_toku').delete().eq('telefon', phoneDigits);
+  } catch (err) {
+    console.warn('Nie skasowano znacznika rozmowy_w_toku:', err.message);
+  }
+}
+
 const AUTOMATION_LOG_TABLE = 'Logi automatyzacji';
 
 async function logOperation(supabase, automatyzacja, status, szczegoly) {
@@ -675,6 +698,14 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     // znaki nowej linii/cudzysłowy, które łamałyby Make'owi ręcznie pisany
     // "JSON string" w body (błąd "Bad control character in string literal").
     let transcript = call.transcript ? Buffer.from(call.transcript, 'base64').toString('utf8') : '';
+    // Spinner "rozmowa w analizie" — wstawiamy znacznik ZANIM ruszy
+    // transkrypcja/analiza (najdłuższa część), żeby panel pokazał kręcące się
+    // kółko tuż po odłożeniu słuchawki. Kasujemy go na końcu (i w catch).
+    // Tylko odebrane z realną treścią do analizy — nieodebrane przelatują
+    // od razu, nie ma czego pokazywać.
+    if (answered && customerDigits) {
+      await markRozmowaWToku(supabase, customerDigits, call.kierunek || null);
+    }
     if (answered && !transcript) {
       try {
         const audioRes = await fetch(call.record_url);
@@ -950,6 +981,9 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       }
     }
 
+    // Analiza skończona — zdejmij spinner "rozmowa w analizie" z case'a.
+    await clearRozmowaWToku(supabase, customerDigits);
+
     await logOperation(supabase, 'zadarma_webhook', 'ok', {
       pbx_call_id: call.pbx_call_id,
       telefon: customerDigits,
@@ -962,6 +996,15 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     });
     res.json({ status: 'ok' });
   } catch (err) {
+    // Nie zostawiaj kręcącego się kółka, jeśli webhook padł w połowie.
+    try {
+      const failCall = Array.isArray(req.body) ? req.body[0] : req.body;
+      const failDigits = normalizePhoneDigits(failCall?.numer_klienta)
+        || [failCall?.caller_id, failCall?.called_did, failCall?.dst]
+          .map(normalizePhoneDigits)
+          .find((d) => d && d !== normalizePhoneDigits(process.env.ZADARMA_OWN_NUMBER));
+      if (failDigits) await clearRozmowaWToku(supabase, failDigits);
+    } catch { /* best-effort */ }
     await logOperation(supabase, 'zadarma_webhook', 'error', { message: err.message, body: req.body });
     handleError(res, err, 502);
   }
@@ -1313,6 +1356,25 @@ app.get('/api/leady/akcje', async (req, res) => {
         link_formularz: row['Link do formularza'] || '',
       }));
     res.json(rows);
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// GET /api/rozmowy/w-toku — telefony rozmów aktualnie w analizie (spinner na
+// case'ie w planie dnia). Stale-guard: ignoruj wpisy starsze niż 10 min —
+// analiza tyle nie trwa, więc taki wiersz to sierota po webhooku, który padł
+// przed skasowaniem znacznika (spinner nie może kręcić się w nieskończoność).
+app.get('/api/rozmowy/w-toku', async (req, res) => {
+  try {
+    const supabase = getClient();
+    const cutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from('rozmowy_w_toku')
+      .select('telefon, kierunek, started_at')
+      .gte('started_at', cutoff);
+    if (error) throw error;
+    res.json({ telefony: (data || []).map((r) => formatPhonePlus(r.telefon)) });
   } catch (err) {
     handleError(res, err, 502);
   }

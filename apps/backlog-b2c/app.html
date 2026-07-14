@@ -709,6 +709,24 @@
       white-space: nowrap;
     }
 
+    /* Kręcące się kółko "rozmowa w analizie" — pokazywane na case'ie od
+       odłożenia słuchawki do końca analizy GPT (patrz pollRozmowyWToku).
+       Klasyczny obracający się pierścień, nie klepsydra/tekst. */
+    .lead summary .rozmowa-spinner {
+      flex: 0 0 auto;
+      display: inline-block;
+      width: 0.85rem;
+      height: 0.85rem;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: rozmowa-spin 0.7s linear infinite;
+    }
+
+    @keyframes rozmowa-spin {
+      to { transform: rotate(360deg); }
+    }
+
     .lead summary .akcja-pill .akcja-strzalka {
       flex: 0 0 auto;
       opacity: 0.6;
@@ -1868,6 +1886,18 @@
     const akcjaUpdatersByPhone = new Map();
     let akcjeByPhone = null; // null = jeszcze nie pobrane (pigułka bierze wtedy migawkę z dokumentu)
 
+    // Spinner "rozmowa w analizie": rejestr funkcji pokazujących/chowających
+    // kółko per telefon (case może wystąpić w kilku kategoriach naraz) + zbiór
+    // telefonów aktualnie w analizie (z GET /api/rozmowy/w-toku, patrz
+    // pollRozmowyWToku). Nowo wyrenderowany case bierze stan startowy z tego
+    // zbioru.
+    const spinnerUpdatersByPhone = new Map();
+    let rozmowyWTokuActive = new Set();
+
+    function applySpinnerToPhone(phone, on) {
+      (spinnerUpdatersByPhone.get(phone) || []).forEach((fn) => fn(on));
+    }
+
     // Dopasowanie telefon → {imię, lp} z aktualnie wczytanej Umowy, żeby przy
     // wierszu połączenia (sekcja "Połączenia") było widać, do którego case'a
     // z backlogu ono należy. Budowane w loadDay, używane w renderPolaczenia —
@@ -2400,6 +2430,49 @@
       } catch { /* pigułki zostają na migawce z dokumentu */ }
     }
 
+    // Spinner "rozmowa w analizie" — adaptacyjny poll GET /api/rozmowy/w-toku:
+    // szybki gdy coś się analizuje (handlowiec właśnie skończył rozmawiać i
+    // patrzy w panel), wolny gdy cisza, wcale gdy karta schowana. Żadnego
+    // sztywnego "co 30 s w kółko". Gdy analiza numeru zniknie z listy →
+    // refreshAkcje() dociąga świeży status/akcję/link na case bez przeładowania.
+    let rozmowyPollTimer = null;
+    let rozmowyPollBusy = false;
+
+    function scheduleRozmowyPoll() {
+      clearTimeout(rozmowyPollTimer);
+      const hidden = document.visibilityState !== 'visible';
+      const delay = hidden ? 60000 : (rozmowyWTokuActive.size ? 4000 : 25000);
+      rozmowyPollTimer = setTimeout(pollRozmowyWToku, delay);
+    }
+
+    async function pollRozmowyWToku() {
+      clearTimeout(rozmowyPollTimer);
+      if (rozmowyPollBusy) return;
+      if (document.visibilityState !== 'visible') { scheduleRozmowyPoll(); return; }
+      rozmowyPollBusy = true;
+      try {
+        const res = await fetch(`${API_BASE}/api/rozmowy/w-toku`);
+        if (res.ok) {
+          const body = await res.json().catch(() => ({}));
+          const now = new Set((body.telefony || []).map(normalizePhone).filter(Boolean));
+          let anyCleared = false;
+          rozmowyWTokuActive.forEach((p) => { if (!now.has(p)) anyCleared = true; });
+          const union = new Set([...rozmowyWTokuActive, ...now]);
+          rozmowyWTokuActive = now;
+          union.forEach((p) => applySpinnerToPhone(p, now.has(p)));
+          if (anyCleared) refreshAkcje();
+        }
+      } catch { /* spinner zostaje na dotychczasowym stanie */ }
+      finally {
+        rozmowyPollBusy = false;
+        scheduleRozmowyPoll();
+      }
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') pollRozmowyWToku();
+    });
+
     function toIsoDate(str) {
       const d = parsePlDate(str);
       if (!d) return '';
@@ -2691,6 +2764,22 @@
         }
 
         contactRow.appendChild(makeCopyButton(c.telefon));
+
+        // Kręcące się kółko "rozmowa w analizie" — widoczne między odłożeniem
+        // słuchawki a końcem analizy GPT (patrz pollRozmowyWToku). Stan
+        // startowy z rozmowyWTokuActive, potem żywo z rejestru.
+        const rozmowaSpinner = document.createElement('span');
+        rozmowaSpinner.className = 'rozmowa-spinner';
+        rozmowaSpinner.title = 'Rozmowa w analizie…';
+        rozmowaSpinner.style.display = 'none';
+        contactRow.appendChild(rozmowaSpinner);
+        const spinnerPhoneKey = normalizePhone(c.telefon);
+        if (spinnerPhoneKey) {
+          const setSpinner = (on) => { rozmowaSpinner.style.display = on ? '' : 'none'; };
+          if (!spinnerUpdatersByPhone.has(spinnerPhoneKey)) spinnerUpdatersByPhone.set(spinnerPhoneKey, []);
+          spinnerUpdatersByPhone.get(spinnerPhoneKey).push(setSpinner);
+          setSpinner(rozmowyWTokuActive.has(spinnerPhoneKey));
+        }
 
         // Najbliższa akcja — pigułka "co dalej z tym leadem" widoczna na
         // zwiniętym case'ie. Żywa w ciągu dnia (patrz refreshAkcje), klik =
@@ -3249,6 +3338,7 @@
     function resetSections() {
       leadInstancesByLp.clear();
       akcjaUpdatersByPhone.clear();
+      spinnerUpdatersByPhone.clear();
       document.getElementById('meta').innerHTML = '';
       document.getElementById('zmiany-card').style.display = 'none';
       document.getElementById('zmiany-list').innerHTML = '';
@@ -3412,6 +3502,10 @@
 
         renderDayStrip();
         loadDay(selectedDate);
+        // Wystartuj poll spinnerów "rozmowa w analizie" (adaptacyjny, patrz
+        // pollRozmowyWToku) — od teraz case dostaje kręcące się kółko tuż po
+        // odłożeniu słuchawki.
+        pollRozmowyWToku();
       } catch (err) {
         setStatus(err.message);
       }
