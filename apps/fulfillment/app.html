@@ -221,12 +221,16 @@
       }
     }
 
-    // Etykieta przez natywny share sheet (iOS → Drukuj/AirPrint). window.open
-    // z PWA otwiera podgląd PDF bez paska udostępniania, więc nie ma jak
-    // dojść do drukowania; na desktopie (brak share plików) fallback do karty.
+    // Etykieta: na MOBILE natywny share sheet (iOS → Drukuj/AirPrint; window.open
+    // z PWA otwiera podgląd PDF bez paska udostępniania). Na komputerze celowo
+    // NIE share sheet — macOS nie ma tam opcji Drukuj (tylko AirDrop/Wiadomości/
+    // Notatki), więc zostaje nowa karta z PDF-em i Cmd+P (decyzja Antoniego
+    // 2026-07-14). iPad w Safari udaje Maca — stąd maxTouchPoints.
     // Klik dodatkowo znaczy "etykieta wydrukowana" i zamawia kuriera (serwer,
     // raz dziennie) — ten POST leci w tle, bo iOS wymaga otwarcia share sheeta
     // zaraz po geście użytkownika.
+    const MOBILE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+      || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
     async function openLabel(o, btn) {
       const prev = btn.textContent;
       btn.disabled = true; btn.textContent = '…';
@@ -239,7 +243,7 @@
         mark = fetch(`${API_BASE}/api/fulfillment/${o.id}/etykieta-wydrukowana`, { method: 'POST' })
           .then((r) => (r.ok ? r.json() : null)).catch(() => null);
         const file = new File([blob], `etykieta-${o.shipment.id}.pdf`, { type: 'application/pdf' });
-        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        if (MOBILE && navigator.canShare && navigator.canShare({ files: [file] })) {
           await navigator.share({ files: [file] });
         } else {
           const url = URL.createObjectURL(blob);
