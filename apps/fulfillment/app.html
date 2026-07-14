@@ -207,6 +207,32 @@
       }
     }
 
+    // Etykieta przez natywny share sheet (iOS → Drukuj/AirPrint). window.open
+    // z PWA otwiera podgląd PDF bez paska udostępniania, więc nie ma jak
+    // dojść do drukowania; na desktopie (brak share plików) fallback do karty.
+    async function openLabel(shipmentId, btn) {
+      const prev = btn.textContent;
+      btn.disabled = true; btn.textContent = '…';
+      try {
+        const res = await fetch(`${API_BASE}/api/wyceny/label/${shipmentId}`);
+        if (res.status === 401) { window.location.href = `${API_BASE}/login`; return; }
+        if (!res.ok) throw new Error(`Etykieta: błąd ${res.status}`);
+        const blob = await res.blob();
+        const file = new File([blob], `etykieta-${shipmentId}.pdf`, { type: 'application/pdf' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file] });
+        } else {
+          const url = URL.createObjectURL(blob);
+          window.open(url, '_blank', 'noopener');
+          setTimeout(() => URL.revokeObjectURL(url), 60000);
+        }
+      } catch (err) {
+        if (!err || err.name !== 'AbortError') alert(err && err.message || 'Nie udało się pobrać etykiety');
+      } finally {
+        btn.disabled = false; btn.textContent = prev;
+      }
+    }
+
     function card(o) {
       const c = h('div', 'card');
       c.dataset.wid = String(o.id);
@@ -251,7 +277,7 @@
       } else if (o.bucket === 'do_spakowania') {
         if (ship && ship.id) {
           const lbl = h('button', 'btn', 'Drukuj etykietę');
-          lbl.onclick = () => window.open(`${API_BASE}/api/wyceny/label/${ship.id}`, '_blank', 'noopener');
+          lbl.onclick = () => openLabel(ship.id, lbl);
           foot.appendChild(lbl);
         }
         const b = h('button', 'btn primary', 'Oznacz spakowane');
@@ -260,7 +286,7 @@
       } else if (o.bucket === 'spakowane') {
         if (ship && ship.id) {
           const lbl = h('button', 'btn', 'Drukuj etykietę');
-          lbl.onclick = () => window.open(`${API_BASE}/api/wyceny/label/${ship.id}`, '_blank', 'noopener');
+          lbl.onclick = () => openLabel(ship.id, lbl);
           foot.appendChild(lbl);
         }
         const b = h('button', 'btn primary', 'Oznacz nadane');
@@ -269,7 +295,7 @@
       } else if (o.bucket === 'wyslane') {
         if (ship && ship.id) {
           const lbl = h('button', 'btn', 'Etykieta');
-          lbl.onclick = () => window.open(`${API_BASE}/api/wyceny/label/${ship.id}`, '_blank', 'noopener');
+          lbl.onclick = () => openLabel(ship.id, lbl);
           foot.appendChild(lbl);
         }
         if (ship && ship.delivered_at) {
