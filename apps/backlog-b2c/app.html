@@ -2981,6 +2981,44 @@
       // WSZYSTKIMI naraz, co rozjeżdża wiersz, gdy któregoś pola brakuje.
       (feedbackDate || statusEl || formLink).classList.add('right-anchor');
 
+      // Żywy status + link do formularza — ta sama zasada co pigułka akcji
+      // (refreshAkcje): dokument Umowy to migawka z rana, a status leada
+      // zmienia się w ciągu dnia (rozmowa przez webhook Zadarmy, ręczna
+      // edycja w CRM, nowa wycena). Nakładamy aktualny stan z Leady B2C na
+      // wyrenderowany case bez przeładowania strony. Wyceny historyczne
+      // pominięte — ich pigułka pokazuje status WYCENY, nie leada.
+      if (akcjaPhoneKey && !isWycenaHistoryczna) {
+        let formLinkEl = formLink;
+        const applyLiveLead = (a) => {
+          if (!a) return;
+          if (a.status && statusEl && a.status !== c.status) {
+            c.status = a.status;
+            const pill = statusEl.querySelector('.status-tag') || statusEl;
+            pill.textContent = a.status;
+            applyStatusColor(pill, a.status, statusColors);
+            statusEl.querySelectorAll('.status-option').forEach((el) => {
+              el.classList.toggle('is-selected', el.textContent === a.status);
+            });
+          }
+          if (a.link_formularz && !c.link_formularz) {
+            c.link_formularz = a.link_formularz;
+            const anchor = document.createElement('a');
+            anchor.className = formLinkEl.className.replace(' form-link--empty', '');
+            anchor.href = cleanFormularzLink(a.link_formularz);
+            anchor.target = '_blank';
+            anchor.rel = 'noopener';
+            anchor.textContent = '↗';
+            anchor.title = 'Otwórz formularz';
+            anchor.addEventListener('click', (e) => e.stopPropagation());
+            formLinkEl.replaceWith(anchor);
+            formLinkEl = anchor;
+          }
+        };
+        if (!akcjaUpdatersByPhone.has(akcjaPhoneKey)) akcjaUpdatersByPhone.set(akcjaPhoneKey, []);
+        akcjaUpdatersByPhone.get(akcjaPhoneKey).push(applyLiveLead);
+        if (akcjeByPhone) applyLiveLead(akcjeByPhone.get(akcjaPhoneKey) || null);
+      }
+
       lead.addEventListener('toggle', closeAllStatusMenus);
 
       lead.appendChild(summary);
