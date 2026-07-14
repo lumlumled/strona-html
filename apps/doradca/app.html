@@ -21,7 +21,7 @@
   body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column}
   #site-header{flex:none}
   .wrap{flex:1;display:flex;min-height:0;max-width:1100px;width:100%;margin:0 auto}
-  .col-chat{flex:1;display:flex;flex-direction:column;min-width:0}
+  .col-chat{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
   .col-mem{width:300px;flex:none;border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;padding:14px}
   @media(max-width:820px){ .col-mem{position:fixed;inset:0 0 0 auto;z-index:30;width:min(320px,86vw);transform:translateX(100%);transition:transform .22s;box-shadow:-20px 0 50px rgba(0,0,0,.5)} .col-mem.open{transform:none} }
 
@@ -35,7 +35,43 @@
 
   .bubble{padding:12px 15px;border-radius:14px;max-width:88%;white-space:pre-wrap;word-wrap:break-word}
   .b-user{align-self:flex-end;background:var(--user);color:var(--user-ink);border-bottom-right-radius:5px}
-  .b-ai{align-self:flex-start;background:var(--panel);border:1px solid var(--line);border-bottom-left-radius:5px}
+  .b-ai{align-self:flex-start;background:var(--panel);border:1px solid var(--line);border-bottom-left-radius:5px;white-space:normal}
+  /* ── Markdown w bąbelku doradcy ── */
+  .b-ai p{margin:0 0 8px}
+  .b-ai p:last-child{margin-bottom:0}
+  .b-ai strong{color:var(--ink);font-weight:700}
+  .b-ai em{font-style:italic;color:var(--ink-soft)}
+  .b-ai code{font-family:var(--mono);font-size:.88em;background:var(--panel-2);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+  .b-ai a{color:var(--accent);text-decoration:none;border-bottom:1px solid rgba(242,180,85,.4)}
+  .b-ai ul,.b-ai ol{margin:6px 0 8px;padding-left:20px}
+  .b-ai li{margin:3px 0}
+  .b-ai .md-h{font-weight:700;color:var(--ink);margin:10px 0 5px;line-height:1.3}
+  .b-ai .md-h1{font-size:1.12em} .b-ai .md-h2{font-size:1.06em} .b-ai .md-h3,.b-ai .md-h4{font-size:1em;color:var(--accent)}
+  .b-ai hr{border:none;border-top:1px solid var(--line);margin:10px 0}
+  /* ── Klikalna pigułka case ── */
+  .case-pill{display:inline-flex;align-items:center;gap:4px;background:var(--panel-2);border:1px solid var(--line);border-radius:999px;padding:1px 9px;font-size:.9em;color:var(--accent);cursor:pointer;white-space:nowrap;line-height:1.6;vertical-align:baseline}
+  .case-pill:hover{border-color:var(--accent)}
+  .case-pill .cp-chev{font-size:.8em;color:var(--ink-faint);transition:transform .15s}
+  .case-pill.open .cp-chev{transform:rotate(180deg)}
+  .case-card{display:block;margin:8px 0 4px;background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:11px 13px;font-size:14px;line-height:1.55;white-space:normal}
+  .case-card .cc-title{font-weight:700;color:var(--ink)}
+  .case-card .cc-meta{color:var(--ink-soft);margin-top:3px;font-size:13px}
+  .case-card .cc-tel{color:var(--accent);text-decoration:none}
+  .case-card .cc-note{color:var(--ink-soft);margin-top:6px;font-style:italic;border-left:2px solid var(--line);padding-left:8px}
+  .case-card .cc-open{display:inline-block;margin-top:9px;color:var(--accent);font-weight:600;text-decoration:none}
+  /* ── Przycisk delegowania (akcja) ── */
+  .akcja{display:block;margin:9px 0;background:rgba(242,180,85,.06);border:1px solid rgba(242,180,85,.28);border-radius:12px;padding:10px 12px;white-space:normal}
+  .akcja .akcja-label{display:block;color:var(--ink);font-size:14px;line-height:1.5;margin-bottom:8px}
+  .akcja .akcja-label b{color:var(--accent)}
+  .akcja-btn{background:var(--accent);color:#1a1408;border:none;border-radius:9px;padding:8px 13px;font-size:13.5px;font-weight:700;cursor:pointer;font-family:inherit}
+  .akcja-btn:hover{background:var(--accent-deep)}
+  .akcja-btn:disabled{cursor:default;opacity:.9}
+  .akcja-btn.done{background:rgba(92,174,134,.15);color:var(--good);border:1px solid rgba(92,174,134,.4)}
+  .akcja-btn.fail{background:rgba(223,106,79,.15);color:var(--bad);border:1px solid rgba(223,106,79,.4)}
+  /* ── Przycisk „skocz na dół" ── */
+  .jump{position:absolute;right:18px;bottom:14px;z-index:5;background:var(--panel-2);color:var(--accent);border:1px solid var(--line);border-radius:999px;padding:7px 14px;font-size:13px;font-family:inherit;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.45)}
+  .jump:hover{border-color:var(--accent)}
+  .jump[hidden]{display:none}
   .b-ai .cursor{display:inline-block;width:7px;height:15px;background:var(--accent);vertical-align:-2px;animation:blink 1s steps(2) infinite;margin-left:1px}
   @keyframes blink{50%{opacity:0}}
   .tools{align-self:flex-start;display:flex;flex-wrap:wrap;gap:6px;margin:-4px 0 0 2px}
@@ -58,7 +94,7 @@
   .row2{max-width:760px;margin:8px auto 0;display:flex;align-items:center;gap:14px;font-size:12.5px;color:var(--ink-faint)}
   .toggle{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
   .toggle input{accent-color:var(--accent)}
-  .mem-btn{margin-left:auto;background:none;border:none;color:var(--ink-faint);cursor:pointer;font-size:12.5px}
+  .mem-btn{background:none;border:none;color:var(--ink-faint);cursor:pointer;font-size:12.5px}
   .mem-btn:hover{color:var(--accent)}
 
   .mem-h{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);margin:2px 0 10px}
@@ -70,11 +106,54 @@
   .mem-empty{color:var(--ink-faint);font-size:13px}
   .mem-close{display:none}
   @media(max-width:820px){ .mem-close{display:block;float:right;background:none;border:none;color:var(--ink-faint);font-size:20px;cursor:pointer} }
+
+  /* ── Lewy sidebar: historia rozmów ── */
+  .col-chats{width:270px;flex:none;border-right:1px solid var(--line);background:var(--panel);overflow-y:auto;padding:12px;display:flex;flex-direction:column}
+  .chats-h{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);margin:2px 0 10px;display:flex;align-items:center}
+  .chats-close{display:none;margin-left:auto;background:none;border:none;color:var(--ink-faint);font-size:20px;cursor:pointer}
+  .chat-new{display:flex;align-items:center;justify-content:center;gap:6px;background:var(--accent);color:#1a1408;border:none;border-radius:10px;padding:9px;font-size:13.5px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:10px}
+  .chat-new:hover{background:var(--accent-deep)}
+  .chats-list{flex:1;min-height:0}
+  .chat-item{display:flex;align-items:center;gap:8px;padding:9px 8px;border-radius:9px;cursor:pointer;border:1px solid transparent}
+  .chat-item:hover{background:var(--panel-2)}
+  .chat-item.active{background:var(--panel-2);border-color:var(--line)}
+  .chat-item .ci-title{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13.5px;color:var(--ink)}
+  .chat-item .ci-when{flex:none;font-size:11px;color:var(--ink-faint)}
+  .chat-item .ci-x{flex:none;color:var(--ink-faint);font-size:16px;line-height:1;opacity:.35;cursor:pointer;padding:0 2px}
+  .chat-item:hover .ci-x{opacity:1}
+  .chat-item .ci-x:hover{color:var(--bad)}
+  /* Lewy sidebar w szufladzie poniżej 1100px — inaczej dwa sidebary ściskają czat. */
+  @media(max-width:1099px){ .col-chats{position:fixed;inset:0 auto 0 0;z-index:30;width:min(300px,86vw);transform:translateX(-100%);transition:transform .22s;box-shadow:20px 0 50px rgba(0,0,0,.5)} .col-chats.open{transform:none} .chats-close{display:block} }
+
+  /* ── Kontrolki w row2 ── */
+  .model-sel{background:var(--panel);border:1px solid var(--line);color:var(--ink-soft);border-radius:9px;padding:6px 8px;font:inherit;font-size:12.5px;cursor:pointer;max-width:170px}
+  .model-sel:focus{outline:none;border-color:var(--accent)}
+  .row2-btn{background:none;border:none;color:var(--ink-faint);cursor:pointer;font-size:12.5px;font-family:inherit;padding:2px}
+  .row2-btn:hover{color:var(--accent)}
+  .row2-btn.has{color:var(--accent)}
+  .row2-btn.has::after{content:" •"}
+
+  /* ── Panel dodatkowego kontekstu ── */
+  .ctx-panel{display:none;max-width:760px;margin:0 auto 8px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px}
+  .ctx-panel.open{display:block}
+  .ctx-hint{font-size:12px;color:var(--ink-faint);margin-bottom:7px;line-height:1.5}
+  .ctx-panel textarea{width:100%;min-height:88px;max-height:220px;resize:vertical;background:var(--bg);border:1px solid var(--line);border-radius:9px;color:var(--ink);font:inherit;font-size:13.5px;padding:9px}
+  .ctx-panel textarea:focus{outline:none;border-color:var(--accent)}
+  .ctx-row{display:flex;align-items:center;gap:10px;margin-top:8px;font-size:12px;color:var(--ink-faint)}
+  .ctx-file-btn{background:var(--panel-2);border:1px solid var(--line);color:var(--ink-soft);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:12.5px}
+  .ctx-file-btn:hover{border-color:var(--accent);color:var(--accent)}
+  .ctx-clear{margin-left:auto;background:none;border:none;color:var(--ink-faint);cursor:pointer;font-size:12px;font-family:inherit}
+  .ctx-clear:hover{color:var(--bad)}
 </style>
 </head>
 <body>
 <div id="site-header"></div>
 <div class="wrap">
+  <aside class="col-chats" id="chats">
+    <div class="chats-h">Rozmowy <button class="chats-close" id="chatsClose" aria-label="Zamknij">×</button></div>
+    <button class="chat-new" id="chatNew" type="button">＋ Nowa rozmowa</button>
+    <div class="chats-list" id="chatsList"><div class="mem-empty">Ładuję…</div></div>
+  </aside>
   <div class="col-chat">
     <div class="stream" id="stream">
       <div class="msgs" id="msgs">
@@ -90,14 +169,31 @@
         </div>
       </div>
     </div>
+    <button class="jump" id="jump" hidden>↓ nowe</button>
     <div class="composer">
+      <div class="ctx-panel" id="ctxPanel">
+        <div class="ctx-hint">Dodatkowy kontekst do <b>tej</b> rozmowy — doradca użyje go jako faktów. Wklej cokolwiek (marże, cennik, dane z Excela: zaznacz komórki i wklej tu), albo wgraj plik tekstowy/CSV.</div>
+        <textarea id="ctxText" placeholder="Wklej tu tekst / dane z Excela / CSV…"></textarea>
+        <div class="ctx-row">
+          <label class="ctx-file-btn">Wgraj plik<input type="file" id="ctxFile" accept=".txt,.csv,.tsv,.md,.json,.log,.text" multiple hidden></label>
+          <span id="ctxCount">0 / 20000</span>
+          <button class="ctx-clear" id="ctxClear" type="button">Wyczyść</button>
+        </div>
+      </div>
       <div class="composer-in">
         <button class="btn mic" id="mic" title="Dyktuj" aria-label="Dyktuj">🎙</button>
         <textarea id="input" rows="1" placeholder="Napisz albo podyktuj…"></textarea>
         <button class="btn send" id="send" title="Wyślij" aria-label="Wyślij">➤</button>
       </div>
       <div class="row2">
-        <label class="toggle"><input type="checkbox" id="deep"> Głęboka analiza (wolniej, mocniej)</label>
+        <select class="model-sel" id="model" title="Model doradcy">
+          <option value="fable-5">Fable 5 · szybki</option>
+          <option value="opus-4-8">Opus 4.8 · najmocniejszy</option>
+          <option value="sonnet-5">Sonnet 5 · zbalansowany</option>
+          <option value="haiku-4-5">Haiku 4.5 · błyskawiczny</option>
+        </select>
+        <button class="row2-btn" id="ctxBtn" type="button">📎 Kontekst</button>
+        <button class="row2-btn" id="chatsToggle" type="button" style="margin-left:auto">🗂 Rozmowy</button>
         <button class="mem-btn" id="memToggle">🧠 Pamięć</button>
       </div>
     </div>
@@ -118,26 +214,140 @@
 
   var $ = function(id){ return document.getElementById(id); };
   var msgsEl = $('msgs'), streamEl = $('stream'), inputEl = $('input'), sendBtn = $('send'), micBtn = $('mic');
-  var STORE = 'doradca_watek_v1';
-  var history = [];            // [{role, content}] pełna rozmowa (do API)
+  var EMPTY_HTML = (function(){ var e=$('empty'); return e ? e.outerHTML : ''; })();
+
+  // ── Stan bieżącej rozmowy (historia = server-side, tabela doradca_chaty) ──
+  var history = [];             // [{role, content}] wiadomości bieżącej rozmowy (do API)
+  var currentChatId = null;     // id w doradca_chaty (null = niezapisana nowa rozmowa)
+  var currentModel = (function(){ try{ return localStorage.getItem('doradca_model') || 'fable-5'; }catch(_){ return 'fable-5'; } })();
+  var currentKontekst = '';
   var busy = false;
 
-  try { history = JSON.parse(localStorage.getItem(STORE) || '[]') || []; } catch(_) { history = []; }
-  function persist(){ try { localStorage.setItem(STORE, JSON.stringify(history.slice(-40))); } catch(_){} }
+  function renderConversation(){
+    msgsEl.innerHTML = history.length ? '' : EMPTY_HTML;
+    history.forEach(function(m){ addBubble(m.role, m.content); });
+    scrollToBottom();
+  }
 
   function esc(s){ var d=document.createElement('div'); d.textContent=String(s==null?'':s); return d.innerHTML; }
-  function scroll(){ streamEl.scrollTop = streamEl.scrollHeight; }
+  function escAttr(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function fmtZl(n){ try{ return new Intl.NumberFormat('pl-PL',{style:'currency',currency:'PLN',maximumFractionDigits:0}).format(n); }catch(_){ return n+' zł'; } }
   function hideEmpty(){ var e=$('empty'); if(e) e.remove(); }
+
+  // ── Render: lekki markdown (bezpieczny) + interaktywne znaczniki ⟦…⟧ ────────
+  function mdInline(s){
+    s = s.replace(/`([^`]+)`/g, function(_,c){ return '<code>'+c+'</code>'; });
+    s = s.replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/(^|[^*])\*([^*\n]+?)\*/g, '$1<em>$2</em>');
+    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    return s;
+  }
+  function mdInlineEsc(s){ return mdInline(esc(s)); }
+  function mdBlocks(text){
+    var lines=String(text).replace(/\r\n/g,'\n').split('\n'), html='', para=[];
+    function flush(){ if(para.length){ html+='<p>'+para.map(mdInlineEsc).join('<br>')+'</p>'; para=[]; } }
+    for(var i=0;i<lines.length;i++){
+      var t=lines[i].trim();
+      if(t===''){ flush(); continue; }
+      if(/^(-{3,}|_{3,}|\*{3,})$/.test(t)){ flush(); html+='<hr>'; continue; }
+      var h=/^(#{1,4})\s+(.*)$/.exec(t);
+      if(h){ flush(); html+='<div class="md-h md-h'+h[1].length+'">'+mdInlineEsc(h[2])+'</div>'; continue; }
+      if(/^[-*]\s+/.test(t)){ flush(); var it=[]; while(i<lines.length && /^[-*]\s+/.test(lines[i].trim())){ it.push(lines[i].trim().replace(/^[-*]\s+/,'')); i++; } i--; html+='<ul>'+it.map(function(x){return '<li>'+mdInlineEsc(x)+'</li>';}).join('')+'</ul>'; continue; }
+      if(/^\d+[.)]\s+/.test(t)){ flush(); var oi=[]; while(i<lines.length && /^\d+[.)]\s+/.test(lines[i].trim())){ oi.push(lines[i].trim().replace(/^\d+[.)]\s+/,'')); i++; } i--; html+='<ol>'+oi.map(function(x){return '<li>'+mdInlineEsc(x)+'</li>';}).join('')+'</ol>'; continue; }
+      para.push(lines[i]);
+    }
+    flush();
+    return html;
+  }
+  function caseWidget(body){
+    var m=/^(wycena|lead):(.+)$/.exec(body.trim()); if(!m) return null;
+    var typ=m[1], id=m[2].trim();
+    var label=(typ==='wycena'?'📄 Wycena #':'📇 Lead #')+esc(id);
+    return '<span class="case-pill" data-type="'+typ+'" data-id="'+escAttr(id)+'" role="button" tabindex="0">'+label+' <span class="cp-chev">▾</span></span>';
+  }
+  function akcjaWidget(body){
+    var parts=body.split('|'), owner='Lorenzo', title='', detail='';
+    var om=/^\s*owner\s*=\s*(.+)$/i.exec(parts[0]||'');
+    if(om){ owner=(om[1].trim())||'Lorenzo'; title=(parts[1]||'').trim(); detail=parts.slice(2).join('|').trim(); }
+    else { title=(parts[0]||'').trim(); detail=parts.slice(1).join('|').trim(); }
+    if(!title) return null;
+    return '<span class="akcja"><span class="akcja-label">📌 <b>'+esc(title)+'</b>'+(detail?' — '+esc(detail):'')+'</span>'
+      +'<button class="akcja-btn" type="button" data-owner="'+escAttr(owner)+'" data-tytul="'+escAttr(title)+'" data-szczegol="'+escAttr(detail)+'">→ Wyślij do '+esc(owner)+'</button></span>';
+  }
+  var TOKEN_RE=/⟦(case|akcja):([^⟧]*)⟧/g;
+  function renderRich(raw, streaming){
+    var text=String(raw==null?'':raw);
+    if(streaming){ var lo=text.lastIndexOf('⟦'); if(lo>=0 && text.indexOf('⟧',lo)<0) text=text.slice(0,lo); }
+    var widgets=[];
+    text=text.replace(TOKEN_RE, function(m,kind,bodyRaw){
+      var w=kind==='case'?caseWidget(bodyRaw):akcjaWidget(bodyRaw);
+      if(w==null) return m;
+      widgets.push(w); return ''+(widgets.length-1)+'';
+    });
+    return mdBlocks(text).replace(/(\d+)/g, function(_,i){ return widgets[Number(i)]||''; });
+  }
+  function caseCardHtml(d){
+    var r=[];
+    if(d.telefon) r.push('<a class="cc-tel" href="tel:'+escAttr(String(d.telefon).replace(/\s+/g,''))+'">'+esc(d.telefon)+'</a>');
+    if(d.kwota!=null) r.push('<b>'+fmtZl(d.kwota)+'</b>');
+    if(d.status) r.push(esc(d.status));
+    if(d.owner) r.push('👤 '+esc(d.owner));
+    if(d.wiek_dni!=null) r.push(esc(d.wiek_dni)+' dni w kolejce');
+    var meta=r.length?'<div class="cc-meta">'+r.join(' · ')+'</div>':'';
+    var note=d.ostatnia_notatka?'<div class="cc-note">„'+esc(d.ostatnia_notatka)+'"</div>':'';
+    var link=d.link?'<a class="cc-open" href="'+escAttr(d.link)+'" target="_blank" rel="noopener">'+esc(d.link_label||'Otwórz w panelu')+' →</a>':'';
+    return '<div class="cc-title">'+esc(d.tytul||'')+'</div>'+meta+note+link;
+  }
+
+  // ── Scroll: „przyklejony do dołu" tylko gdy jesteś przy dole ────────────────
+  var pinned=true, lastProg=0;
+  function atBottom(){ return (streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight) < 80; }
+  function updateJump(){ var j=$('jump'); if(!j) return; if(atBottom()) j.setAttribute('hidden',''); else j.removeAttribute('hidden'); }
+  function maybeScroll(){ if(pinned) streamEl.scrollTop=streamEl.scrollHeight; updateJump(); }
+  function scrollToBottom(){ pinned=true; streamEl.scrollTop=streamEl.scrollHeight; updateJump(); }
+  function scrollElToTop(el){ var top=el.getBoundingClientRect().top - streamEl.getBoundingClientRect().top + streamEl.scrollTop; lastProg=Date.now(); streamEl.scrollTop=Math.max(0, top-8); }
+  streamEl.addEventListener('scroll', function(){ if(Date.now()-lastProg<250) return; pinned=atBottom(); updateJump(); });
+  $('jump').addEventListener('click', scrollToBottom);
 
   function addBubble(role, text){
     hideEmpty();
     var b=document.createElement('div');
     b.className='bubble '+(role==='user'?'b-user':'b-ai');
-    b.textContent = text||'';
-    msgsEl.appendChild(b); scroll(); return b;
+    if(role==='user') b.textContent=text||''; else b.innerHTML=renderRich(text||'', false);
+    msgsEl.appendChild(b); return b;
   }
-  // Render zapisanej historii
-  history.forEach(function(m){ addBubble(m.role, m.content); });
+  // (render bieżącej rozmowy robi initChaty() na końcu — po wczytaniu z serwera)
+
+  // ── Klik w pigułkę case / przycisk akcji (delegacja — przeżywa re-render) ───
+  msgsEl.addEventListener('click', function(e){
+    var pill=e.target.closest && e.target.closest('.case-pill'); if(pill){ toggleCase(pill); return; }
+    var btn=e.target.closest && e.target.closest('.akcja-btn'); if(btn){ doAkcja(btn); return; }
+  });
+  msgsEl.addEventListener('keydown', function(e){
+    if((e.key==='Enter'||e.key===' ') && e.target.classList && e.target.classList.contains('case-pill')){ e.preventDefault(); toggleCase(e.target); }
+  });
+  async function toggleCase(pill){
+    var nxt=pill.nextElementSibling;
+    if(nxt && nxt.classList.contains('case-card')){
+      var hide=nxt.style.display!=='none'; nxt.style.display=hide?'none':''; pill.classList.toggle('open', !hide); return;
+    }
+    var card=document.createElement('span'); card.className='case-card'; card.textContent='Ładuję…';
+    pill.parentNode.insertBefore(card, pill.nextSibling); pill.classList.add('open'); maybeScroll();
+    try{
+      var res=await fetch(API+'/api/doradca/case?type='+encodeURIComponent(pill.dataset.type)+'&id='+encodeURIComponent(pill.dataset.id));
+      var d=await res.json(); if(!res.ok) throw new Error(d.error||('HTTP '+res.status));
+      card.innerHTML=caseCardHtml(d); maybeScroll();
+    }catch(err){ card.textContent='Nie udało się wczytać: '+err.message; }
+  }
+  async function doAkcja(btn){
+    if(btn.disabled) return;
+    btn.disabled=true; btn.textContent='Wysyłam…'; btn.classList.remove('fail');
+    try{
+      var res=await fetch(API+'/api/doradca/akcja',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({owner:btn.dataset.owner,tytul:btn.dataset.tytul,szczegol:btn.dataset.szczegol})});
+      var d=await res.json(); if(!res.ok||!d.ok) throw new Error(d.error||('HTTP '+res.status));
+      btn.classList.add('done'); btn.textContent='✓ Na backlogu '+(d.owner||btn.dataset.owner)+(d.powiadomiono?' · push':'');
+    }catch(err){ btn.disabled=false; btn.textContent='⚠ Nie poszło — kliknij, by spróbować'; btn.classList.add('fail'); btn.title=err.message; }
+  }
 
   function autogrow(){ inputEl.style.height='auto'; inputEl.style.height=Math.min(inputEl.scrollHeight,180)+'px'; }
   inputEl.addEventListener('input', autogrow);
@@ -148,13 +358,27 @@
     if (!text || busy) return;
     busy = true; sendBtn.disabled = true;
     inputEl.value=''; autogrow();
-    addBubble('user', text);
-    history.push({ role:'user', content:text }); persist();
+    var userBubble = addBubble('user', text);
+    history.push({ role:'user', content:text }); scheduleSave();
 
     var aiBubble = addBubble('ai', '');
     var cursor = document.createElement('span'); cursor.className='cursor';
     aiBubble.appendChild(cursor);
-    var toolsEl=null, answer='';
+    var toolsEl=null, answer='', renderPending=false;
+
+    // Pokaż pytanie u góry i NIE goń tekstu w dół — czytasz odpowiedź od
+    // początku; dopnij się do dołu dopiero, gdy sam tam zjedziesz.
+    requestAnimationFrame(function(){ scrollElToTop(userBubble); pinned=false; updateJump(); });
+
+    function paint(){
+      if(renderPending) return; renderPending=true;
+      requestAnimationFrame(function(){
+        renderPending=false;
+        aiBubble.innerHTML=renderRich(answer, true);
+        aiBubble.appendChild(cursor);
+        maybeScroll();
+      });
+    }
 
     function setTools(group){
       if(!toolsEl){ toolsEl=document.createElement('div'); toolsEl.className='tools'; msgsEl.insertBefore(toolsEl, aiBubble); }
@@ -164,16 +388,16 @@
     function markToolDone(group){ if(!toolsEl)return; var c=toolsEl.querySelector('.tool[data-g="'+group+'"].on'); if(c){ c.classList.remove('on'); c.textContent='✓ '+group; } }
 
     function handle(ev, data){
-      if(ev==='text'){ answer += data.text||''; aiBubble.textContent=answer; aiBubble.appendChild(cursor); scroll(); }
-      else if(ev==='tool'){ setTools(data.group); scroll(); }
+      if(ev==='text'){ answer += data.text||''; paint(); }
+      else if(ev==='tool'){ setTools(data.group); maybeScroll(); }
       else if(ev==='tool_result'){ markToolDone(data.group); }
-      else if(ev==='done'){ if(cursor.parentNode) cursor.remove(); }
+      else if(ev==='done'){ aiBubble.innerHTML=renderRich(answer, false); if(cursor.parentNode) cursor.remove(); maybeScroll(); }
       else if(ev==='nauczono'){
         var items=(data.inserted||[]);
         if(items.length){
           var n=document.createElement('div'); n.className='learned';
           n.innerHTML='<b>🧠 Zapamiętałem:</b> '+items.map(function(i){return esc(i.tekst);}).join(' · ');
-          msgsEl.appendChild(n); scroll();
+          msgsEl.appendChild(n); maybeScroll();
         }
         loadPamiec();
       }
@@ -183,7 +407,7 @@
     try{
       var res = await fetch(API+'/api/doradca/chat', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ messages: history, deep: $('deep').checked })
+        body: JSON.stringify({ messages: history, model: currentModel, kontekst: currentKontekst })
       });
       if(!res.ok || !res.body){ throw new Error('HTTP '+res.status); }
       var reader=res.body.getReader(), dec=new TextDecoder(), buf='';
@@ -206,8 +430,8 @@
       var e=document.createElement('div'); e.className='err'; e.textContent='Nie udało się: '+err.message; msgsEl.appendChild(e);
     }finally{
       if(cursor.parentNode)cursor.remove();
-      if(answer){ history.push({ role:'assistant', content:answer }); persist(); }
-      busy=false; sendBtn.disabled=false; inputEl.focus();
+      if(answer){ aiBubble.innerHTML=renderRich(answer, false); history.push({ role:'assistant', content:answer }); scheduleSave(); }
+      busy=false; sendBtn.disabled=false; inputEl.focus(); maybeScroll();
     }
   }
 
@@ -265,7 +489,154 @@
     try{ await fetch(API+'/api/doradca/pamiec/'+id+'/rozwiaz',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"status":"done"}'}); }catch(_){}
     loadPamiec();
   });
+  // ── Model ──────────────────────────────────────────────────────────────────
+  var modelSel=$('model');
+  modelSel.value=currentModel;
+  modelSel.addEventListener('change', function(){
+    currentModel=modelSel.value;
+    try{ localStorage.setItem('doradca_model', currentModel); }catch(_){}
+    if(currentChatId!=null) scheduleSave();
+  });
+  function applyModelSelect(){ if(modelSel) modelSel.value=currentModel; }
+
+  // ── Dodatkowy kontekst (wklej / wgraj CSV/txt) ─────────────────────────────
+  var CTX_MAX=20000, ctxText=$('ctxText');
+  function updateCtxBadge(){
+    $('ctxBtn').classList.toggle('has', (currentKontekst||'').trim().length>0);
+    var c=$('ctxCount'); if(c) c.textContent=(currentKontekst||'').length+' / '+CTX_MAX;
+  }
+  function applyKontekst(){ if(ctxText) ctxText.value=currentKontekst||''; updateCtxBadge(); }
+  var ctxSaveTimer=null;
+  function scheduleSaveCtx(){ if(ctxSaveTimer) clearTimeout(ctxSaveTimer); ctxSaveTimer=setTimeout(function(){ if(currentChatId!=null) scheduleSave(); }, 800); }
+  $('ctxBtn').addEventListener('click', function(){ var p=$('ctxPanel'); p.classList.toggle('open'); if(p.classList.contains('open')) ctxText.focus(); });
+  ctxText.addEventListener('input', function(){
+    if(ctxText.value.length>CTX_MAX) ctxText.value=ctxText.value.slice(0,CTX_MAX);
+    currentKontekst=ctxText.value; updateCtxBadge(); scheduleSaveCtx();
+  });
+  $('ctxClear').addEventListener('click', function(){ ctxText.value=''; currentKontekst=''; updateCtxBadge(); if(currentChatId!=null) scheduleSave(); });
+  $('ctxFile').addEventListener('change', function(e){
+    var files=e.target.files||[];
+    Array.prototype.forEach.call(files, function(f){
+      if(/\.(xlsx?|numbers|ods)$/i.test(f.name)){ alert('Plik „'+f.name+'": zapisz jako CSV, albo zaznacz komórki w Excelu i wklej (Ctrl+V) wprost do pola kontekstu.'); return; }
+      var reader=new FileReader();
+      reader.onload=function(){
+        var content=String(reader.result||'');
+        var head=(ctxText.value.trim()?'\n\n':'')+'--- '+f.name+' ---\n';
+        ctxText.value=(ctxText.value+head+content).slice(0,CTX_MAX);
+        currentKontekst=ctxText.value; updateCtxBadge(); scheduleSaveCtx();
+      };
+      reader.readAsText(f);
+    });
+    e.target.value='';
+  });
+
+  // ── Historia rozmów (sidebar) ──────────────────────────────────────────────
+  var chatsEl=$('chats'), chats=[];
+  function closeChatsPanel(){ chatsEl.classList.remove('open'); }
+  $('chatsToggle').addEventListener('click', function(){ chatsEl.classList.toggle('open'); });
+  $('chatsClose').addEventListener('click', closeChatsPanel);
+  $('chatNew').addEventListener('click', newChat);
+
+  function relDate(iso){
+    if(!iso) return '';
+    var d=new Date(iso), now=new Date();
+    var diff=Math.round((new Date(now.getFullYear(),now.getMonth(),now.getDate()) - new Date(d.getFullYear(),d.getMonth(),d.getDate()))/86400000);
+    if(diff<=0) return d.toLocaleTimeString('pl-PL',{hour:'2-digit',minute:'2-digit'});
+    if(diff===1) return 'wczoraj';
+    if(diff<7) return diff+' dni';
+    return d.toLocaleDateString('pl-PL',{day:'2-digit',month:'2-digit'});
+  }
+  function renderChats(){
+    var box=$('chatsList');
+    if(!chats.length){ box.innerHTML='<div class="mem-empty">Brak rozmów. Zacznij pisać — zapiszę ją tutaj.</div>'; return; }
+    box.innerHTML='';
+    chats.forEach(function(c){
+      var it=document.createElement('div');
+      it.className='chat-item'+(String(c.id)===String(currentChatId)?' active':'');
+      it.dataset.id=c.id;
+      it.innerHTML='<span class="ci-title">'+esc(c.tytul||'Rozmowa')+'</span>'
+        +'<span class="ci-when">'+esc(relDate(c.updated_at))+'</span>'
+        +'<span class="ci-x" title="Usuń rozmowę">×</span>';
+      box.appendChild(it);
+    });
+  }
+  $('chatsList').addEventListener('click', function(e){
+    var item=e.target.closest('.chat-item'); if(!item) return;
+    var id=item.dataset.id;
+    if(e.target.closest('.ci-x')){ e.stopPropagation(); if(confirm('Usunąć tę rozmowę?')) deleteChat(id); return; }
+    openChat(id);
+  });
+
+  async function loadChats(){
+    try{ var res=await fetch(API+'/api/doradca/chaty'); var d=await res.json(); chats=d.items||[]; }
+    catch(_){ chats=[]; }
+    renderChats();
+  }
+  async function openChat(id){
+    if(busy) return;
+    try{
+      var res=await fetch(API+'/api/doradca/chaty/'+id); var d=await res.json();
+      if(!res.ok) throw new Error(d.error||('HTTP '+res.status));
+      currentChatId=d.id;
+      history=Array.isArray(d.messages)?d.messages:[];
+      currentModel=d.model||currentModel||'fable-5';
+      currentKontekst=d.kontekst||'';
+      applyModelSelect(); applyKontekst(); renderConversation(); renderChats(); closeChatsPanel();
+    }catch(_){ /* zostań na bieżącej rozmowie */ }
+  }
+  function newChat(){
+    if(busy) return;
+    currentChatId=null; history=[]; currentKontekst='';
+    applyKontekst(); renderConversation(); renderChats(); closeChatsPanel(); inputEl.focus();
+  }
+  async function deleteChat(id){
+    try{ await fetch(API+'/api/doradca/chaty/'+id,{method:'DELETE'}); }catch(_){}
+    if(String(id)===String(currentChatId)) newChat();
+    loadChats();
+  }
+
+  // ── Zapis bieżącej rozmowy (debounce; create → potem update) ───────────────
+  var saveTimer=null, saving=false, saveAgain=false;
+  function scheduleSave(){ if(saveTimer) clearTimeout(saveTimer); saveTimer=setTimeout(saveNow, 500); }
+  function titleFrom(msgs){
+    var f=(msgs||[]).filter(function(m){return m&&m.role==='user'&&String(m.content||'').trim();})[0];
+    return (f?String(f.content).trim().replace(/\s+/g,' '):'Nowa rozmowa').slice(0,60);
+  }
+  async function saveNow(){
+    if(saving){ saveAgain=true; return; }
+    if(currentChatId==null && !history.length) return;
+    saving=true;
+    var payload={ messages:history.slice(-120), model:currentModel, kontekst:currentKontekst };
+    try{
+      if(currentChatId==null){
+        payload.tytul=titleFrom(history);
+        var res=await fetch(API+'/api/doradca/chaty',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        var d=await res.json(); if(res.ok&&d.id) currentChatId=d.id;
+      } else {
+        await fetch(API+'/api/doradca/chaty/'+currentChatId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      }
+      await loadChats();
+    }catch(_){}
+    saving=false;
+    if(saveAgain){ saveAgain=false; scheduleSave(); }
+  }
+
+  // ── Init: lista + jednorazowy import starego wątku + otwórz najświeższą ─────
+  async function initChaty(){
+    applyModelSelect(); applyKontekst();
+    await loadChats();
+    try{
+      var old=JSON.parse(localStorage.getItem('doradca_watek_v1')||'[]');
+      if(!chats.length && Array.isArray(old) && old.length){
+        var res=await fetch(API+'/api/doradca/chaty',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:old.slice(-120),tytul:'Import (poprzednie)',model:currentModel})});
+        if(res.ok){ try{ localStorage.removeItem('doradca_watek_v1'); }catch(_){}; await loadChats(); }
+      }
+    }catch(_){}
+    if(chats.length){ await openChat(chats[0].id); } else { renderConversation(); }
+  }
+
   loadPamiec();
+  initChaty();
 })();
 </script>
 </body>

@@ -100,3 +100,18 @@ test('runStats: nieznana grupa zwraca błąd zamiast rzucać', async () => {
   const out = await fable.runStats(emptyDb(), 'nie-ma-takiej');
   assert.ok(out.error && /Nieznana grupa/.test(out.error));
 });
+
+test('pickModel: wybór z UI (whitelist) ma pierwszeństwo, nieznany klucz → default', () => {
+  assert.equal(fable.pickModel(false, 'opus-4-8').model, 'claude-opus-4-8', 'opus z UI');
+  assert.equal(fable.pickModel(false, 'haiku-4-5').model, 'claude-haiku-4-5-20251001', 'haiku z UI');
+  assert.equal(fable.pickModel(false, 'nie-ma').model, 'claude-fable-5', 'nieznany klucz → fable-5');
+  assert.equal(fable.pickModel(false, '').model, 'claude-fable-5', 'brak klucza → fable-5');
+});
+
+test('buildSystemPrompt: dodatkowy kontekst wstrzykiwany tylko gdy niepusty', () => {
+  const withCtx = fable.buildSystemPrompt({}, '', 'MOJE MARŻE: COB 74%');
+  assert.match(withCtx, /DODATKOWY KONTEKST OD ANTONIEGO/);
+  assert.match(withCtx, /COB 74%/);
+  const noCtx = fable.buildSystemPrompt({}, '', '');
+  assert.ok(!/DODATKOWY KONTEKST/.test(noCtx), 'brak sekcji gdy kontekst pusty');
+});
