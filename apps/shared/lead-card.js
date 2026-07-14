@@ -982,11 +982,20 @@ window.LeadKarta = (() => {
     });
     opisWrap.append(opisLabel, opisValue);
 
-    // ── Historia rozmów (z licznikiem) ──
+    // ── Kontakt / Historia rozmów (z licznikiem) ──
+    // Gdy strona-host ładuje shared/kontakt-panel.js, sekcja to "Kontakt":
+    // scalona oś czasu karty ORAZ komunikatora (mail/DM, docelowo SMS —
+    // docs/plan-kontakt-karta-leada.md). Bez panelu zostaje stara Historia
+    // rozmów z kolumny — panel jest czystą nakładką.
     const historiaEntries = parseHistoriaRozmow(lead['Historia rozmów']);
     const historiaCount = historiaEntries.length || lead._ilosc_polaczen;
-    const historiaLabel = 'Historia rozmów' + (historiaCount ? ` · ${historiaCount}` : '');
-    const historia = buildNestedDetails(historiaLabel, (container) => loadHistoria(apiBase, lead, container));
+    const historiaLabel = (window.KontaktPanel ? 'Kontakt' : 'Historia rozmów')
+      + (historiaCount ? ` · ${historiaCount}` : '');
+    const historia = buildNestedDetails(historiaLabel, (container) => (
+      window.KontaktPanel
+        ? window.KontaktPanel.load(apiBase, lead, container)
+        : loadHistoria(apiBase, lead, container)
+    ));
 
     // Zwinięcie leada resetuje WSZYSTKIE podsekcje karty (Historia rozmów,
     // Pełne rozmowy, Wycena, zwijane pola) — ponowne otwarcie zawsze zaczyna
@@ -1008,7 +1017,12 @@ window.LeadKarta = (() => {
       const entry = `${nowPlDateTime()} - ${tresc}`;
       lead['Historia rozmów'] = lead['Historia rozmów'] ? `${entry}\n${lead['Historia rozmów']}` : entry;
       const container = historia.querySelector('div');
-      if (container) renderHistoriaFromColumn(parseHistoriaRozmow(lead['Historia rozmów']), container);
+      if (container) {
+        // Panel Kontakt renderuje scaloną oś czasu — odśwież całość (ma
+        // bezpiecznik na podwójne wywołanie, gdy open poniżej odpali loader).
+        if (window.KontaktPanel) window.KontaktPanel.load(apiBase, lead, container);
+        else renderHistoriaFromColumn(parseHistoriaRozmow(lead['Historia rozmów']), container);
+      }
       historia.open = true;
     }
 
@@ -1158,6 +1172,9 @@ window.LeadKarta = (() => {
     saveField,
     utils: {
       parseAnyDate,
+      // Parser kolumny "Historia rozmów" — używa go też shared/kontakt-panel.js
+      // do sklejenia wpisów karty z wiadomościami komunikatora.
+      parseHistoriaRozmow,
       formatDateOnly,
       formatPlDateTime,
       formatRelativeDateTime,

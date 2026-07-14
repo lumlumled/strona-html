@@ -490,3 +490,35 @@ table.lk-produkty th,
 table.lk-produkty td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--border); }
 
 table.lk-produkty th { color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.72rem; }
+
+/* ── Panel Kontakt — scalona oś czasu karty + komunikatora
+      (shared/kontakt-panel.js; reużywa stylu .lk-historia-rozmow-*). ── */
+.lk-kontakt-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  margin-top: 0.55rem;
+  font-size: 0.78rem;
+}
+
+.lk-kontakt-klient { color: var(--text-secondary); font-weight: 600; }
+
+.lk-kontakt-head a { color: var(--accent); text-decoration: none; font-size: 0.75rem; }
+.lk-kontakt-head a:hover { text-decoration: underline; }
+
+/* Wiadomość wychodząca (my) — kropka osi czasu w kolorze akcentu. */
+.lk-historia-rozmow-entry.lk-kontakt-out::before {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Długie treści (maile) zwinięte do kilku linii; klik rozwija/zwija. */
+.lk-kontakt-tresc { cursor: pointer; }
+
+.lk-kontakt-tresc.clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

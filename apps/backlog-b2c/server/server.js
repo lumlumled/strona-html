@@ -1531,6 +1531,11 @@ app.get('/api/leady/nowe', async (req, res) => {
 // CRM, implementacja w jednym miejscu.
 registerLeadyEndpoints(app, { getClient });
 
+// Panel Kontakt na karcie leada — wiadomości komunikatora dopasowane do leada
+// (apps/shared/server/kontakt-endpoints.js). Bramka panelu już chroni.
+const { registerKontaktEndpoints } = require('../../shared/server/kontakt-endpoints');
+registerKontaktEndpoints(app, { getClient });
+
 // Endpointy wycen (nowa tabela) — karta leada w Backlogu pokazuje wycenę w tym
 // samym formacie co panel Wyceny i pozwala ją edytować (zapis do bazy = cross-
 // ref). Bramka panelu już chroni; widoczność per owner siedzi w endpointach.

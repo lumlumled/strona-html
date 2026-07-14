@@ -6,6 +6,7 @@ const cors = require('cors');
 const { getClient } = require('./supabase');
 const { registerLeadyEndpoints, EDITABLE_LEAD_FIELDS, NIE_TELEFON_ZRODLA } = require('../../shared/server/leady-endpoints');
 const { registerWycenyEndpoints } = require('../../shared/server/wyceny-endpoints');
+const { registerKontaktEndpoints } = require('../../shared/server/kontakt-endpoints');
 const { createAuth, clientPayload, panelLinks, isAdmin } = require('../../shared/server/auth');
 const { servePushWorker, registerPushEndpoints } = require('../../shared/server/push');
 
@@ -194,6 +195,10 @@ app.get('/api/leady', requireLeadyView, async (req, res) => {
 // (te same ścieżki rejestruje Backlog; implementacja w jednym miejscu).
 // W CRM zapisy wymagają prawa edycji arkusza, odczyty — podglądu.
 registerLeadyEndpoints(app, { getClient, requireView: requireLeadyView, requireEdit: requireLeadyEdit });
+
+// Panel Kontakt na karcie leada — wiadomości komunikatora dopasowane do
+// leada (apps/shared/server/kontakt-endpoints.js); odczyt = prawo podglądu.
+registerKontaktEndpoints(app, { getClient, requireView: requireLeadyView });
 
 // ── AI: dyktowanie + uniwersalny filtr/odpowiedzi ───────────────────────────
 
