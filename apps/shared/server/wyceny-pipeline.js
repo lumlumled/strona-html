@@ -84,6 +84,23 @@ async function notifyFulfillment(db, wycena) {
   }
 }
 
+// Weekend-lean (§4 planu furgonetka-jutro): zamówienie GOTOWE w sobotę →
+// push „nadać dziś?" — nie nadasz, pojedzie dopiero w poniedziałek. Pełna
+// logika czw→pt (paczka sobotnia) świadomie odłożona na v2.
+function jestSobotaWarszawa() {
+  return new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Warsaw', weekday: 'short' })
+    .format(new Date()) === 'Sat';
+}
+async function pushWeekend(db, wycena) {
+  if (!jestSobotaWarszawa()) return;
+  await pushDoAdminow(db, {
+    title: 'Sobota — nadać dziś?',
+    body: `#${wycena.id} gotowe do pakowania. Nie nadasz dziś — pojedzie w poniedziałek.`,
+    url: '/fulfillment/',
+    tag: `weekend-${wycena.id}`,
+  });
+}
+
 // Wyliczenia 1:1 z Make (moduły 301/302/307):
 //   rabat_aktywny  — rabat 24h z przyszłym terminem
 //   kwota_finalna  — kwota_proponowana − aktywny rabat 24h
@@ -451,6 +468,7 @@ async function startPipeline(db, wycenaId) {
           attachments: [{ filename: `proforma-${wycena.id}.pdf`, data: pdf }],
         });
       }
+      if (shipment) await pushWeekend(db, wycena);
       await releaseLock(db, wycenaId, token, {
         process_stage: 'SHIPPED',
         status: 'Fulfilled',
@@ -543,7 +561,10 @@ async function onInvoicePaid(db, uuid) {
       status: 'Fulfilled',
       worker_last_error: null,
     });
-    if (shipment) await notifyFulfillment(db, wycena); // gotowe do spakowania
+    if (shipment) {
+      await notifyFulfillment(db, wycena); // gotowe do spakowania
+      await pushWeekend(db, wycena);
+    }
     return { ok: true };
   } catch (err) {
     await zapiszBlad(db, wycenaId, 'onInvoicePaid', err);
@@ -582,7 +603,10 @@ async function markPaidAndShip(db, wycenaId) {
       status: 'Fulfilled',
       worker_last_error: null,
     });
-    if (shipment) await notifyFulfillment(db, wycena);
+    if (shipment) {
+      await notifyFulfillment(db, wycena);
+      await pushWeekend(db, wycena);
+    }
     return { ok: true, path: 'manual-paid' };
   } catch (err) {
     await zapiszBlad(db, wycenaId, 'markPaidAndShip', err);

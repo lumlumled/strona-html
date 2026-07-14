@@ -77,7 +77,7 @@ Bez tego moduł Furgonetki nie działa w prod. To keystone.
   numbering, okno godzinowe) — sonda jak przy Furgonetce.
 
 ### 4. Weekend-lean (b)
-- [ ] Zamówienie przyjęte w sobotę → push do Antoniego „nadać dziś?" (tak → nadaj,
+- [x] Zamówienie przyjęte w sobotę → push do Antoniego „nadać dziś?" (tak → nadaj,
   nie → poniedziałek).
 - **Gotowe gdy:** sobotnie opłacone zamówienie generuje push z akcją.
 
