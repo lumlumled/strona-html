@@ -19,6 +19,12 @@ const WYCENY_TYPY = ['WYCENA', 'ZAMÓWIENIE', 'NOTATKA'];
 const watchdog = require('./watchdog');
 const WYCENA_CLOSING_STATUSY = new Set(['Fulfilled', 'Closed', 'Stracone']);
 
+// Lejek statusów leada (ten sam co po rozmowie telefonicznej) — utworzenie
+// wyceny podbija lead do "Wycena wysłana", ale NIGDY w dół (lead "Sprzedane"
+// nie cofa się przez nową wycenę). Patrz linkWycenaToLead.
+const { statusRank } = require('./call-analysis');
+const LEAD_STATUS_WYCENA = 'Wycena wysłana';
+
 // Publiczny link formularza dla klienta (podmieniany na formularz-test w testach).
 // Czysty ?id= bez tokenu — decyzja Antoniego: link ma być krótki. Endpoint GET
 // i tak przyjmuje linki bez tokenu (tokenOk zwraca true przy braku t); form_token
@@ -161,6 +167,80 @@ async function fetchLeadOwner(supabase, leadId) {
     .from('Leady B2C').select('"ID Leada", Owner').eq('ID Leada', id).limit(1);
   if (error) throw error;
   return data && data[0] ? String(data[0].Owner || '').trim() || null : null;
+}
+
+// 9-cyfrowy numer wyceny → obie postaci "Phone number" w Leady B2C: część
+// wierszy trzyma 48602366320 (z prefiksem), część 602366320 (bez). Zwraca
+// listę Number-ów do zapytania IN.
+function leadPhoneCandidates(digits) {
+  const d = String(digits || '').replace(/\D/g, '');
+  if (!d) return [];
+  const nine = d.replace(/^48/, '');
+  const cands = new Set();
+  if (nine) { cands.add(Number(nine)); cands.add(Number(`48${nine}`)); }
+  return [...cands].filter((n) => Number.isFinite(n));
+}
+
+// Utworzenie/przypięcie wyceny odbija się na powiązanym leadzie B2C (decyzja
+// Antoniego 2026-07-14): handlowiec ma na zwiniętym case'ie od razu widzieć,
+// że wycena poszła, i mieć do niej link. Robi dwie rzeczy:
+//  1. "Link do formularza" leada = link do formularza tej wyceny (najnowsza
+//     wygrywa — to miejsce, gdzie backlog pokazuje ↗ zamiast ×).
+//  2. "Deal stage" → "Wycena wysłana", ale TYLKO w górę lejka (statusRank) —
+//     lead "Sprzedane"/"Stracony" ani późniejszy etap nie cofa się.
+// Lead szukany po lead_id, a gdy go brak — po numerze telefonu; dopasowanie
+// po telefonie dopisuje wyceny.lead_id, żeby karta leada i kolejne edycje
+// znały powiązanie. Ownera NIE rusza (auto-match nie zmienia właściciela).
+// Notatki (typ NOTATKA) pomijamy. Nigdy nie wywala zapisu wyceny — błędy
+// tylko logujemy. Zwraca lead_id, jeśli dopisano go po telefonie (inaczej null).
+async function linkWycenaToLead(supabase, wycena) {
+  try {
+    if (!wycena || wycena.typ === 'NOTATKA') return null;
+
+    let lead = null;
+    let matchedByPhone = false;
+    if (wycena.lead_id) {
+      const id = Number(wycena.lead_id);
+      if (Number.isFinite(id)) {
+        const { data } = await supabase
+          .from('Leady B2C').select('"ID Leada", "Deal stage", "Link do formularza"')
+          .eq('ID Leada', id).limit(1);
+        lead = data && data[0];
+      }
+    }
+    if (!lead) {
+      const digits = wycena.telefon_digits || String(wycena.telefon_e164 || '').replace(/\D/g, '').replace(/^48/, '');
+      const cands = leadPhoneCandidates(digits);
+      if (cands.length) {
+        const { data } = await supabase
+          .from('Leady B2C').select('"ID Leada", "Deal stage", "Link do formularza"')
+          .in('Phone number', cands).limit(1);
+        lead = data && data[0];
+        matchedByPhone = Boolean(lead);
+      }
+    }
+    if (!lead) return null;
+
+    const patch = { 'Link do formularza': formularzLink(wycena) };
+    if (statusRank(lead['Deal stage']) < statusRank(LEAD_STATUS_WYCENA)) {
+      patch['Deal stage'] = LEAD_STATUS_WYCENA;
+    }
+    const { error: upErr } = await supabase
+      .from('Leady B2C').update(patch).eq('ID Leada', lead['ID Leada']);
+    if (upErr) throw upErr;
+
+    // Dopisz powiązanie na wycenie, gdy złapaliśmy leada po telefonie (int-
+    // jako-tekst, kanonicznie jak reszta lead_id — patrz backfill z 2026-07-12).
+    if (matchedByPhone && !wycena.lead_id && lead['ID Leada'] != null) {
+      const leadIdStr = String(lead['ID Leada']);
+      await supabase.from('wyceny').update({ lead_id: leadIdStr }).eq('id', wycena.id);
+      return leadIdStr;
+    }
+    return null;
+  } catch (err) {
+    console.error(`Wycena→lead: błąd linkowania wyceny ${wycena?.id}:`, err.message);
+    return null;
+  }
 }
 
 // Propagacja terminu feedbacku wyceny na leada (decyzja Antoniego 2026-07-12):
@@ -636,6 +716,10 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       const { data, error } = await supabase.from('wyceny').insert(row).select('*');
       if (error) throw error;
       await logEvent(supabase, id, 'wycena.created', { source: row.source, user: req.user.name });
+      // Odbij wycenę na powiązanym leadzie (status "Wycena wysłana" + link) —
+      // jeśli dopisano lead_id po telefonie, zwrotnie uzupełnij obiekt.
+      const linkedLeadId = await linkWycenaToLead(supabase, data[0]);
+      if (linkedLeadId) data[0].lead_id = linkedLeadId;
       if (body.feedback_due !== undefined) {
         await applyFeedbackDue(supabase, data[0], body.feedback_due, req.user.name);
       }
@@ -690,6 +774,9 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       } else if (patch.lead_id) {
         await adoptWatchAfterAssign(supabase, data[0]);
       }
+      // Ręczne przypięcie wyceny do leada ("Powiązany lead") odbija status
+      // "Wycena wysłana" + link na leadzie, tak samo jak utworzenie wyceny.
+      if (patch.lead_id) await linkWycenaToLead(supabase, data[0]);
       res.json({ data: decorate(data[0]) });
     } catch (err) {
       handleError(res, err, 502);
@@ -790,6 +877,8 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       const { data, error } = await supabase.from('wyceny').insert(insert).select('*');
       if (error) throw error;
       await logEvent(supabase, idData, 'wycena.created', { source: 'quick-add', user: req.user.name, tekst: String(tekst || '').slice(0, 500) });
+      const linkedLeadId = await linkWycenaToLead(supabase, data[0]);
+      if (linkedLeadId) data[0].lead_id = linkedLeadId;
       await notifyWycenaCreated(supabase, data[0], req.user.name);
       res.json({ data: decorate(data[0]), created: true });
     } catch (err) {
