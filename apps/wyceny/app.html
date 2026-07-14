@@ -223,6 +223,11 @@
       text-align: right;
     }
 
+    /* Lewa kolumna (imię + telefon). Desktop: zwykły rząd. Mobile: kolumna. */
+    .summary-main { display: flex; align-items: center; gap: 0.55rem; min-width: 0; }
+    .summary-phone-row { display: flex; align-items: center; gap: 0.55rem; flex: 0 0 auto; }
+    .summary-phone:empty, .summary-feedback:empty { display: none; }
+
     .summary-name {
       flex: 0 0 auto;
       max-width: 13rem;
@@ -328,12 +333,39 @@
 
     @media (max-width: 720px) {
       .content { padding: 1.25rem 1rem 3rem; }
-      /* Na wąskim ekranie chowamy redundancje, żeby zmieściła się kluczowa
-         treść: myślnik, daty, chip "Wycena" (każdy wiersz to wycena) oraz
-         "Link wysłany". Kwota (.summary-feedback) też schowana — jak w oryginale. */
-      .summary-dash, .summary-feedback, .wyceny-dates,
-      .typ-wycena, .stage-form-sent { display: none; }
-      .summary-name { max-width: 9rem; }
+
+      /* Na wąskim ekranie zostawiamy tylko kluczowe: #, imię, telefon, kwota,
+         status. Reszta (myślnik, daty, chip "Wycena", "Link wysłany", źródło,
+         właściciel, etap pipeline'u) schowana, żeby wiersz był czytelny. */
+      .summary-dash, .wyceny-dates, .typ-wycena, .stage-form-sent,
+      .zrodlo-chip, .owner-badge, .row-stage { display: none; }
+
+      /* Wiersz w dwóch liniach: LEWA = imię nad telefonem, PRAWA = status nad kwotą. */
+      .lead summary {
+        align-items: flex-start;
+        gap: 0.5rem;
+        padding: 0.55rem 0.7rem;
+      }
+      .chevron { width: 0.9rem; padding-top: 0.05rem; }
+      .lp { min-width: 1.1rem; padding-top: 0.1rem; }
+
+      .summary-main {
+        flex: 1 1 auto;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.15rem;
+      }
+      .summary-name { max-width: 100%; }
+      .summary-phone-row { gap: 0.35rem; }
+
+      /* Status na górze, kwota pod nim. column-reverse, bo w DOM kwota jest
+         przed pigułką statusu. */
+      .right-anchor {
+        flex-direction: column-reverse;
+        align-items: flex-end;
+        gap: 0.2rem;
+      }
+      .summary-feedback { font-size: 0.8rem; }
     }
   </style>
 </head>

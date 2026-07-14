@@ -285,21 +285,31 @@ window.WycenyTab = (() => {
       : '';
     const phone = h('span', 'summary-phone', phoneText);
 
+    // Lewa kolumna (imię + telefon). Desktop: jeden rząd „imię — telefon".
+    // Mobile: dwie linie — imię nad telefonem (patrz @media max-width: 720px).
+    const summaryMain = h('div', 'summary-main');
+    const phoneRow = h('div', 'summary-phone-row');
+    if (nameText) {
+      phoneRow.append(h('span', 'summary-dash', '—'));
+      summaryMain.append(h('span', 'summary-name', nameText));
+    }
+    phoneRow.append(phone);
+    summaryMain.append(phoneRow);
+
     const rightAnchor = h('div', 'right-anchor');
     const kwota = h('span', 'summary-feedback', moneyShort(wycena.kwota_proponowana_brutto));
     kwota.style.fontWeight = '700';
     kwota.style.color = 'var(--text-primary)';
     const stage = WycenaKarta.utils.stageChip(wycena.process_stage);
+    stage.classList.add('row-stage');
     // "Link wysłany" (FORM_SENT) chowamy na mobile — mało istotny przy ciasnym
     // ekranie; status wyceny i tak jest w pigułce po prawej. Inne etapy zostają.
     if (wycena.process_stage === 'FORM_SENT') stage.classList.add('stage-form-sent');
+    // Na mobile prawa kolumna to status nad kwotą — reszta (właściciel, etap,
+    // źródło) schowana pod @media, żeby wiersz był czytelny w dwóch liniach.
     rightAnchor.append(ownerBadge(wycena.owner), kwota, stage, buildStatusPill(wycena));
 
-    summary.append(chevron, lp, typChip, zrodloChip);
-    if (nameText) {
-      summary.append(h('span', 'summary-name', nameText), h('span', 'summary-dash', '—'));
-    }
-    summary.append(phone, buildDates(wycena), rightAnchor);
+    summary.append(chevron, lp, typChip, zrodloChip, summaryMain, buildDates(wycena), rightAnchor);
     details.appendChild(summary);
 
     let bodyBuilt = false;
