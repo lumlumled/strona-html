@@ -59,11 +59,11 @@ Bez tego moduł Furgonetki nie działa w prod. To keystone.
 ### 2. Formularz — koszt dostawy + paczkomat tylko PL numer
 (Antoni wkleja liquid do Shopify SAM — ja przygotowuję kod/snippet.)
 
-- [ ] Koszt dostawy w formularzu: PL „Przesyłka darmowa" / EU „50 zł" / poza „100 zł"
+- [x] Koszt dostawy w formularzu: PL „Przesyłka darmowa" / EU „50 zł" / poza „100 zł"
   (ta sama reguła co faktura).
-- [ ] Obcy prefiks telefonu → **ukryj opcję paczkomatu** + komunikat „Chcesz
+- [x] Obcy prefiks telefonu → **ukryj opcję paczkomatu** + komunikat „Chcesz
   dostawę do paczkomatu? Podaj polski numer telefonu."
-- [ ] Zagranica → wymuś kuriera (COD już zablokowany).
+- [x] Zagranica → wymuś kuriera (COD już zablokowany).
 - **Gotowe gdy:** zmiana kraju/prefiksu na żywo aktualizuje koszt i widoczność paczkomatu.
 
 ### 3. Odbiór kuriera InPost (dispatch_order) z /fulfillment

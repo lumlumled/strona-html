@@ -204,6 +204,7 @@
                   </label>
                 </div>
                 <div class="lumlum-orderfill__field-error" data-err-for="delivery_method"></div>
+                <div class="lumlum-orderfill__hint is-hidden" data-locker-msg>Chcesz dostawę do paczkomatu? Podaj polski numer telefonu.</div>
 
 <div class="lumlum-orderfill__field lumlum-orderfill__locker is-hidden" data-locker-wrap>
   <div class="lumlum-orderfill__label">
@@ -595,6 +596,11 @@
           <div class="lumlum-orderfill__sum-row is-hidden" data-discount-row>
             <div class="lumlum-orderfill__sum-label">Rabat</div>
             <div class="lumlum-orderfill__sum-val lumlum-orderfill__sum-val--neg" data-discount>—</div>
+          </div>
+
+          <div class="lumlum-orderfill__sum-row" data-shipping-row>
+            <div class="lumlum-orderfill__sum-label">Dostawa</div>
+            <div class="lumlum-orderfill__sum-val" data-shipping>Przesyłka darmowa</div>
           </div>
 
           <div class="lumlum-orderfill__sum-row lumlum-orderfill__sum-row--total">
@@ -1729,6 +1735,65 @@
   }
 
   /* =========================================================
+     Dostawa: koszt (PL darmowa / Europa 50 zł / poza 100 zł) +
+     paczkomat tylko przy PL adresie ORAZ polskim numerze (+48).
+     LUSTRO reguł serwera: wyceny-infakt.js shippingSurchargePLN
+     (EUROPA_CC — trzymać zgodnie) i routing wyceny-pipeline.js.
+     ========================================================= */
+  var EUROPA_CC = ['AT','BE','BG','HR','CY','CZ','DK','EE','FI','FR','DE','GR','HU',
+    'IE','IT','LV','LT','LU','MT','NL','PL','PT','RO','SK','SI','ES',
+    'SE','IS','LI','NO','CH','GB','UA','MD','BY','RS','BA','ME','MK',
+    'AL','XK','AD','MC','SM','VA','GI','FO'];
+
+  function shippingCostPLN(){
+    var el = document.getElementById('lumlum-ship-country');
+    var cc = el ? String(el.value || 'PL').trim().toUpperCase() : 'PL';
+    if (!cc || cc === 'PL') return 0;
+    return EUROPA_CC.indexOf(cc) !== -1 ? 50 : 100;
+  }
+
+  function updateShippingCost(){
+    if (!state.payload) return; // przed pobraniem zamówienia nie ruszamy „—"
+    var cost = shippingCostPLN();
+    var costText = cost > 0 ? moneyPLN(cost) : 'Przesyłka darmowa';
+    var base = parseMoney(state.payload.kwota_proponowana_brutto);
+    var totalText = isFinite(base) ? moneyPLN(base + cost) : '—';
+    var i;
+    var ships = document.querySelectorAll('[data-shipping]');
+    for (i = 0; i < ships.length; i += 1) ships[i].textContent = costText;
+    var totals = document.querySelectorAll('[data-total]');
+    for (i = 0; i < totals.length; i += 1) totals[i].textContent = totalText;
+    if (els.totalInline) els.totalInline.textContent = totalText;
+  }
+
+  function setLockerAvailability(){
+    if (!els.form) return;
+    var countryEl = document.getElementById('lumlum-ship-country');
+    var isPL = !countryEl || String(countryEl.value || 'PL') === 'PL';
+    var prefixEl = document.getElementById('lumlum-phone-prefix');
+    var prefixPL = !prefixEl || String(prefixEl.value || '+48') === '+48';
+    var dostepny = isPL && prefixPL;
+
+    var lockerInput = els.form.querySelector('input[name="delivery_method"][value="INPOST_LOCKER"]');
+    var lockerLabel = lockerInput ? lockerInput.closest('label') : null;
+    if (lockerLabel) lockerLabel.classList.toggle('is-hidden', !dostepny);
+
+    // Komunikat tylko gdy blokuje PREFIKS (PL adres, obcy numer) — polski numer
+    // przywraca paczkomat. Zagranica = kurier wymuszony, bez komunikatu.
+    var msg = els.form.querySelector('[data-locker-msg]');
+    if (msg) msg.classList.toggle('is-hidden', !(isPL && !prefixPL));
+
+    if (!dostepny && lockerInput && lockerInput.checked){
+      var courier = els.form.querySelector('input[name="delivery_method"][value="COURIER"]');
+      if (courier){
+        courier.checked = true;
+        // przez change na root: chowa wybór paczkomatu i resetuje mapę
+        courier.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+  }
+
+  /* =========================================================
      Invoice company address copy + warning logic
      ========================================================= */
   function getShipAddressSnapshot(){
@@ -1866,7 +1931,11 @@
       elm.addEventListener('change', function(){
         evaluateInvShipWarning();
         // also re-evaluate COD availability when country changes
-        if (elm.id === 'lumlum-ship-country') setCodAvailabilityByCountry();
+        if (elm.id === 'lumlum-ship-country'){
+          setCodAvailabilityByCountry();
+          setLockerAvailability();
+          updateShippingCost();
+        }
       });
     });
 
@@ -2132,6 +2201,7 @@
     if (els.totalInline) els.totalInline.textContent = moneyPLN(data && data.kwota_proponowana_brutto);
     buildSummaryInto(els.summaryDesktop, data || {});
     buildSummaryInto(els.summaryMobile, data || {});
+    updateShippingCost(); // wiersz „Dostawa" + suma z dopłatą wg kraju
   }
 
   /* =========================================================
@@ -2165,6 +2235,7 @@
 
     // NEW: apply COD visibility after load
     setCodAvailabilityByCountry();
+    setLockerAvailability();
     // Rabat 24H
     renderRabat24h(data || {});
     }catch(e){
@@ -2524,6 +2595,13 @@
       // NEW: country change → COD rule
       if (t.name === 'ship_country'){
         setCodAvailabilityByCountry();
+        setLockerAvailability();
+        updateShippingCost();
+      }
+
+      // obcy prefiks telefonu → paczkomat znika (InPost wymaga PL numeru)
+      if (t.name === 'phone_prefix'){
+        setLockerAvailability();
       }
     });
 
@@ -2591,6 +2669,7 @@
     // NEW: bind copy+warning + COD on country
     bindInvCompanyCopyAndWarning();
     setCodAvailabilityByCountry();
+    setLockerAvailability();
 
     var id = new URLSearchParams(location.search).get('id');
     if (!id){
