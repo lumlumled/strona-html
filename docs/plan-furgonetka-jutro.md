@@ -33,21 +33,21 @@
 ### 1. Pipeline zagranica full-auto (RDZEŃ) — `wyceny-pipeline.js`
 Bez tego moduł Furgonetki nie działa w prod. To keystone.
 
-- [ ] Routing przewoźnika w kroku przesyłki:
+- [x] Routing przewoźnika w kroku przesyłki:
   - dostawa PL **i** telefon +48 → InPost (ShipX), bez zmian, paczkomat OK;
   - dostawa PL **ale** telefon nie-+48 → Furgonetka kurier;
   - dostawa ≠ PL → Furgonetka kurier.
   - Warunek Furgonetki: `ship_country != 'PL'` **OR** `!telefon.startsWith('+48'/'48')`.
-- [ ] `krokPrzesylkaFurgonetka`: `calculatePrice` → najtańsza z allow-listy →
+- [x] `krokPrzesylkaFurgonetka`: `calculatePrice` → najtańsza z allow-listy →
   `createPackage` → `orderPackage` → `getTracking`/pickup → `downloadLabel` A6 →
   zapis `wyceny_shipments (provider='furgonetka', label_url, tracking)`.
-- [ ] **Duty-guard**: jeśli kraj poza UE (US/UK/CH/NO/UA/…) → NIE zamawiaj,
+- [x] **Duty-guard**: jeśli kraj poza UE (US/UK/CH/NO/UA/…) → NIE zamawiaj,
   ustaw status wstrzymania + `notifyUser` push do Antoniego „zagraniczne cło —
   dokończ ręcznie". (UE = leci automatem.)
-- [ ] **Faktura firmy zagranicznej**: jeśli zagranica **i** NIP/firma → NIE
+- [x] **Faktura firmy zagranicznej**: jeśli zagranica **i** NIP/firma → NIE
   wystawiaj faktury automatycznie, wstrzymaj + push „firma zagr., wystaw ręcznie
   (odwrotne obciążenie)". Klient prywatny zagr. → faktura 23% + dopłata (jest).
-- [ ] Push sukcesu: „Kurier <przewoźnik> zamówiony, odbiór o HH:MM, etykieta A6" +
+- [x] Push sukcesu: „Kurier <przewoźnik> zamówiony, odbiór o HH:MM, etykieta A6" +
   `notifyFulfillment`.
 - **Gotowe gdy:** zagraniczne opłacone zamówienie prywatne (UE) samo tworzy paczkę,
   zamawia kuriera, etykieta A6 w `wyceny_shipments`, push z godziną. Poza-UE i firma
@@ -67,11 +67,11 @@ Bez tego moduł Furgonetki nie działa w prod. To keystone.
 - **Gotowe gdy:** zmiana kraju/prefiksu na żywo aktualizuje koszt i widoczność paczkomatu.
 
 ### 3. Odbiór kuriera InPost (dispatch_order) z /fulfillment
-- [ ] Przy pierwszym „Drukuj etykietę"/„Oznacz" danego dnia (przed 15:00) →
+- [x] Przy pierwszym „Drukuj etykietę"/„Oznacz" danego dnia (przed 15:00) →
   `POST /v1/organizations/{id}/dispatch_orders` (ShipX) na dzisiejsze gotowe
   przesyłki InPost, okno **15:00–17:00**, adres Walońska 7/84.
-- [ ] Idempotencja: flaga daty w bazie — RAZ dziennie; kolejne kliknięcia = nic.
-- [ ] Po 15:00 → za późno na dziś (info/następny dzień).
+- [x] Idempotencja: flaga daty w bazie — RAZ dziennie; kolejne kliknięcia = nic.
+- [x] Po 15:00 → za późno na dziś (info/następny dzień).
 - **Gotowe gdy:** 3 kliknięcia tego samego dnia = 1 podjazd; potwierdzenie w panelu.
 - Uwaga: potwierdzić dokładny kształt `dispatch_orders` w ShipX (organization_id,
   numbering, okno godzinowe) — sonda jak przy Furgonetce.

@@ -168,9 +168,11 @@ async function zamowKuriera(supabase, { user } = {}) {
     return { dispatch: 'juz-zamowiony' };
   }
   if (godzinaWarszawy(teraz) >= DISPATCH_CUTOFF_HOUR) return { dispatch: 'za-pozno' };
-  // Tylko confirmed (wymóg ShipX) i bez wcześniejszego zlecenia — przesyłka
-  // może być w JEDNYM zleceniu, inaczej 400 dla całego zlecenia.
-  const doOdbioru = all.filter((s) => String(s.status) === 'confirmed'
+  // Tylko InPost (Furgonetka ma własny odbiór ustawiany przy orderze), tylko
+  // confirmed (wymóg ShipX) i bez wcześniejszego zlecenia — przesyłka może być
+  // w JEDNYM zleceniu, inaczej 400 dla całego zlecenia.
+  const doOdbioru = all.filter((s) => (s.provider || 'shipx') !== 'furgonetka'
+    && String(s.status) === 'confirmed'
     && !s.nadana_at && !s.delivered_at && s.tracking_number && !s.dispatch_order_id);
   if (!doOdbioru.length) return { dispatch: 'brak-paczek' };
   const shipx = require('./wyceny-shipx');

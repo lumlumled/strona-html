@@ -890,8 +890,21 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
 
   app.get('/api/wyceny/label/:shipmentId', requireView, async (req, res) => {
     try {
-      const shipx = require('./wyceny-shipx');
-      const pdf = await shipx.downloadLabel(String(req.params.shipmentId));
+      const shipmentId = String(req.params.shipmentId);
+      // Etykieta wg providera przesyłki: zagranica (Furgonetka) ma własny
+      // endpoint etykiet; brak wiersza / provider shipx = InPost jak dotąd.
+      const supabase = getClient();
+      const { data } = await supabase.from('wyceny_shipments')
+        .select('provider').eq('shipment_id', shipmentId).limit(1);
+      let pdf;
+      if (data && data[0] && data[0].provider === 'furgonetka') {
+        const furgonetka = require('./wyceny-furgonetka');
+        furgonetka.useTokenStore(furgonetka.makeSupabaseTokenStore(supabase));
+        pdf = await furgonetka.downloadLabel(shipmentId);
+      } else {
+        const shipx = require('./wyceny-shipx');
+        pdf = await shipx.downloadLabel(shipmentId);
+      }
       res.type('application/pdf').set('Content-Disposition', 'inline; filename="etykieta.pdf"').send(pdf);
     } catch (err) {
       handleError(res, err, 502);

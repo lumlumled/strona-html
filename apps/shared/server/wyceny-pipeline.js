@@ -7,8 +7,11 @@
 //   PRZELEW:   proforma "transfer" + szybka płatność -> mail z linkiem ->
 //              po OPŁACENIU (webhook inFakt) przesyłka (bez COD), faktura VAT
 //              (paid), KSeF, delete proformy, mail z VAT i trackingiem.
-//   ZAGRANICA: kraj != PL -> bez auto-przesyłki (jak dziś w Make; Furgonetka
-//              dojdzie po cutoverze) — proforma/faktura normalnie.
+//   ZAGRANICA: routing przewoźnika (2026-07-14): InPost tylko PL+numer +48;
+//              zagranica/obcy numer -> Furgonetka FULL AUTO (najtańszy z
+//              allow-listy, order, etykieta A6, push z odbiorem) dla UE;
+//              poza UE (dane celne) i firma zagraniczna (odwrotne obciążenie)
+//              -> wstrzymanie + push do Antoniego.
 //
 // Idempotencja: lock na wycenie (lock_token + lock_expires_at) + wznowienie
 // od brakującego kroku (istniejąca przesyłka/faktura nie jest tworzona
@@ -108,6 +111,54 @@ function jestZagranica(wycena) {
   return Boolean(wycena.ship_country && wycena.ship_country !== 'PL');
 }
 
+// ── Routing przewoźnika (spec furgonetka-zagranica, dogrywka 2026-07-13) ─────
+// InPost (ShipX) TYLKO gdy dostawa PL ORAZ polski numer (+48) — InPost wymaga
+// PL numeru do SMS-ów/paczkomatu. Wszystko inne = Furgonetka kurier.
+function telefonPolski(wycena) {
+  const e164 = String(wycena.telefon_e164 || '').replace(/^\+/, '');
+  if (e164) return /^48\d{9}$/.test(e164);
+  const digits = String(wycena.telefon_digits || '').replace(/\D/g, '');
+  // 9 cyfr = polski lokalny (konwencja bazy); brak numeru nie blokuje InPostu.
+  return !digits || /^\d{9}$/.test(digits) || /^48\d{9}$/.test(digits);
+}
+function jestFurgonetka(wycena) {
+  return jestZagranica(wycena) || !telefonPolski(wycena);
+}
+
+// Duty-guard: UE (unia celna) = full auto; cała reszta (US, UK, CH, NO, UA, …)
+// wymaga danych celnych `duty`, których nie wysyłamy → order by padł →
+// wstrzymujemy z pushem zamiast produkować błąd.
+const UE = new Set([
+  'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU',
+  'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE',
+]);
+function wymagaCla(wycena) {
+  return jestZagranica(wycena) && !UE.has(String(wycena.ship_country || '').toUpperCase());
+}
+
+// Firma na fakturze: NIP jak w wyceny-infakt (firma = NIP > 6 znaków) LUB nazwa
+// firmy (zagraniczne firmy nie mają polskiego NIP-u). Dla zagranicy firma =
+// odwrotne obciążenie, polski 23% VAT byłby błędny → faktura ręcznie.
+function firmaNaFakturze(wycena) {
+  return String(wycena.invoice_company_nip || '').trim().length > 6
+    || String(wycena.invoice_company_name || '').trim().length > 1;
+}
+
+// Push do adminów (Antoni) — alerty pipeline'u zagranicy (wstrzymania, kurier
+// zamówiony). Nigdy nie wywala pipeline'u.
+async function pushDoAdminow(db, { title, body, url, tag }) {
+  try {
+    const push = require('./push');
+    if (!push || !push.notifyUser) return;
+    const { data } = await db.from('app_users').select('id,role').eq('active', true);
+    for (const u of (data || []).filter((x) => x.role === 'admin')) {
+      await push.notifyUser(() => db, u.id, { title, body, url, tag });
+    }
+  } catch (err) {
+    console.warn('Push adminów nie wyszedł:', err.message);
+  }
+}
+
 async function loadWycena(db, id) {
   const { data, error } = await db.from('wyceny').select('*').eq('id', id).limit(1);
   if (error) throw error;
@@ -195,6 +246,60 @@ async function krokPrzesylka(db, wycena, { codAmount, insuranceAmount, kind = 'o
     }
   }
   return shipment;
+}
+
+// Przesyłka zagraniczna przez Furgonetkę — FULL AUTO (decyzja Antoniego,
+// spec furgonetka-zagranica): najtańszy DOZWOLONY kurier (DPD/DHL/FedEx/UPS)
+// → order (kupno) → etykieta A6 → wiersz wyceny_shipments + push „kurier
+// zamówiony". Wołane TYLKO dla UE (duty-guard w utworzPrzesylkeWgRoutingu).
+async function krokPrzesylkaFurgonetka(db, wycena, { kind = 'order' } = {}) {
+  furgonetka.useTokenStore(furgonetka.makeSupabaseTokenStore(db));
+  const wynik = await furgonetka.zamowPrzesylkeZagraniczna(wycena);
+  const { data: rows, error } = await db.from('wyceny_shipments').insert({
+    wycena_id: wycena.id,
+    provider: 'furgonetka',
+    kind,
+    shipment_id: String(wynik.shipment_id),
+    service: wynik.service || null,
+    status: 'confirmed', // zamówiona = etykieta jest → od razu gotowa do pakowania
+    raw_status: 'ordered',
+    tracking_number: wynik.tracking_number || null,
+  }).select('*');
+  if (error) throw error;
+  const shipment = rows[0];
+  await logEvent(db, wycena.id, kind === 'reship' ? 'shipment.reship' : 'shipment.created', {
+    provider: 'furgonetka', shipment_id: String(wynik.shipment_id), service: wynik.service,
+    cena_kuriera: wynik.cena_kuriera, order_uuid: wynik.order_uuid, pickup: wynik.pickup,
+  });
+  await pushDoAdminow(db, {
+    title: `Kurier ${String(wynik.service || 'Furgonetka').toUpperCase()} zamówiony`,
+    body: `#${wycena.id} · ${wycena.ship_country || 'PL'}`
+      + (wynik.pickup && wynik.pickup.date ? ` · odbiór ${wynik.pickup.date}` : '')
+      + (wynik.cena_kuriera != null ? ` · ${wynik.cena_kuriera} zł` : ''),
+    url: '/fulfillment/',
+    tag: `furgonetka-${wycena.id}`,
+  });
+  return shipment;
+}
+
+// Przesyłka po opłaceniu wg ROUTINGU przewoźnika: InPost (PL + polski numer),
+// Furgonetka (zagranica / obcy numer, tylko UE), albo wstrzymanie z pushem
+// (poza UE = dane celne). Zwraca wiersz przesyłki albo null (wstrzymane).
+async function utworzPrzesylkeWgRoutingu(db, wycena, { insuranceAmount } = {}) {
+  if (!jestFurgonetka(wycena)) {
+    return krokPrzesylka(db, wycena, { codAmount: null, insuranceAmount });
+  }
+  if (wymagaCla(wycena)) {
+    await logEvent(db, wycena.id, 'pipeline.hold_duty', { kraj: wycena.ship_country });
+    await pushDoAdminow(db, {
+      title: 'Zagranica poza UE — wyślij ręcznie',
+      body: `#${wycena.id} · ${wycena.ship_country} — wymaga danych celnych; zamów kuriera w panelu Furgonetki`,
+      url: '/fulfillment/',
+      tag: `hold-duty-${wycena.id}`,
+    });
+    return null;
+  }
+  return krokPrzesylkaFurgonetka(db, wycena);
 }
 
 // Proforma inFakt; zwraca wiersz wyceny_invoices (uuid może dociągnąć worker).
@@ -296,11 +401,43 @@ async function startPipeline(db, wycenaId) {
       db.from('wyceny_invoices').select('*').eq('wycena_id', wycenaId).eq('kind', 'proforma'),
     ]);
 
+    // Firma zagraniczna = odwrotne obciążenie, polski 23% VAT byłby błędny —
+    // NIE wystawiamy nic automatycznie (decyzja Antoniego, spec zagranica).
+    // Antoni: FV ręcznie, potem „Oznacz opłacone" (markPaidAndShip bez proformy
+    // zrobi przesyłkę wg routingu). Stan HOLD_MANUAL jest poza retry workera.
+    if (zagranica && firmaNaFakturze(wycena) && !(invoices || []).length) {
+      await logEvent(db, wycenaId, 'pipeline.hold_b2b_zagranica', {
+        kraj: wycena.ship_country, nip: wycena.invoice_company_nip || null,
+      });
+      await pushDoAdminow(db, {
+        title: 'Firma zagraniczna — faktura ręcznie',
+        body: `#${wycena.id} · ${wycena.ship_country} · odwrotne obciążenie — wystaw FV ręcznie, potem „Oznacz opłacone"`,
+        url: '/sprzedaze/',
+        tag: `hold-b2b-${wycena.id}`,
+      });
+      await releaseLock(db, wycenaId, token, {
+        process_stage: 'HOLD_MANUAL',
+        status: 'Waiting for payment',
+        worker_last_error: null,
+      });
+      return { ok: true, path: 'hold-b2b-zagranica' };
+    }
+
     if (isCod) {
       // POBRANIE: przesyłka z COD od razu, proforma "delivery", mail z trackingiem
       let shipment = (shipments || [])[0];
-      if (!shipment && !zagranica) {
+      if (!shipment && !jestFurgonetka(wycena)) {
         shipment = await krokPrzesylka(db, wycena, { codAmount: kwotaFinalna, insuranceAmount: kwotaFinalna });
+      } else if (!shipment) {
+        // Pobranie nie jeździ Furgonetką (v1 bez COD w payloadzie; formularz
+        // blokuje COD dla zagranicy — to głównie PL adres + obcy numer).
+        await logEvent(db, wycenaId, 'pipeline.manual_shipping_needed', { kraj: wycena.ship_country || 'PL', powod: 'cod-poza-inpost' });
+        await pushDoAdminow(db, {
+          title: 'Pobranie poza InPostem — wyślij ręcznie',
+          body: `#${wycena.id} · obcy numer/kraj — zamów kuriera ręcznie`,
+          url: '/fulfillment/',
+          tag: `hold-cod-${wycena.id}`,
+        });
       }
       let proformaRow = (invoices || [])[0];
       if (!proformaRow) {
@@ -383,17 +520,12 @@ async function onInvoicePaid(db, uuid) {
     await logEvent(db, wycenaId, 'invoice.paid', { uuid });
 
     const { kwotaFinalna } = policzKwoty(wycena);
-    const zagranica = jestZagranica(wycena);
 
-    let shipment = null;
-    if (!zagranica) {
-      const { data: existing } = await db.from('wyceny_shipments')
-        .select('*').eq('wycena_id', wycenaId).eq('kind', 'order');
-      shipment = (existing || [])[0]
-        || await krokPrzesylka(db, wycena, { codAmount: null, insuranceAmount: kwotaFinalna });
-    } else {
-      await logEvent(db, wycenaId, 'pipeline.manual_shipping_needed', { kraj: wycena.ship_country });
-    }
+    // Przesyłka wg routingu (InPost / Furgonetka UE / wstrzymanie poza-UE).
+    const { data: existing } = await db.from('wyceny_shipments')
+      .select('*').eq('wycena_id', wycenaId).eq('kind', 'order');
+    const shipment = (existing || [])[0]
+      || await utworzPrzesylkeWgRoutingu(db, wycena, { insuranceAmount: kwotaFinalna });
 
     const { pdf } = await krokFakturaKoncowa(db, wycena, proformaRow);
     if (wycena.email) {
@@ -407,7 +539,7 @@ async function onInvoicePaid(db, uuid) {
       });
     }
     await releaseLock(db, wycenaId, token, {
-      process_stage: zagranica ? 'PAID' : 'SHIPPED',
+      process_stage: shipment ? 'SHIPPED' : 'PAID',
       status: 'Fulfilled',
       worker_last_error: null,
     });
@@ -438,21 +570,15 @@ async function markPaidAndShip(db, wycenaId) {
   if (!token) return { skipped: 'locked' };
   try {
     const { kwotaFinalna } = policzKwoty(wycena);
-    const zagranica = jestZagranica(wycena);
-    let shipment = null;
-    if (!zagranica) {
-      const { data: existing } = await db.from('wyceny_shipments')
-        .select('*').eq('wycena_id', wycenaId).eq('kind', 'order');
-      shipment = (existing || [])[0]
-        || await krokPrzesylka(db, wycena, { codAmount: null, insuranceAmount: kwotaFinalna });
-    } else {
-      await logEvent(db, wycenaId, 'pipeline.manual_shipping_needed', { kraj: wycena.ship_country });
-    }
+    const { data: existing } = await db.from('wyceny_shipments')
+      .select('*').eq('wycena_id', wycenaId).eq('kind', 'order');
+    const shipment = (existing || [])[0]
+      || await utworzPrzesylkeWgRoutingu(db, wycena, { insuranceAmount: kwotaFinalna });
     await logEvent(db, wycenaId, 'invoice.paid', { manual: true });
     await releaseLock(db, wycenaId, token, {
       paid: true,
       paid_at: new Date().toISOString(),
-      process_stage: zagranica ? 'PAID' : 'SHIPPED',
+      process_stage: shipment ? 'SHIPPED' : 'PAID',
       status: 'Fulfilled',
       worker_last_error: null,
     });
@@ -519,6 +645,10 @@ async function onDelivered(db, shipment) {
 async function reship(db, wycenaId) {
   const wycena = await loadWycena(db, wycenaId);
   if (!wycena) throw new Error('Nie znaleziono wyceny');
+  if (jestFurgonetka(wycena)) {
+    if (wymagaCla(wycena)) throw new Error('Dosyłka poza UE wymaga danych celnych — zamów ręcznie w panelu Furgonetki.');
+    return krokPrzesylkaFurgonetka(db, wycena, { kind: 'reship' });
+  }
   return krokPrzesylka(db, wycena, { codAmount: null, insuranceAmount: null, kind: 'reship' });
 }
 
@@ -698,4 +828,7 @@ async function runWorker(db) {
   return raport;
 }
 
-module.exports = { startPipeline, onInvoicePaid, onDelivered, reship, runWorker, policzKwoty, markPaidAndShip };
+module.exports = {
+  startPipeline, onInvoicePaid, onDelivered, reship, runWorker, policzKwoty, markPaidAndShip,
+  telefonPolski, jestFurgonetka, wymagaCla, firmaNaFakturze,
+};
