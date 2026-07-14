@@ -861,6 +861,51 @@ async function markZamknieteInUmowa(supabase, phoneDigits) {
   }
 }
 
+// Bliźniak setZamknieteByPhone, ale zmienia STATUS case'a — NIE rusza
+// `kategoria`/umiejscowienia. Plan dnia (Umowa) to zamrożona migawka z rana;
+// telefon w ciągu dnia ma zaktualizować status widoczny w planie (np. Nowy →
+// Po pierwszym tel), ale lead ma ZOSTAĆ w swojej kategorii tego dnia (nie
+// wypadać np. z "nowe" tylko dlatego, że ktoś zadzwonił — chcemy widzieć
+// wszystkie dzisiejsze nowe leady, z ich aktualnym statusem). Zapisujemy tylko
+// gdy status faktycznie się różni (item.status !== newStatus), żeby nie robić
+// zbędnych zapisów.
+function setStatusByPhone(json, phoneDigits, newStatus) {
+  let updated = false;
+  const applyToArray = (arr) => {
+    if (!Array.isArray(arr)) return;
+    arr.forEach((item) => {
+      if (item && normalizePhoneDigits(item.telefon) === phoneDigits && item.status !== newStatus) {
+        item.status = newStatus;
+        updated = true;
+      }
+    });
+  };
+  applyToArray(json.priorytet_dzis);
+  if (json.kategorie && typeof json.kategorie === 'object') {
+    Object.values(json.kategorie).forEach(applyToArray);
+  }
+  return updated;
+}
+
+async function updateStatusInUmowa(supabase, phoneDigits, newStatus) {
+  if (!phoneDigits || !newStatus) return;
+  try {
+    const { y, m, d } = warsawParts(new Date());
+    const dataIso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const row = await getRowByData(supabase, dataIso);
+    if (!row) return;
+    const patch = {};
+    ['draft', 'poprawka', 'final'].forEach((state) => {
+      const column = DOCS.umowa[state];
+      const json = row[column];
+      if (json && setStatusByPhone(json, phoneDigits, newStatus)) patch[column] = json;
+    });
+    if (Object.keys(patch).length) await updateRowByData(supabase, dataIso, patch);
+  } catch (err) {
+    console.warn('Nie udało się zaktualizować statusu case\'a w dzisiejszej Umowie:', err.message);
+  }
+}
+
 async function findLeadByPhone(supabase, phoneDigits) {
   if (!phoneDigits) return null;
   const { data, error } = await supabase
@@ -1165,6 +1210,17 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
         p_godzina_feedbacku: analysis?.data_feedbacku ? (analysis.godzina_feedbacku || null) : null,
       });
       if (updateErr) console.error('Błąd update Leady B2C:', updateErr.message);
+
+      // Zsynchronizuj status case'a w dzisiejszej Umowie (plan dnia to
+      // zamrożona migawka z rana). Po rozmowie plan ma pokazać AKTUALNY status
+      // (np. Nowy → Po pierwszym tel), ale case ZOSTAJE w swojej kategorii tego
+      // dnia — telefon zmienia status, nie kategorię. Bezwarunkowo (nie tylko
+      // gdy statusAfter !== statusBefore): jeśli plan jest z rana starszy niż
+      // realny status leada, to go dociąga; setStatusByPhone i tak pisze tylko
+      // przy realnej różnicy.
+      if (customerDigits && statusAfter) {
+        await updateStatusInUmowa(supabase, customerDigits, statusAfter);
+      }
 
       // Jeśli GPT ocenił, że temat jest zaopiekowany na dziś — oznacz ten
       // case jako zamknięty (ta sama flaga co lokalny checkbox po lewej w
