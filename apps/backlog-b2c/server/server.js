@@ -660,7 +660,13 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       })
       : null;
 
-    const answered = Boolean(call.record_url);
+    let answered = Boolean(call.record_url);
+    const durationS = Number(call.duration) || 0;
+    // Nagranie z rozmowy ≤5 s to nie jest rozmowa — to zrzut na pocztę
+    // głosową albo natychmiastowe rozłączenie. Zadarma widzi "odebrane"
+    // (automat odebrał), ale dla lejka to nieodebrany telefon; bez tego case
+    // wyglądał na obsłużony, choć z klientem nikt nie rozmawiał.
+    if (answered && durationS > 0 && durationS <= 5) answered = false;
     // Make ma już własny krok transkrypcji (fallback, zostaje u niego) — jeśli
     // dołączy gotowy tekst w polu `transcript`, używamy go zamiast drugi raz
     // ściągać nagranie i płacić za Whisper. Własna transkrypcja tylko gdy tego
@@ -679,7 +685,7 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       }
     }
 
-    const label = answered ? 'answered' : 'no_answer';
+    let label = answered ? 'answered' : 'no_answer';
     // Wnioskowanie z called_did/dst zawodzi, gdy pośrednik (Make) mapuje oba
     // pola naraz albo pomyli szablon gałęzi — most przez Make zna kierunek na
     // pewno (osobny "Watch" per typ połączenia), więc jawne pole `kierunek` w
@@ -696,16 +702,31 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     // poprzedniOpis: dotychczasowy skrócony opis kontaktu ("Ocena AI
     // kontaktu") — GPT regeneruje go po każdej rozmowie jako żywą pigułkę
     // całego kontaktu (pole skrocony_opis w odpowiedzi).
-    const analysis = (answered && transcript)
+    let analysis = (answered && transcript)
       ? await analyzeCall(transcript, { kierunek, dzisiaj: warsawDateStr(new Date()), poprzedniOpis: lead ? lead['Ocena AI kontaktu'] : (kontaktOrganic ? kontaktOrganic.ocena_ai : null), poprzedniaAkcja: lead ? lead['Najbliższa akcja'] : (kontaktOrganic ? kontaktOrganic.najblizsza_akcja : null) })
       : null;
-    const opis = analysis?.opis || (transcript ? transcript.slice(0, 200) : label);
+    // Poczta głosowa: automat odebrał, więc Zadarma widzi "odebrane" i jest
+    // nagranie, ale z klientem nikt nie rozmawiał. GPT rozpoznaje to po
+    // treści transkrypcji (pole poczta_glosowa w analizie) — wtedy całą
+    // rozmowę traktujemy jak nieodebraną: bez analizy, bez nadpisywania
+    // opisu/akcji, status wg reguł "Nie odebrał". Transkrypcja zostaje w
+    // Log zmian jako dowód, ale NIE wchodzi do "Treść rozmowy" leada.
+    const pocztaGlosowa = Boolean(analysis?.poczta_glosowa);
+    if (pocztaGlosowa) {
+      answered = false;
+      label = 'no_answer';
+      analysis = null;
+    }
+    const nieodebralText = pocztaGlosowa ? 'Nie odebrał (poczta głosowa)' : 'Nie odebrał';
+    const opis = answered
+      ? (analysis?.opis || (transcript ? transcript.slice(0, 200) : label))
+      : nieodebralText;
 
     // Wpis do "Historia rozmów" — jedna linia na rozmowę, najnowsze na
     // górze, format zgodny z historycznymi wpisami migrowanymi z Notes
     // ("DD.MM.YYYY HH:mm - treść") — podsumowania rozmów NIE trafiają już
     // do Notes (opis = ręczna notatka handlowca).
-    const historiaEntry = `${warsawDateTimeStr(receivedAt)} - ${answered ? opis : 'Nie odebrał'}`;
+    const historiaEntry = `${warsawDateTimeStr(receivedAt)} - ${opis}`;
 
     // Status nigdy nie cofa się w dół lejka — patrz STATUS_RANK/statusRank.
     // "Nie odebrał" traktowane osobno (nie przez rangę): wolno wejść w nie
@@ -773,7 +794,9 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
           // parseAnyDate (karta). Patrz receivedAt.
           'Ostatni kontakt': warsawDateTimeStr(receivedAt),
           Źródło: 'Zadarma — rozmowa bez dopasowania w bazie',
-          'Treść rozmowy': transcript || null,
+          // Poczta głosowa (answered=false mimo transkrypcji) nie jest treścią
+          // rozmowy z klientem — nie zapisujemy jej na leadzie.
+          'Treść rozmowy': (answered && transcript) || null,
           'ID Leada': nextIdLeada,
         })
         .select()
@@ -842,7 +865,9 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
         // Warszawski "DD.MM.YYYY HH:mm" zamiast surowego callstart — patrz
         // receivedAt / komentarz przy tworzeniu leada wyżej.
         'Ostatni kontakt': warsawDateTimeStr(receivedAt),
-        'Treść rozmowy': transcript || lead['Treść rozmowy'] || null,
+        // Poczta głosowa nie nadpisuje ostatniej PRAWDZIWEJ rozmowy z klientem
+        // (answered=false mimo niepustej transkrypcji — patrz pocztaGlosowa).
+        'Treść rozmowy': (answered && transcript) || lead['Treść rozmowy'] || null,
         // statusAfter — patrz wyżej, ta sama decyzja co poszła do Log zmian
         // (status_po), żeby oba miejsca nigdy się nie rozjechały.
         'Deal stage': statusAfter,
@@ -1266,20 +1291,26 @@ registerWatchdogEndpoints(app, { getClient, isAdmin });
 app.get('/api/leady/akcje', async (req, res) => {
   try {
     const supabase = getClient();
+    // Bez filtra "ma akcję": ten endpoint zasila też żywe pigułki STATUSU
+    // i linku do formularza na case'ach planu dnia (app.html) — dokument
+    // Umowy to migawka z rana, a status/link zmieniają się w ciągu dnia
+    // (rozmowa przez webhook, ręczna edycja w CRM, nowa wycena). Pigułka
+    // akcji dalej pokazuje się tylko przy niepustej "Najbliższa akcja"
+    // (front sprawdza val.akcja).
     const { data, error } = await supabase
       .from(LEADY_B2C_TABLE)
-      .select('"Phone number", "Name", "Deal stage", "Najbliższa akcja", "Najbliższa akcja termin", "Najbliższa akcja owner"')
-      .not('Najbliższa akcja', 'is', null);
+      .select('"Phone number", "Name", "Deal stage", "Najbliższa akcja", "Najbliższa akcja termin", "Najbliższa akcja owner", "Link do formularza"');
     if (error) throw error;
     const rows = (data || [])
-      .filter((row) => String(row['Najbliższa akcja'] || '').trim())
+      .filter((row) => row['Phone number'])
       .map((row) => ({
         telefon: formatPhonePlus(row['Phone number']),
         imie: row['Name'] || '',
         status: row['Deal stage'] || '',
-        akcja: row['Najbliższa akcja'],
+        akcja: String(row['Najbliższa akcja'] || '').trim(),
         termin: row['Najbliższa akcja termin'] || '',
         owner: row['Najbliższa akcja owner'] || '',
+        link_formularz: row['Link do formularza'] || '',
       }));
     res.json(rows);
   } catch (err) {

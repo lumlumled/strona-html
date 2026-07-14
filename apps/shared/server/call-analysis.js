@@ -249,6 +249,16 @@ Przykłady: "to będzie około 1500 zł", "wycena wychodzi 2200", "cena to 3400 
 Format: "2300 zł"
 Brak → null.
 
+===== POCZTA GŁOSOWA =====
+"poczta_glosowa": true, gdy nagranie NIE jest rozmową dwóch osób, tylko automatem.
+Sygnały (wystarczy jeden):
+- komunikat operatora / poczty głosowej: "abonent jest czasowo niedostępny", "nie może teraz odebrać", "zostaw wiadomość po sygnale", "witamy w poczcie głosowej", "połączenie z pocztą głosową", zapowiedź IVR
+- sam sygnał, szum albo cisza bez wypowiedzi klienta
+- monolog handlowca zostawiającego wiadomość, na który klient ani razu nie odpowiada
+Gdy true: NIE wymyślaj ustaleń — status "Po pierwszym tel", opis "Poczta głosowa",
+wszystkie pozostałe pola null/puste/false, jakosc_leada bez zmian wobec braku danych → "zimny".
+Prawdziwa, choćby krótka wymiana zdań z klientem → false.
+
 ===== FORMAT WYJŚCIOWY =====
 {
   "status": "",
@@ -264,7 +274,8 @@ Brak → null.
   "uzasadnienie_jakosci": "",
   "zamkniete_dzis": true lub false,
   "najblizsza_akcja": "max 5-6 słów lub null",
-  "najblizsza_akcja_termin": "DD.MM.YYYY HH:mm lub DD.MM.YYYY lub null"
+  "najblizsza_akcja_termin": "DD.MM.YYYY HH:mm lub DD.MM.YYYY lub null",
+  "poczta_glosowa": true lub false
 }
 
 ZASADY POLA produkty:
@@ -297,7 +308,7 @@ Pole typ_klienta: jeśli brak sygnałów B2B → zawsze "B2C".`;
 // rozmowy (status/data_feedbacku/produkty/kwota/jakość leada/zamknięcie na
 // dziś), przeniesiona z promptu, który wcześniej żył w scenariuszu Make.
 async function analyzeCall(transcript, { kierunek, dzisiaj, poprzedniOpis, poprzedniaAkcja }) {
-  const fallback = { status: null, data_feedbacku: null, godzina_feedbacku: null, opis: transcript ? transcript.slice(0, 200) : null, skrocony_opis: null, produkty: '', cena_zaproponowana: null, jakosc_leada: null, uzasadnienie_jakosci: '', zamkniete_dzis: false, najblizsza_akcja: null, najblizsza_akcja_termin: null };
+  const fallback = { status: null, data_feedbacku: null, godzina_feedbacku: null, opis: transcript ? transcript.slice(0, 200) : null, skrocony_opis: null, produkty: '', cena_zaproponowana: null, jakosc_leada: null, uzasadnienie_jakosci: '', zamkniete_dzis: false, najblizsza_akcja: null, najblizsza_akcja_termin: null, poczta_glosowa: false };
   if (!OPENAI_API_KEY || !transcript) return fallback;
   try {
     const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
