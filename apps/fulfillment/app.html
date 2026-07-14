@@ -155,7 +155,7 @@
     const API_BASE = window.API_BASE || '';
     LumTopbar.mount({ active: 'fulfillment', into: document.getElementById('site-header') });
 
-    let data = { do_spakowania: [], czeka_na_platnosc: [], wyslane: [] };
+    let data = { do_spakowania: [], spakowane: [], czeka_na_platnosc: [], wyslane: [] };
 
     const PAYMENT_LABELS = {
       cod: 'Pobranie', COD: 'Pobranie', transfer: 'Przelew',
@@ -254,6 +254,15 @@
           lbl.onclick = () => window.open(`${API_BASE}/api/wyceny/label/${ship.id}`, '_blank', 'noopener');
           foot.appendChild(lbl);
         }
+        const b = h('button', 'btn primary', 'Oznacz spakowane');
+        b.onclick = () => action(`/api/fulfillment/${o.id}/oznacz-spakowane`, b);
+        foot.appendChild(b);
+      } else if (o.bucket === 'spakowane') {
+        if (ship && ship.id) {
+          const lbl = h('button', 'btn', 'Drukuj etykietę');
+          lbl.onclick = () => window.open(`${API_BASE}/api/wyceny/label/${ship.id}`, '_blank', 'noopener');
+          foot.appendChild(lbl);
+        }
         const b = h('button', 'btn primary', 'Oznacz nadane');
         b.onclick = () => action(`/api/fulfillment/${o.id}/oznacz-nadane`, b);
         foot.appendChild(b);
@@ -277,8 +286,9 @@
 
     const SEGMENTS = [
       ['do_spakowania', 'Do spakowania'],
-      ['czeka_na_platnosc', 'Czeka na płatność'],
+      ['spakowane', 'Spakowane · czeka na kuriera'],
       ['wyslane', 'Wysłane · ostatnie 5 dni'],
+      ['czeka_na_platnosc', 'Czeka na płatność'],
     ];
 
     function matches(o, q) {
@@ -313,7 +323,7 @@
         if (res.status === 401) { window.location.href = `${API_BASE}/login`; return; }
         const body = await res.json();
         if (!res.ok) throw new Error(body.error || 'Błąd wczytywania');
-        data = body.data || { do_spakowania: [], czeka_na_platnosc: [], wyslane: [] };
+        data = body.data || { do_spakowania: [], spakowane: [], czeka_na_platnosc: [], wyslane: [] };
         render();
       } catch (err) {
         document.getElementById('list').innerHTML = `<p class="empty-note">Błąd wczytywania: ${err.message}</p>`;

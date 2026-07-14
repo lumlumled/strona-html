@@ -231,6 +231,12 @@
       font-variant-numeric: tabular-nums;
     }
 
+    /* Dostarczone i Zamknięte na zielono (domknięte pozytywnie); Stracone
+       stonowana czerwień. */
+    .sale-segment[data-seg="dostarczone"] .segment-title,
+    .sale-segment[data-seg="zamkniete"] .segment-title { color: var(--good); }
+    .sale-segment[data-seg="stracone"] .segment-title { color: #9a3b3b; }
+
     .sale {
       background: var(--surface-1);
       border: 1px solid var(--border);
@@ -503,23 +509,41 @@
       return hay.includes(q);
     }
 
-    // Segmenty sprzedaży: Do wysłania → Wysłane → Zamknięte (status Closed).
-    // "Wysłane" = przesyłka FIZYCZNIE nadana (tracking sent/delivered, nadana_at
-    // albo ręczne oznaczenie w panelu Fulfillment) — NIE samo utworzenie
-    // etykiety. Dzięki temu pobranie z etykietą, ale jeszcze niespakowane,
-    // zostaje w "Do wysłania" (decyzja Antoniego 2026-07-13; pakowanie żyje w
-    // panelu Fulfillment). process_stage=SHIPPED (ustawiany przy etykiecie) tu
-    // celowo NIE decyduje.
+    // Segmenty sprzedaży (2026-07-14): Do wysłania → Czeka na płatność → Wysłane
+    // → Dostarczone (≤7 dni od doręczenia) → Zamknięte (starsze / Closed) →
+    // Stracone. Etykiety po polsku, ale w bazie deal-status zostaje po angielsku
+    // (Open/Waiting for payment/Fulfilled/Closed/Stracone) — bucket jest liczony,
+    // nie zapisywany.
+    // "Wysłane" = przesyłka FIZYCZNIE nadana (tracking sent, nadana_at albo
+    // ręcznie w Fulfillment) — NIE samo utworzenie etykiety, więc pobranie z
+    // etykietą, ale niespakowane, zostaje w "Do wysłania". "Dostarczone" trzyma
+    // paczkę tydzień po doręczeniu (deal jest już Closed w bazie), potem spada do
+    // "Zamknięte". "Do wysłania" = gotowe do przygotowania + spakowane (przed
+    // nadaniem); rozdział ready/spakowane żyje w panelu Fulfillment.
+    const DOSTARCZONE_MS = 7 * 24 * 60 * 60 * 1000; // po tygodniu od doręczenia → Zamknięte
     function bucketOf(w) {
-      if (String(w.status || '').toLowerCase() === 'closed') return 'zamkniete';
-      const nadane = (w._shipments || []).some((s) => ['sent', 'delivered'].includes(String(s.status)) || s.delivered_at || s.nadana_at);
-      return nadane ? 'wyslane' : 'dowyslania';
+      const status = String(w.status || '').toLowerCase();
+      if (status === 'stracone') return 'stracone';
+      const ships = w._shipments || [];
+      const delivered = ships.some((s) => String(s.status) === 'delivered' || s.delivered_at);
+      if (delivered) {
+        const dt = Math.max(0, ...ships.map((s) => (s.delivered_at ? new Date(s.delivered_at).getTime() : 0)));
+        return dt && Date.now() - dt < DOSTARCZONE_MS ? 'dostarczone' : 'zamkniete';
+      }
+      if (status === 'closed') return 'zamkniete';
+      const nadane = ships.some((s) => ['sent', 'delivered'].includes(String(s.status)) || s.nadana_at);
+      if (nadane) return 'wyslane';
+      if (status === 'waiting for payment' && !w.paid) return 'czeka';
+      return 'dowyslania';
     }
 
     const SEGMENTS = [
       ['dowyslania', 'Do wysłania'],
+      ['czeka', 'Czeka na płatność'],
       ['wyslane', 'Wysłane'],
+      ['dostarczone', 'Dostarczone'],
       ['zamkniete', 'Zamknięte'],
+      ['stracone', 'Stracone'],
     ];
 
     function renderList() {
@@ -528,12 +552,16 @@
       const filtered = all.filter(matches);
       list.innerHTML = '';
 
-      const groups = { dowyslania: [], wyslane: [], zamkniete: [] };
+      const groups = Object.fromEntries(SEGMENTS.map(([k]) => [k, []]));
       filtered.forEach((w) => { groups[bucketOf(w)].push(w); });
 
       SEGMENTS.forEach(([key, label]) => {
         const rows = groups[key];
+        // Kubełki historyczne chowamy, gdy puste; akcyjne (Do wysłania, Czeka na
+        // płatność) pokazujemy zawsze, żeby było widać „nic nie czeka".
+        if (!rows.length && key !== 'dowyslania' && key !== 'czeka') return;
         const section = h('section', 'sale-segment');
+        section.dataset.seg = key;
         const head = h('div', 'segment-head');
         head.append(h('span', 'segment-title', label), h('span', 'segment-count', String(rows.length)));
         section.appendChild(head);

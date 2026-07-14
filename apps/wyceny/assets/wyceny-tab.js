@@ -39,6 +39,22 @@ window.WycenyTab = (() => {
     stracone: '#7a1220',
   };
 
+  // Etykiety PL dla deal-statusu. W bazie zostają kody po angielsku (pipeline,
+  // Shopify, faktury na nich polegają) — tłumaczymy TYLKO to, co widać.
+  //   Open → Wycena, Waiting for payment → Czeka na płatność,
+  //   Fulfilled → Gotowe do przygotowania (gotowe do pakowania), Closed →
+  //   Zamknięta, Stracone → Stracone.
+  const STATUS_LABELS = {
+    open: 'Wycena',
+    'waiting for payment': 'Czeka na płatność',
+    fulfilled: 'Gotowe do przygotowania',
+    closed: 'Zamknięta',
+    stracone: 'Stracone',
+  };
+  function statusLabel(s) {
+    return STATUS_LABELS[String(s || '').toLowerCase()] || s || '—';
+  }
+
   const TYP_LABELS = { WYCENA: 'Wycena', 'ZAMÓWIENIE': 'Zamówienie', NOTATKA: 'Notatka' };
 
   function contrastTextColor(hex) {
@@ -186,19 +202,19 @@ window.WycenyTab = (() => {
   // ── Wiersz listy ───────────────────────────────────────────────────────────
   function buildStatusPill(wycena) {
     const wrap = h('div', 'status-wrap');
-    const tag = h('span', 'status-tag', wycena.status || '—');
+    const tag = h('span', 'status-tag', statusLabel(wycena.status));
     applyStatusColor(tag, wycena.status);
 
     const menu = h('div', 'status-menu');
     statusy.forEach((status) => {
-      const option = h('button', 'status-option', status);
+      const option = h('button', 'status-option', statusLabel(status));
       option.type = 'button';
       option.addEventListener('click', async (e) => {
         e.stopPropagation();
         menu.classList.remove('open');
         wrap.closest('.lead').classList.remove('status-menu-open');
         const prev = tag.textContent;
-        tag.textContent = status;
+        tag.textContent = statusLabel(status);
         applyStatusColor(tag, status);
         try {
           const res = await fetch(`${cfg.apiBase}/api/wyceny/${wycena.id}`, {

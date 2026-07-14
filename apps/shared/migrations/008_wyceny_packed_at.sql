@@ -1,0 +1,11 @@
+-- 008: krok "spakowane" w panelu Fulfillment.
+--
+-- packed_at = moment ręcznego oznaczenia "paczka fizycznie spakowana, czeka na
+-- kuriera" (przycisk "Oznacz spakowane"). Rozdziela stan "gotowe do
+-- przygotowania" (deal status = Fulfilled, jeszcze nie spakowane) od "spakowane"
+-- (spakowane, przed nadaniem). Po nadaniu (wyceny_shipments.status='sent') paczka
+-- i tak trafia do "Wysłane" niezależnie od tej kolumny.
+--
+-- Additive i nullable — pipeline (faktury, ShipX, worker) tego NIE czyta; bucket
+-- liczony wyłącznie w panelu. Idempotentne.
+alter table wyceny add column if not exists packed_at timestamptz;

@@ -2,15 +2,17 @@
 // Osobny, ADMIN-ONLY widok nad tymi samymi danymi co Sprzedaże (tabela wyceny +
 // wyceny_shipments). Cała maszyna stanów, tracking i faktury już żyją w
 // wyceny-pipeline.js — tu tylko PREZENTUJEMY „co spakować i nadać" i dajemy
-// dwie/trzy akcje ręczne. Zero nowych kolumn: bucket liczony z payment_method,
-// paid i statusu przesyłki.
+// akcje ręczne. Jedyna własna kolumna to wyceny.packed_at (krok „spakowane");
+// reszta bucketa liczona z payment_method, paid i statusu przesyłki.
 //
-// Stany (decyzja Antoniego 2026-07-13):
-//   do_spakowania   — gotowe do wysyłki (pobranie albo opłacony przelew),
-//                     etykieta jest, przesyłka jeszcze NIE nadana fizycznie.
-//   czeka_na_platnosc — przelew nieopłacony (przycisk „Oznacz opłacone").
+// Stany (decyzja Antoniego 2026-07-13, krok „spakowane" dodany 2026-07-14):
+//   do_spakowania   — gotowe do przygotowania (pobranie albo opłacony przelew),
+//                     jeszcze NIE spakowane (packed_at puste).
+//   spakowane       — packed_at ustawione („Oznacz spakowane"): spakowane,
+//                     czeka na kuriera, jeszcze NIE nadane.
 //   wyslane         — nadane (tracking sent / nadana_at / ręcznie); trzymamy 5
 //                     dni po doręczeniu, potem znika (zamknięte).
+//   czeka_na_platnosc — przelew nieopłacony (przycisk „Oznacz opłacone").
 // Nadanie/doręczenie łapie worker z trackingu w oknach 17–18 / 10–16, albo
 // oznaczasz ręcznie tutaj (natychmiast).
 
@@ -59,7 +61,9 @@ function bucketOf(w, ship, now) {
 
   const gotowe = !jestPrzelew(w) || w.paid;
   if (!gotowe) return jestPrzelew(w) ? 'czeka_na_platnosc' : null;
-  return 'do_spakowania';
+  // Gotowe do przygotowania → po ręcznym „Oznacz spakowane" (packed_at) idzie
+  // do „spakowane" (czeka na kuriera), aż do nadania.
+  return w.packed_at ? 'spakowane' : 'do_spakowania';
 }
 
 // Zamówienie „w grze" (już realizowane) — filtruje szkice/wyceny bez wysyłki.
@@ -103,6 +107,7 @@ function serializeOrder(w, shipments, bucket, cennikBySku) {
     payment_method: w.payment_method || '',
     paid: Boolean(w.paid),
     created_at: w.created_at || null,
+    packed_at: w.packed_at || null,
     miejsce: placeOf(w),
     items: serializeItems(w.items, cennikBySku),
     shipment: ship ? {
@@ -164,7 +169,7 @@ function registerFulfillmentEndpoints(app, { getClient, requireAdmin }) {
       }
 
       const now = Date.now();
-      const out = { do_spakowania: [], czeka_na_platnosc: [], wyslane: [] };
+      const out = { do_spakowania: [], spakowane: [], czeka_na_platnosc: [], wyslane: [] };
       rows.forEach((w) => {
         const sh = shipByWycena.get(w.id) || [];
         if (!realizowane(w, sh)) return;
@@ -172,9 +177,36 @@ function registerFulfillmentEndpoints(app, { getClient, requireAdmin }) {
         if (!bucket) return;
         out[bucket].push(serializeOrder(w, sh, bucket, cennikBySku));
       });
-      // „do spakowania": najstarsze u góry (najdłużej czekają); reszta: najnowsze u góry.
+      // Kolejki do roboty (do spakowania / spakowane): najstarsze u góry
+      // (najdłużej czekają); reszta: najnowsze u góry.
       out.do_spakowania.sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
+      out.spakowane.sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
       res.json({ data: out });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  // POST /api/fulfillment/:id/oznacz-spakowane — paczka fizycznie spakowana,
+  // czeka na kuriera. Tylko znacznik packed_at; NIE dotyka przesyłki ani faktur.
+  app.post('/api/fulfillment/:id(\\d+)/oznacz-spakowane', guard, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const supabase = getClient();
+      const { data, error } = await supabase.from('wyceny').select('id,packed_at').eq('id', id).limit(1);
+      if (error) throw error;
+      const w = data && data[0];
+      if (!w) return res.status(404).json({ error: 'Nie znaleziono zamówienia' });
+      if (!w.packed_at) {
+        const { error: uErr } = await supabase.from('wyceny')
+          .update({ packed_at: new Date().toISOString() }).eq('id', id);
+        if (uErr) throw uErr;
+        await supabase.from('wyceny_events').insert({
+          wycena_id: id, kind: 'order.packed',
+          payload: { source: 'fulfillment-manual', user: req.user?.name || null },
+        });
+      }
+      res.json({ ok: true });
     } catch (err) {
       handleError(res, err);
     }
