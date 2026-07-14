@@ -205,6 +205,23 @@
       return 'https://furgonetka.pl/zlokalizuj';
     }
 
+    // "za-pozno" i "brak-paczek" InPostu wracają przy KAŻDYM druku po 15:00 —
+    // pokazujemy je raz dziennie (znacznik po dacie warszawskiej w localStorage).
+    // Potwierdzenia zamówienia są z natury jednorazowe: serwer zapisuje
+    // dispatch_order_id i przy następnym kliknięciu zwraca "juz-zamowiony"
+    // (InPost) albo pomija paczkę (Furgonetka) — bez alertu.
+    function warsawDateStr() {
+      return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Warsaw' }).format(new Date());
+    }
+    function pierwszyRazDzis(klucz) {
+      const k = `lumFulfillment_${klucz}_${warsawDateStr()}`;
+      try {
+        if (localStorage.getItem(k)) return false;
+        localStorage.setItem(k, '1');
+      } catch (_) { /* prywatny tryb — trudno, pokaż */ }
+      return true;
+    }
+
     // Komunikat o zleceniu odbioru (kurier zamawia się przy pierwszym druku
     // etykiety / spakowaniu danego dnia; InPost RAZ dziennie, okno 15:00-17:00;
     // Furgonetka per paczka - najbliższy dostępny termin).
@@ -213,13 +230,13 @@
       if (kurier.furgonetka && kurier.furgonetka.length) {
         const ok = kurier.furgonetka.filter((f) => !f.error);
         const zle = kurier.furgonetka.filter((f) => f.error);
-        if (ok.length) alert('Odbiór Furgonetki zamówiony: ' + ok.map((f) => `#${f.wycena_id} ${String(f.service || '').toUpperCase()}${f.date ? ' na ' + f.date : ''}`).join(', '));
+        if (ok.length) alert('Zamówiono odbiór kuriera Furgonetki: ' + ok.map((f) => `#${f.wycena_id} ${String(f.service || '').toUpperCase()}${f.date ? ' na ' + f.date : ''}`).join(', '));
         if (zle.length) alert('Furgonetka - NIE udało się zamówić odbioru: ' + zle.map((f) => `#${f.wycena_id}`).join(', ') + '. Zamów w panelu Furgonetki.');
       }
       if (kurier.dispatch === 'zamowiony') {
-        alert(`Kurier zamówiony na dziś 15:00-17:00 (paczek: ${kurier.paczek}).`);
+        alert(`Zamówiono odbiór kuriera InPost na dziś 15:00-17:00 (paczek: ${kurier.paczek}).`);
       } else if (kurier.dispatch === 'za-pozno') {
-        alert('Po 15:00 - kurier NIE zamówiony na dziś. Pierwszy druk etykiety / spakowanie jutro przed 15:00 zamówi odbiór.');
+        if (pierwszyRazDzis('zapozno')) alert('Po 15:00 - kurier InPost NIE zamówiony na dziś. Pierwszy druk etykiety / spakowanie jutro przed 15:00 zamówi odbiór.');
       } else if (kurier.dispatch === 'blad') {
         alert(`Nie udało się zamówić kuriera: ${kurier.error || 'nieznany błąd'}. Spróbuj ponownie albo zamów w Menedżerze Paczek.`);
       }
