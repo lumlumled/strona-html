@@ -477,7 +477,7 @@
         ownerBadge(w.owner),
         h('span', 'summary-date', w.created_at ? formatDT(w.created_at).slice(0, 10) : ''),
         h('span', 'summary-kwota', moneyPLN(w.kwota_sprzedazy_brutto ?? w.kwota_proponowana_brutto)),
-        stageChip(w.process_stage),
+        saleStatusChip(w),
       );
 
       summary.append(
@@ -524,7 +524,7 @@
     // paczkę tydzień po doręczeniu (deal jest już Closed w bazie), potem spada do
     // "Zamknięte". "Do wysłania" = gotowe do przygotowania + spakowane (przed
     // nadaniem); rozdział ready/spakowane żyje w panelu Fulfillment.
-    const DOSTARCZONE_MS = 7 * 24 * 60 * 60 * 1000; // po tygodniu od doręczenia → Zamknięte
+    const DOSTARCZONE_MS = 7 * 24 * 60 * 60 * 1000; // „Dostarczone" żyje 7 dni od nadania, potem → Zamknięte
     function bucketOf(w) {
       const status = String(w.status || '').toLowerCase();
       if (status === 'stracone') return 'stracone';
@@ -535,8 +535,12 @@
       const delivered = ships.some((s) => String(s.status) === 'delivered' || s.delivered_at)
         || String(w.process_stage) === 'DELIVERED';
       if (delivered) {
-        const dt = Math.max(0, ...ships.map((s) => (s.delivered_at ? new Date(s.delivered_at).getTime() : 0)));
-        return dt && Date.now() - dt < DOSTARCZONE_MS ? 'dostarczone' : 'zamkniete';
+        // „Dostarczone" tylko 7 dni od NADANIA (data nadania jest stabilna;
+        // delivered_at bywa momentem wykrycia przez workera). Brak nadania →
+        // licz od daty sprzedaży (created_at). Starsze → Zamknięte.
+        const nadanaTs = Math.max(0, ...ships.map((s) => (s.nadana_at ? new Date(s.nadana_at).getTime() : 0)));
+        const anchor = nadanaTs || (w.created_at ? new Date(w.created_at).getTime() : 0);
+        return anchor && Date.now() - anchor < DOSTARCZONE_MS ? 'dostarczone' : 'zamkniete';
       }
       if (status === 'closed') return 'zamkniete';
       if (status === 'waiting for payment' && !w.paid) return 'czeka';
@@ -548,9 +552,27 @@
       return 'dowyslania';
     }
 
+    // Status w wierszu = PRAWDZIWY stan (z kubełka), NIE surowy process_stage —
+    // SHIPPED bywa ustawiany już przy „gotowe", więc mylnie pokazywał „Wysłana"
+    // na paczkach, których jeszcze nie nadano.
+    function saleStatusChip(w) {
+      const MAP = {
+        czeka: ['Czeka na płatność', 'warn'],
+        dowyslania: ['Gotowe do nadania', ''],
+        wyslane: ['Nadane', 'info'],
+        dostarczone: ['Dostarczona', 'good'],
+        zamkniete: ['Zamknięta', 'good'],
+        stracone: ['Stracone', 'bad'],
+      };
+      const [label, tone] = MAP[bucketOf(w)] || ['—', ''];
+      const el = h('span', 'wk-chip' + (tone && tone !== 'warn' ? ' ' + tone : ''), label);
+      if (tone === 'warn') { el.style.background = 'rgba(217, 132, 22, 0.14)'; el.style.color = '#c07a10'; }
+      return el;
+    }
+
     const SEGMENTS = [
-      ['dowyslania', 'Do wysłania'],
       ['czeka', 'Czeka na płatność'],
+      ['dowyslania', 'Do wysłania'],
       ['wyslane', 'Wysłane'],
       ['dostarczone', 'Dostarczone'],
       ['zamkniete', 'Zamknięte'],

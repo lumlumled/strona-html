@@ -12,7 +12,8 @@
 //                     czeka na kuriera, jeszcze NIE nadane.
 //   wyslane         — nadane (tracking sent / nadana_at / ręcznie); trzymamy 7
 //                     dni po doręczeniu, potem znika (zamknięte).
-//   czeka_na_platnosc — przelew nieopłacony (przycisk „Oznacz opłacone").
+//   czeka_na_platnosc — nieopłacone (status Waiting for payment), DOWOLNE źródło
+//                     (też import/sklep) — żeby pilnować wpłaty („Oznacz opłacone").
 // Nadanie/doręczenie łapie worker z trackingu w oknach 17–18 / 10–16, albo
 // oznaczasz ręcznie tutaj (natychmiast).
 
@@ -51,24 +52,36 @@ function doreczona(ship) {
 
 // Bucket albo null (nie pokazujemy w panelu). now = Date.now().
 function bucketOf(w, ship, now) {
-  if (String(w.status || '').toLowerCase() === 'stracone') return null;
+  const status = String(w.status || '').toLowerCase();
+  if (status === 'stracone') return null;
 
-  if (doreczona(ship)) {
-    const dt = ship.delivered_at ? new Date(ship.delivered_at).getTime() : 0;
-    return dt && now - dt < HISTORIA_MS ? 'wyslane' : null; // po 5 dniach: zamknięte
+  // Doręczone: nasza przesyłka delivered LUB pipeline oznaczył DELIVERED
+  // (Shopify/import nie mają naszej przesyłki — sygnałem jest process_stage).
+  if (doreczona(ship) || String(w.process_stage) === 'DELIVERED') {
+    const dt = ship && ship.delivered_at ? new Date(ship.delivered_at).getTime() : 0;
+    return dt && now - dt < HISTORIA_MS ? 'wyslane' : null; // po 7 dniach: zamknięte (znika)
   }
   if (nadana(ship)) return 'wyslane';
 
+  // Czeka na płatność — DOWOLNE źródło (import/sklep też), żeby pilnować wpłaty.
+  if (status === 'waiting for payment' && !w.paid) return 'czeka_na_platnosc';
+
+  // Sklep/import bez naszej przesyłki nie są do pakowania przez nas — poza kolejką.
+  if (!jestNasze(w)) return null;
+
   const gotowe = !jestPrzelew(w) || w.paid;
-  if (!gotowe) return jestPrzelew(w) ? 'czeka_na_platnosc' : null;
+  if (!gotowe) return 'czeka_na_platnosc';
   // Gotowe do przygotowania → po ręcznym „Oznacz spakowane" (packed_at) idzie
   // do „spakowane" (czeka na kuriera), aż do nadania.
   return w.packed_at ? 'spakowane' : 'do_spakowania';
 }
 
 // Zamówienie „w grze" (już realizowane) — filtruje szkice/wyceny bez wysyłki.
+// Czekające na płatność też są „w grze" (proforma poszła) — pokazujemy je nawet
+// bez przesyłki, żeby pilnować wpłaty.
 function realizowane(w, shipments) {
-  return w.form_status === 'SUBMITTED' || (shipments && shipments.length > 0) || w.paid;
+  const czeka = String(w.status || '').toLowerCase() === 'waiting for payment';
+  return czeka || w.form_status === 'SUBMITTED' || (shipments && shipments.length > 0) || w.paid;
 }
 
 function placeOf(w) {
@@ -137,11 +150,14 @@ function registerFulfillmentEndpoints(app, { getClient, requireAdmin }) {
       const supabase = getClient();
       const { data: wyceny, error } = await supabase.from('wyceny').select('*')
         .eq('typ', 'ZAMÓWIENIE').neq('status', 'Stracone')
-        .neq('source', 'shopify').neq('source', 'import')
         .order('created_at', { ascending: false });
       if (error) throw error;
 
-      const rows = (wyceny || []).filter(jestNasze);
+      // Pakujemy własne zamówienia; DOKŁADAMY czekające na płatność z dowolnego
+      // źródła (import/sklep), żeby pilnować wpłaty (bucketOf schowa nie-nasze,
+      // które na płatność nie czekają).
+      const rows = (wyceny || []).filter((w) => jestNasze(w)
+        || (String(w.status || '').toLowerCase() === 'waiting for payment' && !w.paid));
       const ids = rows.map((w) => w.id);
       let shipments = [];
       if (ids.length) {
