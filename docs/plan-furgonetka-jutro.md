@@ -83,8 +83,12 @@ Bez tego moduł Furgonetki nie działa w prod. To keystone.
 
 ## Akcje po stronie Antoniego (prerekwizyty)
 
-- [ ] **Aktywować DHL** w panelu Furgonetki (dziś `dhl niedost`; allow-lista go
-  chce, ale konto go nie ma).
+- [x] ~~Aktywować DHL~~ — NIE DOTYCZY (zbadane na żywym API 2026-07-14): DHL
+  JEST aktywny na koncie (PL→PL available, 27,16 zł), ale na umowie brokera
+  Furgonetki nie obsługuje tras zagranicznych („Nieobsługiwany kraj" dla DE) —
+  to ograniczenie usługi, nie ustawienie konta. Międzynarodowo allow-lista
+  efektywnie = DPD/FedEx/UPS (działa); DHL wymagałby własnej umowy DHL Express
+  podpiętej w Furgonetce (proces biznesowy, niewart zachodu).
 - [ ] **Zrotować `client_secret`** Furgonetki (był wklejony do czatu) — po rotacji
   zaktualizować env Vercel.
 - [ ] (Jeśli masz) wkleić z zalogowanej dokumentacji Furgonetki endpoint
