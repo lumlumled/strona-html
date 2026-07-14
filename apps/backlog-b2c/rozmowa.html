@@ -229,9 +229,20 @@
               matchEl.classList.add('organic');
               matchEl.textContent = `✓ Kontakt organic${body.nazwa ? ` · ${body.nazwa}` : ''}${body.status ? ` · ${body.status}` : ''} — rozmowa dopisze się do kontaktu`;
               nowyPola.hidden = true;
+            } else if (body.dopasowanie === 'wycena') {
+              // Klient z wyceną (bez leada) — zapis utworzy kontakt ze
+              // źródłem 'wycena' i imieniem z wyceny (można nadpisać).
+              matchEl.classList.add('organic');
+              const kwota = body.kwota != null ? ` · ${Number(body.kwota).toLocaleString('pl-PL')} zł` : '';
+              const ile = body.ile_wycen > 1 ? ` (wycen: ${body.ile_wycen})` : '';
+              matchEl.textContent = `✓ Wycena #${body.wycena_id}${body.nazwa ? ` · ${body.nazwa}` : ''}${kwota}${ile} — powstanie kontakt ze źródłem „wycena"`;
+              nowyPola.hidden = false;
+              if (!$('rz-imie').value && body.nazwa) $('rz-imie').value = body.nazwa;
+              if ($('rz-zrodlo').value === 'organic') $('rz-zrodlo').value = 'wycena';
             } else {
               matchEl.textContent = 'Numer spoza bazy — powstanie nowy kontakt organic';
               nowyPola.hidden = false;
+              if ($('rz-zrodlo').value === 'wycena') $('rz-zrodlo').value = 'organic';
             }
           } catch (_) {
             matchEl.hidden = true;

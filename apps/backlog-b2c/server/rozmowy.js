@@ -34,6 +34,23 @@ async function findKontaktOrganic(supabase, phoneDigits) {
   return (data && data[0]) || null;
 }
 
+// Wyceny klienta z NOWEJ tabeli `wyceny` (kanonicznej — legacy "Wyceny B2C"
+// to relikt arkusza). Konwencja tej tabeli: telefon_digits = cyfry BEZ
+// prefiksu 48 (patrz apps/formularz), więc zdejmujemy go przed dopasowaniem.
+// Najnowsza pierwsza — podgląd w panelu pokazuje ostatnią wycenę + licznik.
+async function findWycenyByPhone(supabase, phoneDigits) {
+  if (!phoneDigits) return [];
+  const bez48 = phoneDigits.replace(/^48/, '');
+  const { data, error } = await supabase
+    .from('wyceny')
+    .select('id, imie_nazwisko, kwota_proponowana_brutto, status, created_at')
+    .eq('telefon_digits', bez48)
+    .order('created_at', { ascending: false })
+    .limit(10);
+  if (error) throw error;
+  return data || [];
+}
+
 // Nakłada rozmowę na istniejący kontakt organic — lustrzane odbicie ścieżki
 // leada z webhooka: lejek statusów (nigdy w dół), historia na górę, ocena AI
 // regenerowana, akcja REEWALUOWANA gdy jest analiza. Używane przez POST
@@ -104,6 +121,21 @@ function registerRozmowyEndpoints(app, deps) {
           nazwa: kontakt.imie || null,
           status: kontakt.status || null,
           zrodlo: kontakt.zrodlo,
+        });
+      }
+      // Numer bez leada i bez kontaktu, ale z wyceną (decyzja Antoniego
+      // 2026-07-14: szukaj też po wycenach) — pokazujemy kogo/ile, a zapis
+      // utworzy kontakt organic ze źródłem 'wycena' i imieniem z wyceny.
+      const wyceny = await findWycenyByPhone(supabase, digits);
+      if (wyceny.length) {
+        const w = wyceny[0];
+        return res.json({
+          dopasowanie: 'wycena',
+          nazwa: w.imie_nazwisko || null,
+          status: w.status || null,
+          wycena_id: w.id,
+          kwota: w.kwota_proponowana_brutto ?? null,
+          ile_wycen: wyceny.length,
         });
       }
       res.json({ dopasowanie: null });
@@ -258,8 +290,12 @@ function registerRozmowyEndpoints(app, deps) {
       }
 
       // ── Ścieżka 3: nowy kontakt organic ──
-      const zrodlo = String(req.body?.zrodlo || '').trim() || 'organic';
-      const imie = String(req.body?.imie || '').trim() || null;
+      // Klient z wyceną (bez leada) nie jest anonimowy — kontakt dostaje
+      // imię z wyceny i źródło 'wycena', chyba że użytkownik podał własne.
+      const wyceny = await findWycenyByPhone(supabase, digits);
+      const zWyceny = wyceny[0] || null;
+      const zrodlo = String(req.body?.zrodlo || '').trim() || (zWyceny ? 'wycena' : 'organic');
+      const imie = String(req.body?.imie || '').trim() || (zWyceny ? (zWyceny.imie_nazwisko || null) : null);
       const { data: created, error: createErr } = await supabase
         .from(KONTAKTY_ORGANIC_TABLE)
         .insert({ telefon: digits, imie, zrodlo, owner: handlowiec })
@@ -285,6 +321,7 @@ function registerRozmowyEndpoints(app, deps) {
         dopasowanie: 'nowy_kontakt',
         nazwa: imie,
         zrodlo,
+        wycena_id: zWyceny ? zWyceny.id : null,
         status: wynik.statusAfter,
         skrocony_opis: analysis?.skrocony_opis || null,
         opis: wynik.opis,
