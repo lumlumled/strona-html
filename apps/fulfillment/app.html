@@ -234,7 +234,8 @@
         if (zle.length) alert('Furgonetka - NIE udało się zamówić odbioru: ' + zle.map((f) => `#${f.wycena_id}`).join(', ') + '. Zamów w panelu Furgonetki.');
       }
       if (kurier.dispatch === 'zamowiony') {
-        alert(`Zamówiono odbiór kuriera InPost na dziś 15:00-17:00 (paczek: ${kurier.paczek}).`);
+        alert(`Zamówiono odbiór kuriera InPost na dziś 15:00-17:00 (paczek: ${kurier.paczek}).`
+          + (kurier.blad_czesciowy ? '\n\nUwaga: część przesyłek się nie zamówiła - dokończ w Menedżerze Paczek.' : ''));
       } else if (kurier.dispatch === 'za-pozno') {
         if (pierwszyRazDzis('zapozno')) alert('Po 15:00 - kurier InPost NIE zamówiony na dziś. Pierwszy druk etykiety / spakowanie jutro przed 15:00 zamówi odbiór.');
       } else if (kurier.dispatch === 'blad') {
