@@ -371,8 +371,11 @@ function registerKontaktEndpoints(app, { getClient, requireView, requireEdit }) 
         || process.env.ZADARMA_OWN_NUMBER;
       const callerDigits = String(rawCaller || '').replace(/\D/g, '');
 
+      // Bez plusa: Zadarma trzyma numery jako '48459567870' (tak zwraca
+      // /v1/direct_numbers) i dopasowuje caller_id po dokładnym stringu —
+      // '+48…' nie łapie rejestracji i SMS wychodzi jako domyślny nadawca.
       const params = { number: komPhone, message: tresc };
-      if (callerDigits) params.caller_id = `+${callerDigits}`;
+      if (callerDigits) params.caller_id = callerDigits;
       const wynik = await callZadarma('/v1/sms/send/', params, 'POST');
       if (!wynik || wynik.status !== 'success') {
         throw new Error(`Zadarma SMS: ${wynik && (wynik.message || wynik.status) || 'brak odpowiedzi'}`);
@@ -388,7 +391,7 @@ function registerKontaktEndpoints(app, { getClient, requireView, requireEdit }) 
         direction: 'out',
         body: tresc,
         sent_by: (req.user && req.user.name) || 'antoni',
-        meta: { sms: { messages: wynik.messages ?? null, cost: wynik.cost ?? null, nadawca: callerDigits ? `+${callerDigits}` : null }, zrodlo: 'karta_leada' },
+        meta: { sms: { messages: wynik.messages ?? null, cost: wynik.cost ?? null, nadawca: callerDigits || null }, zrodlo: 'karta_leada' },
       });
       if (msgErr) console.warn('kontakt: zapis kom_messages (sms):', msgErr.message);
       await db.from('kom_threads').update({ last_message_at: new Date().toISOString() }).eq('id', thread.id);
