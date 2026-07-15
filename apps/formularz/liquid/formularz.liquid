@@ -1481,6 +1481,16 @@
     return new Intl.NumberFormat('pl-PL',{style:'currency',currency:'PLN'}).format(n);
   }
 
+  // Kwota do zapłaty = cena po rabacie czasowym. Serwer podaje kwota_finalna_brutto
+  // (proponowana − aktywny rabat czasowy albo zamrożona kwota sprzedaży). Fallback
+  // do proponowanej, gdy starszy backend jeszcze jej nie zwraca.
+  function finalnaBrutto(data){
+    if (!data) return NaN;
+    var f = parseMoney(data.kwota_finalna_brutto);
+    if (isFinite(f)) return f;
+    return parseMoney(data.kwota_proponowana_brutto);
+  }
+
   function normalizeId(raw){
     if (raw == null) return '';
     var s = String(raw).trim();
@@ -1756,7 +1766,7 @@
     if (!state.payload) return; // przed pobraniem zamówienia nie ruszamy „—"
     var cost = shippingCostPLN();
     var costText = cost > 0 ? moneyPLN(cost) : 'Przesyłka darmowa';
-    var base = parseMoney(state.payload.kwota_proponowana_brutto);
+    var base = finalnaBrutto(state.payload);
     var totalText = isFinite(base) ? moneyPLN(base + cost) : '—';
     var i;
     var ships = document.querySelectorAll('[data-shipping]');
@@ -2191,14 +2201,38 @@
       productsWrap.appendChild(drow);
     }
 
+    // Rabat czasowy schodzi z ceny do zapłaty (osobny wiersz obok "Rabat"
+    // pozycyjnego). Serwer zwraca rabat24h_kwota tylko gdy oferta jeszcze ważna.
+    var rabatCz = parseMoney(data && data.rabat24h_kwota);
+    if (isFinite(rabatCz) && rabatCz > 0){
+      var rcrow = document.createElement('div');
+      rcrow.className = 'lumlum-orderfill__product lumlum-orderfill__product--discount';
+      var rcmeta = document.createElement('div');
+      rcmeta.className = 'lumlum-orderfill__pmeta';
+      var rcnm = document.createElement('div');
+      rcnm.className = 'lumlum-orderfill__pname';
+      rcnm.textContent = 'Rabat czasowy';
+      rcmeta.appendChild(rcnm);
+      var rcline = document.createElement('div');
+      rcline.className = 'lumlum-orderfill__pline';
+      var rclv = document.createElement('div');
+      rclv.className = 'lumlum-orderfill__pline-val';
+      rclv.textContent = moneyPLN(-rabatCz);
+      rcline.appendChild(rclv);
+      rcrow.appendChild(document.createElement('div'));
+      rcrow.appendChild(rcmeta);
+      rcrow.appendChild(rcline);
+      productsWrap.appendChild(rcrow);
+    }
+
     var totalEl = sum.querySelector('[data-total]');
-    if (totalEl) totalEl.textContent = moneyPLN(data && data.kwota_proponowana_brutto);
+    if (totalEl) totalEl.textContent = moneyPLN(finalnaBrutto(data));
 
     targetEl.appendChild(sum);
   }
 
   function renderAll(data){
-    if (els.totalInline) els.totalInline.textContent = moneyPLN(data && data.kwota_proponowana_brutto);
+    if (els.totalInline) els.totalInline.textContent = moneyPLN(finalnaBrutto(data));
     buildSummaryInto(els.summaryDesktop, data || {});
     buildSummaryInto(els.summaryMobile, data || {});
     updateShippingCost(); // wiersz „Dostawa" + suma z dopłatą wg kraju

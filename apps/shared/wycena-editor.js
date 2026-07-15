@@ -685,6 +685,12 @@ window.WycenaEditor = (() => {
     };
     fake._discount = fake.kwota_proponowana_brutto != null && fake._suma_pozycji
       ? Math.round((money(fake.kwota_proponowana_brutto) - fake._suma_pozycji) * 100) / 100 : 0;
+    // Rabat czasowy schodzi z "Do zapłaty" także w podglądzie parsera (spójnie
+    // z kartą; brak zamrożonej sprzedaży w podglądzie => proponowana − rabat).
+    fake._rabat24h_kwota = money(row.rabat24h_kwota) || 0;
+    fake._cena_finalna = fake.kwota_proponowana_brutto != null
+      ? Math.round((money(fake.kwota_proponowana_brutto) - fake._rabat24h_kwota) * 100) / 100
+      : null;
     const productsEl = window.WycenaKarta
       ? (() => {
         const tmp = WycenaKarta.buildBody(fake, { readOnly: true, mode: 'preview' }).el;

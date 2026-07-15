@@ -313,7 +313,7 @@ window.WycenyTab = (() => {
     summaryMain.append(phoneRow);
 
     const rightAnchor = h('div', 'right-anchor');
-    const kwota = h('span', 'summary-feedback', moneyShort(wycena.kwota_proponowana_brutto));
+    const kwota = h('span', 'summary-feedback', moneyShort(wycena._cena_finalna ?? wycena.kwota_proponowana_brutto));
     kwota.style.fontWeight = '700';
     kwota.style.color = 'var(--text-primary)';
     const stage = WycenaKarta.utils.stageChip(wycena.process_stage);

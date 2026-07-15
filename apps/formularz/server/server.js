@@ -14,6 +14,8 @@ require('dotenv').config();
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { notifyUser } = require('../../shared/server/push');
+// "Cena, którą klient realnie płaci" (rabat czasowy obniża cenę ostateczną).
+const { cenaFinalna, rabat24hAktywny } = require('../../shared/server/wyceny-cena');
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -144,11 +146,19 @@ app.get('/api/dane', async (req, res) => {
 
     const rabatAktywny = wycena.rabat24h_kwota && wycena.rabat24h_wazny_do;
 
+    // Kwota do zapłaty = cena po rabacie czasowym (gdy jeszcze ważny) albo kwota
+    // sprzedaży, jeśli już zamrożona. Liquid pokazuje ją jako TOTAL; baner niżej
+    // dalej dostaje kwotę proponowaną + rabat (bez podwójnego odejmowania).
+    const kwotaFinalna = wycena.kwota_sprzedazy_brutto != null
+      ? num(wycena.kwota_sprzedazy_brutto)
+      : (rabat24hAktywny(wycena) ? Math.round((kwota - num(wycena.rabat24h_kwota)) * 100) / 100 : kwota);
+
     res.json({
       id: `#${wycena.id}`,
       form_status: wycena.form_status || 'NEW',
       produkty: Array.isArray(wycena.items) ? wycena.items : [],
       kwota_proponowana_brutto: kwota,
+      kwota_finalna_brutto: kwotaFinalna,
       discount_amount: discount,
       rabat24h_kwota: rabatAktywny ? num(wycena.rabat24h_kwota) : 0,
       rabat24h_wazny_do: rabatAktywny ? warsawDDMMYYYYHHmm(wycena.rabat24h_wazny_do) : '',
@@ -205,6 +215,18 @@ app.post('/api/zapis', async (req, res) => {
       typ: 'ZAMÓWIENIE',
       updated_at: new Date().toISOString(),
     };
+    // Zamrożenie kwoty sprzedaży = to, co klient realnie płaci w chwili złożenia
+    // zamówienia. Gdy rabat czasowy jest jeszcze ważny → proponowana − rabat
+    // (klient złożył przy żywej ofercie); po wygaśnięciu → pełna proponowana.
+    // Zapisujemy tylko gdy jeszcze puste (import Shopify/ręczna korekta wygrywa)
+    // i gdy jest z czego liczyć. Dzięki temu panele/statystyki/faktura pokazują
+    // tę samą liczbę, niezależnie od tego, czy licznik rabatu później minie.
+    if (wycena.kwota_sprzedazy_brutto == null && wycena.kwota_proponowana_brutto != null) {
+      const proponowana = num(wycena.kwota_proponowana_brutto);
+      patch.kwota_sprzedazy_brutto = rabat24hAktywny(wycena)
+        ? Math.round((proponowana - num(wycena.rabat24h_kwota)) * 100) / 100
+        : proponowana;
+    }
     FORM_FIELDS.forEach((f) => { if (body[f] !== undefined) patch[f] = String(body[f] || '') || null; });
     if (body.email) patch.email = String(body.email).toLowerCase().trim();
     if (body.phone_e164 || body.phone) {

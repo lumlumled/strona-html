@@ -521,7 +521,7 @@
 
     // Kwota wyceny: sprzedaż (jeśli już złożone zamówienie) albo proponowana.
     function wycenaKwota(w) {
-      const v = w.kwota_sprzedazy_brutto ?? w.kwota_proponowana_brutto;
+      const v = w._cena_finalna ?? w.kwota_sprzedazy_brutto ?? w.kwota_proponowana_brutto;
       if (v === null || v === undefined || v === '') return '';
       const n = Number(v);
       if (!Number.isFinite(n)) return '';

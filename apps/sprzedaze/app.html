@@ -476,7 +476,7 @@
       rightAnchor.append(
         ownerBadge(w.owner),
         h('span', 'summary-date', w.created_at ? formatDT(w.created_at).slice(0, 10) : ''),
-        h('span', 'summary-kwota', moneyPLN(w.kwota_sprzedazy_brutto ?? w.kwota_proponowana_brutto)),
+        h('span', 'summary-kwota', moneyPLN(w._cena_finalna ?? w.kwota_sprzedazy_brutto ?? w.kwota_proponowana_brutto)),
         saleStatusChip(w),
       );
 

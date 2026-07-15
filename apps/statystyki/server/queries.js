@@ -121,14 +121,17 @@ function parseHook(adName) {
   };
 }
 
-// Przychód zamówienia = coalesce(sprzedaz, proponowana) (guardrails §1; ratio 1.000).
-const revenue = (r) => num(r.kwota_sprzedazy_brutto) > 0 ? num(r.kwota_sprzedazy_brutto) : num(r.kwota_proponowana_brutto);
+// Przychód zamówienia = "cena, którą klient realnie płaci": kwota sprzedaży,
+// jeśli zapisana, inaczej proponowana − rabat czasowy (jedno źródło prawdy:
+// wyceny-cena.js). Wymaga rabat24h_kwota w selectach karmiących revenue().
+const { cenaFinalna } = require('../../shared/server/wyceny-cena');
+const revenue = (r) => num(cenaFinalna(r));
 
 // ── A. SPRZEDAŻ ──────────────────────────────────────────────────────────────
 async function sprzedaz(db, params = {}) {
   const { owner } = params;
   let q = db.from(WYCENY)
-    .select('id,created_at,kwota_sprzedazy_brutto,kwota_proponowana_brutto,owner,invoice_company_nip,telefon_digits,source')
+    .select('id,created_at,kwota_sprzedazy_brutto,kwota_proponowana_brutto,rabat24h_kwota,owner,invoice_company_nip,telefon_digits,source')
     .eq('typ', 'ZAMÓWIENIE');
   if (owner && owner !== 'all') q = q.ilike('owner', owner);
   const { data, error } = await q;
@@ -474,7 +477,7 @@ const WINDOW_MS = 30 * 86400000; // okno konwersji phone-match
 async function konwersje(db) {
   const [wRes, logRes] = await Promise.all([
     db.from(WYCENY)
-      .select('id,typ,status,source,created_at,paid_at,telefon_digits,kwota_proponowana_brutto,kwota_sprzedazy_brutto')
+      .select('id,typ,status,source,created_at,paid_at,telefon_digits,kwota_proponowana_brutto,kwota_sprzedazy_brutto,rabat24h_kwota')
       .neq('typ', 'NOTATKA'),
     db.from(LOG).select('telefon,data_zmiany,zrodlo'),
   ]);
@@ -626,7 +629,7 @@ async function closeRate(db) {
 // Historia importu tu POMAGA (realne zamówienia B2B), więc bez filtra source.
 async function b2bRadar(db) {
   const { data, error } = await db.from(WYCENY)
-    .select('id,created_at,invoice_company_nip,invoice_company_name,telefon_e164,telefon_digits,kwota_sprzedazy_brutto,kwota_proponowana_brutto')
+    .select('id,created_at,invoice_company_nip,invoice_company_name,telefon_e164,telefon_digits,kwota_sprzedazy_brutto,kwota_proponowana_brutto,rabat24h_kwota')
     .eq('typ', 'ZAMÓWIENIE');
   if (error) throw error;
   const rows = data || [];
@@ -702,7 +705,7 @@ const MARZA_BLENDED = 0.74;
 async function marzaRealna(db) {
   const [skuRes, zamRes] = await Promise.all([
     db.from('sku_cennik').select('sku,koszty,vat'),
-    db.from(WYCENY).select('id,created_at,items,kwota_sprzedazy_brutto,kwota_proponowana_brutto').eq('typ', 'ZAMÓWIENIE'),
+    db.from(WYCENY).select('id,created_at,items,kwota_sprzedazy_brutto,kwota_proponowana_brutto,rabat24h_kwota').eq('typ', 'ZAMÓWIENIE'),
   ]);
   if (skuRes.error) throw skuRes.error;
   if (zamRes.error) throw zamRes.error;
@@ -805,7 +808,7 @@ async function kampanie(db, params = {}) {
   const [ldRes, wRes] = await Promise.all([
     db.from(LEADY).select('"Date",ad_name,"Phone number"'),
     db.from(WYCENY)
-      .select('id,typ,status,source,created_at,telefon_digits,kwota_proponowana_brutto,kwota_sprzedazy_brutto')
+      .select('id,typ,status,source,created_at,telefon_digits,kwota_proponowana_brutto,kwota_sprzedazy_brutto,rabat24h_kwota')
       .neq('typ', 'NOTATKA'),
   ]);
   if (ldRes.error) throw ldRes.error;
@@ -1084,7 +1087,7 @@ async function przeglad(db, { weeks = 12 } = {}) {
   const now = Date.now();
   const [leadyR, wycR, dailyR, postsR] = await Promise.all([
     db.from(LEADY).select('"Date",ad_name'),
-    db.from(WYCENY).select('created_at,kwota_sprzedazy_brutto,kwota_proponowana_brutto,lead_id,source').eq('typ', 'ZAMÓWIENIE'),
+    db.from(WYCENY).select('created_at,kwota_sprzedazy_brutto,kwota_proponowana_brutto,rabat24h_kwota,lead_id,source').eq('typ', 'ZAMÓWIENIE'),
     db.from('marketing_organic_daily').select('date,metrics'),
     db.from('marketing_organic_posts').select('platform,published_at,title,url,views,likes'),
   ]);
@@ -1115,7 +1118,7 @@ async function przeglad(db, { weeks = 12 } = {}) {
   (wycR.data || []).forEach((r) => {
     if (!r.created_at) return;
     const i = idx(new Date(r.created_at).getTime()); if (i < 0) return;
-    const zl = num(r.kwota_sprzedazy_brutto) || num(r.kwota_proponowana_brutto);
+    const zl = revenue(r);
     bins[i].sprzedaz_n++; bins[i].sprzedaz_zl += zl;
     const maLeada = r.lead_id != null && String(r.lead_id).trim() !== '';
     if (maLeada) { bins[i].z_leada_n++; bins[i].z_leada_zl += zl; }

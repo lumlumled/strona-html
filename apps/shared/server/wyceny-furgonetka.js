@@ -37,6 +37,9 @@
 //     Anulowanie po fakcie: panel web (cancel_available) / dok do dobrania.
 //   • Poza-EU + UK/CH/NO/UA wymaga `duty` (dane celne) — do dołożenia (v2).
 
+// Wartość paczki (cło/ubezpieczenie) = "cena, którą klient realnie płaci".
+const { cenaFinalna } = require('./wyceny-cena');
+
 const API_BASE = process.env.FURGONETKA_API_BASE || 'https://api.furgonetka.pl';
 const LABEL_FORMAT = process.env.FURGONETKA_LABEL_FORMAT || 'A6';
 // Media type wersjonujący REST Furgonetki. TODO(sandbox): potwierdzić dokładny
@@ -200,7 +203,7 @@ function buildParcel(wycena) {
     depth: 33,
     height: 10,
     weight: Number(process.env.FURGONETKA_WEIGHT_KG) || 3,
-    value: Number(wycena.kwota_sprzedazy_brutto ?? wycena.kwota_proponowana_brutto ?? 0) || 0,
+    value: Number(cenaFinalna(wycena) ?? 0) || 0,
   };
 }
 

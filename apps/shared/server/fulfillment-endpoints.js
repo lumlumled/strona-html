@@ -19,6 +19,9 @@
 
 const HISTORIA_MS = 7 * 24 * 60 * 60 * 1000; // wysłane trzymamy 7 dni po doręczeniu
 
+// "Cena, którą klient realnie płaci" (rabat czasowy obniża cenę ostateczną).
+const { cenaFinalna } = require('./wyceny-cena');
+
 function num(v) {
   const n = Number(String(v ?? '').replace(/\s/g, '').replace(',', '.'));
   return Number.isFinite(n) ? n : 0;
@@ -120,7 +123,7 @@ function serializeOrder(w, shipments, bucket, cennikBySku) {
     imie_nazwisko: w.imie_nazwisko || [w.first_name, w.last_name].filter(Boolean).join(' ').trim() || '',
     telefon: w.telefon_e164 ? `+${String(w.telefon_e164).replace(/^\+/, '')}` : (w.telefon_digits ? `+48${w.telefon_digits}` : ''),
     email: w.email || '',
-    kwota: num(w.kwota_sprzedazy_brutto ?? w.kwota_proponowana_brutto),
+    kwota: num(cenaFinalna(w)),
     payment_method: w.payment_method || '',
     paid: Boolean(w.paid),
     created_at: w.created_at || null,

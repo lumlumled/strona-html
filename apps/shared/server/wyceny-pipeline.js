@@ -21,6 +21,8 @@ const infakt = require('./wyceny-infakt');
 const shipx = require('./wyceny-shipx');
 const furgonetka = require('./wyceny-furgonetka');
 const mailer = require('./wyceny-mailer');
+// "Cena, którą klient realnie płaci" (rabat czasowy obniża cenę ostateczną).
+const { cenaFinalna } = require('./wyceny-cena');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -70,7 +72,7 @@ async function notifyFulfillment(db, wycena) {
     const { data } = await db.from('app_users').select('id,name,role').eq('active', true);
     const targets = (data || []).filter((u) => u.role === 'admin' || wanted.has(String(u.name || '').trim().toLowerCase()));
     const nazwa = wycena.imie_nazwisko || [wycena.first_name, wycena.last_name].filter(Boolean).join(' ').trim();
-    const kwota = wycena.kwota_sprzedazy_brutto ?? wycena.kwota_proponowana_brutto;
+    const kwota = cenaFinalna(wycena);
     for (const u of targets) {
       await push.notifyUser(() => db, u.id, {
         title: 'Nowe do spakowania',
@@ -108,16 +110,18 @@ async function pushWeekend(db, wycena) {
 //                    (ujemna pozycja "Rabat" na fakturze)
 function policzKwoty(wycena) {
   const suma = (wycena.items || []).reduce((a, p) => a + num(p.price) * (num(p.quantity) || 1), 0);
-  const kwota = wycena.kwota_proponowana_brutto != null ? num(wycena.kwota_proponowana_brutto) : suma;
-  const rabatAktywny = Boolean(
-    wycena.rabat24h_kwota && wycena.rabat24h_wazny_do
-    && new Date(wycena.rabat24h_wazny_do).getTime() > Date.now()
-  );
-  const rabat24h = rabatAktywny ? num(wycena.rabat24h_kwota) : 0;
-  const kwotaFinalna = Math.round((kwota - rabat24h) * 100) / 100;
-  const znizka = suma ? Math.round((kwota - suma) * 100) / 100 : 0;
-  const rabatLaczny = Math.round((znizka - rabat24h) * 100) / 100;
-  return { suma, kwotaFinalna, rabatLaczny, rabatAktywny };
+  const kwotaBaza = wycena.kwota_proponowana_brutto != null ? num(wycena.kwota_proponowana_brutto) : suma;
+  // Kwota, którą klient realnie płaci: kwota sprzedaży (zamrożona przy złożeniu
+  // zamówienia) albo proponowana − rabat czasowy. Faktura MUSI zgadzać się z tą
+  // liczbą (jedno źródło prawdy: wyceny-cena.js).
+  const finalna = cenaFinalna(wycena);
+  const kwotaFinalna = Math.round((finalna != null ? num(finalna) : kwotaBaza) * 100) / 100;
+  // Ujemna pozycja "Rabat" na fakturze tak, by suma pozycji + Rabat = kwota
+  // finalna (obejmuje i zniżkę proponowana-vs-pozycje, i rabat czasowy).
+  const rabatLaczny = suma
+    ? Math.round((kwotaFinalna - suma) * 100) / 100
+    : Math.round((kwotaFinalna - kwotaBaza) * 100) / 100;
+  return { suma, kwotaFinalna, rabatLaczny };
 }
 
 function jestLocker(wycena) {

@@ -245,17 +245,19 @@ window.WycenaKarta = (() => {
       rab.append(el('span', '', 'Rabat'), el('span', '', moneyPLN(discount)));
       totals.appendChild(rab);
     }
-    const final = el('div', 'wk-totals-row wk-final');
-    final.append(
-      el('span', '', 'Do zapłaty'),
-      el('span', '', moneyPLN(wycena.kwota_proponowana_brutto ?? wycena._suma_pozycji))
-    );
-    totals.appendChild(final);
-    if (wycena.kwota_sprzedazy_brutto && Number(wycena.kwota_sprzedazy_brutto) !== Number(wycena.kwota_proponowana_brutto)) {
-      const sprz = el('div', 'wk-totals-row');
-      sprz.append(el('span', '', 'Kwota sprzedaży'), el('span', '', moneyPLN(wycena.kwota_sprzedazy_brutto)));
-      totals.appendChild(sprz);
+    // Rabat czasowy realnie schodzi z "Do zapłaty" (nie jest już samym banerem).
+    // _cena_finalna = kwota sprzedaży, jeśli zapisana, inaczej proponowana − rabat.
+    const przedRabatem = Number(wycena.kwota_proponowana_brutto ?? wycena._suma_pozycji);
+    const cenaFin = wycena._cena_finalna != null ? Number(wycena._cena_finalna) : przedRabatem;
+    const rabatCz = Number(wycena._rabat24h_kwota) || 0;
+    if (rabatCz > 0 && cenaFin < przedRabatem) {
+      const rc = el('div', 'wk-totals-row wk-rabat');
+      rc.append(el('span', '', 'Rabat czasowy'), el('span', '', moneyPLN(-rabatCz)));
+      totals.appendChild(rc);
     }
+    const final = el('div', 'wk-totals-row wk-final');
+    final.append(el('span', '', 'Do zapłaty'), el('span', '', moneyPLN(cenaFin)));
+    totals.appendChild(final);
     wrap.appendChild(totals);
 
     if (wycena.rabat24h_kwota) {

@@ -25,6 +25,10 @@ const WYCENA_CLOSING_STATUSY = new Set(['Fulfilled', 'Closed', 'Stracone']);
 const { statusRank } = require('./call-analysis');
 const LEAD_STATUS_WYCENA = 'Wycena wysłana';
 
+// "Cena, którą klient realnie płaci" — jedno źródło prawdy (rabat czasowy
+// obniża cenę ostateczną, nie jest już samym banerem). Patrz wyceny-cena.js.
+const { cenaFinalna, rabat24hKwota } = require('./wyceny-cena');
+
 // Publiczny link formularza dla klienta (podmieniany na formularz-test w testach).
 // Czysty ?id= bez tokenu — decyzja Antoniego: link ma być krótki. Endpoint GET
 // i tak przyjmuje linki bez tokenu (tokenOk zwraca true przy braku t); form_token
@@ -63,6 +67,10 @@ function decorate(wycena) {
       wycena.rabat24h_kwota && wycena.rabat24h_wazny_do
       && new Date(wycena.rabat24h_wazny_do).getTime() > Date.now()
     ),
+    // Cena po rabacie czasowym = to, co panel/karta pokazują jako "Do zapłaty"
+    // i co liczy się jako sprzedaż. Kwota sprzedaży (jeśli zapisana) wygrywa.
+    _cena_finalna: cenaFinalna(wycena),
+    _rabat24h_kwota: rabat24hKwota(wycena),
   };
 }
 
@@ -378,7 +386,7 @@ async function notifyWycenaCreated(db, wycena, actorName) {
     if (!targets.length) return;
     const nazwa = wycena.imie_nazwisko
       || [wycena.first_name, wycena.last_name].filter(Boolean).join(' ').trim();
-    const kwota = wycena.kwota_sprzedazy_brutto ?? wycena.kwota_proponowana_brutto;
+    const kwota = cenaFinalna(wycena);
     const body = `#${wycena.id}`
       + (nazwa ? ` · ${nazwa}` : '')
       + (kwota != null && kwota !== '' ? ` · ${num(kwota)} zł` : '')
@@ -586,7 +594,7 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
     try {
       const supabase = getClient();
       let q = scoped(
-        supabase.from('wyceny').select('id,typ,created_at,kwota_sprzedazy_brutto,kwota_proponowana_brutto,paid'),
+        supabase.from('wyceny').select('id,typ,created_at,kwota_sprzedazy_brutto,kwota_proponowana_brutto,rabat24h_kwota,paid'),
         req
       ).eq('typ', 'ZAMÓWIENIE');
       const ownerParam = String(req.query.owner || '').trim();
@@ -598,7 +606,7 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       const thisMonth = warsaw(new Date()); // "YYYY-MM"
       const [ty, tm] = thisMonth.split('-').map(Number);
       const prevMonth = tm === 1 ? `${ty - 1}-12` : `${ty}-${String(tm - 1).padStart(2, '0')}`;
-      const kwota = (r) => num(r.kwota_sprzedazy_brutto ?? r.kwota_proponowana_brutto);
+      const kwota = (r) => num(cenaFinalna(r));
       const sum = (arr) => Math.round(arr.reduce((a, r) => a + kwota(r), 0) * 100) / 100;
       const inMonth = (m) => rows.filter((r) => r.created_at && warsaw(r.created_at) === m);
       const prevSuma = sum(inMonth(prevMonth));
