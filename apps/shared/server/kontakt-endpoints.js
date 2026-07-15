@@ -14,118 +14,19 @@
 // merged_into) — moduł jest dependency-injected, więc require przez appki
 // CRM/Backlog jest bezpieczny (Vercel dociąga plik przez trace require()).
 const identity = require('../../komunikator/server/identity');
-// Wysyłka Gmail (Etap 3): reply-in-thread / nowy mail + skrzynka usera
-// (kom_mailboxes.app_user_id). Env GOOGLE_* jest project-wide na Vercelu.
+// Skrzynka usera do sekcji `wysylka` (mailboxForUser). Env GOOGLE_* jest
+// project-wide na Vercelu.
 const gmail = require('../../komunikator/server/ingest/gmail');
-// SMS (Etap 4): podpisany klient API Zadarmy z backlogu (HMAC-SHA1).
-const { callZadarma } = require('../../backlog-b2c/server/zadarma');
-
-const LEADY_B2C_TABLE = 'Leady B2C';
-
-function normalizePhoneDigits(v) {
-  return String(v || '').replace(/\D/g, '');
-}
-
-function warsawDateTimeStr(date = new Date()) {
-  const dtf = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Europe/Warsaw', hour12: false,
-    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-  });
-  const p = dtf.formatToParts(date).reduce((acc, x) => { acc[x.type] = x.value; return acc; }, {});
-  return `${p.day}.${p.month}.${p.year} ${p.hour}:${p.minute}`;
-}
-
-async function findLeadByIdLeada(db, leadId) {
-  const idNum = Number(leadId);
-  if (!Number.isFinite(idNum)) return null;
-  const { data, error } = await db.from(LEADY_B2C_TABLE).select('*').eq('ID Leada', idNum).limit(1);
-  if (error) throw error;
-  return (data && data[0]) || null;
-}
-
-// Jednolinijkowy ślad wysyłki w kolumnie "Historia rozmów" (decyzja Antoniego
-// 2026-07-14: mobile i stare widoki widzą kontakt bez zmian). Prefiksy
-// [Mail→]/[SMS→] rozpoznaje panel Kontakt i filtruje je jako duplikaty,
-// gdy pokazuje pełną wiadomość z komunikatora. Zapis przez RPC z bypassem
-// triggera (jak notatka) — bez wpisu-widma w Log zmian.
-async function appendHistoriaLine(db, lead, line) {
-  if (!lead) return;
-  const entry = `${warsawDateTimeStr()} - ${line}`;
-  const { error } = await db.rpc('app_update_leady_notatka', {
-    p_phone: lead['Phone number'],
-    p_historia: lead['Historia rozmów'] ? `${entry}\n${lead['Historia rozmów']}` : entry,
-    p_set_akcja: false,
-    p_akcja: null,
-    p_akcja_termin: null,
-    p_akcja_owner: null,
-    p_data_feedbacku: null,
-    p_godzina_feedbacku: null,
-  });
-  if (error) console.warn('kontakt: dopis do Historii rozmów nie powiódł się:', error.message);
-}
-
-// Klient komunikatora dla leada — istniejący (po telefonie/e-mailu) albo
-// świeżo utworzony z tożsamością mailową/telefoniczną (source 'manual',
-// wysyłka z karty to świadome działanie handlowca). Drugi identyfikator
-// dopinany przez enrich; konflikt (identyfikator u innego klienta) nie
-// blokuje wysyłki — zostaje do scalenia w komunikatorze.
-async function resolveCustomerForLead(db, { digits, email, displayName }) {
-  const komPhone = digits ? identity.normalize('phone', digits) : '';
-  const lookups = [];
-  if (komPhone) lookups.push(db.from('kom_customer_identities').select('customer_id').eq('type', 'phone').eq('value', komPhone));
-  if (email) lookups.push(db.from('kom_customer_identities').select('customer_id').eq('type', 'email').eq('value', email));
-  const results = await Promise.all(lookups);
-  for (const r of results) if (r.error) throw r.error;
-  const ids = [...new Set(results.flatMap((r) => (r.data || []).map((row) => row.customer_id)))];
-  if (ids.length) {
-    const customer = await identity.loadCustomer(db, ids[0]);
-    if (customer) {
-      const enrich = async (type, value) => {
-        try { await identity.enrichCustomer(db, customer.id, { type, value, source: 'manual' }); } catch (_) { /* konflikt/duplikat — nie blokuje */ }
-      };
-      if (email) await enrich('email', email);
-      if (komPhone) await enrich('phone', komPhone);
-      return customer;
-    }
-  }
-  const seed = email ? { type: 'email', value: email } : { type: 'phone', value: komPhone };
-  const { customer } = await identity.resolveCustomer(db, { ...seed, displayName: displayName || null, source: 'manual' });
-  const second = email && komPhone ? { type: 'phone', value: komPhone } : null;
-  if (second) {
-    try { await identity.enrichCustomer(db, customer.id, { ...second, source: 'manual' }); } catch (_) { /* jw. */ }
-  }
-  return customer;
-}
-
-// Najświeższy mailowy wątek klienta z meta.gmail + dane do reply-in-thread
-// (temat i gmailowe ID ostatniego maila PRZYCHODZĄCEGO — nagłówki wątkowania).
-async function findMailThread(db, customerIds) {
-  if (!customerIds.length) return null;
-  const { data: threads, error } = await db
-    .from('kom_threads')
-    .select('*')
-    .eq('channel', 'email')
-    .in('customer_id', customerIds)
-    .order('last_message_at', { ascending: false })
-    .limit(5);
-  if (error) throw error;
-  const thread = (threads || []).find((t) => t.meta && t.meta.gmail && t.meta.gmail.threadId);
-  if (!thread) return null;
-  const { data: msgs, error: msgErr } = await db
-    .from('kom_messages')
-    .select('direction, meta, created_at')
-    .eq('thread_id', thread.id)
-    .order('created_at', { ascending: false })
-    .limit(20);
-  if (msgErr) throw msgErr;
-  const zTematem = (msgs || []).find((m) => m.meta && m.meta.gmail && m.meta.gmail.subject);
-  const ostatniIn = (msgs || []).find((m) => m.direction === 'in' && m.meta && m.meta.gmail && m.meta.gmail.id);
-  return {
-    thread,
-    temat: zTematem ? zTematem.meta.gmail.subject : '(bez tematu)',
-    lastGmailMessageId: ostatniIn ? ostatniIn.meta.gmail.id : null,
-  };
-}
+// Wspólna wysyłka SMS/mail z pełnym śladem (kom_messages + Historia rozmów) —
+// ta sama ścieżka co worker kampanii (apps/kampanie). Refactor Etap 0
+// docs/plan-kampanie.md, zachowanie 1:1.
+const {
+  normalizePhoneDigits,
+  findLeadByIdLeada,
+  findMailThread,
+  sendSmsAndLog,
+  sendMailAndLog,
+} = require('./kontakt-send');
 
 function handleError(res, err, fallbackStatus = 400) {
   console.error(err);
@@ -282,75 +183,42 @@ function registerKontaktEndpoints(app, { getClient, requireView, requireEdit }) 
       const db = getClient();
       const tresc = String(req.body?.tresc || '').trim();
       const to = String(req.body?.email || '').trim().toLowerCase();
-      const digits = normalizePhoneDigits(req.body?.telefon);
       if (!tresc) return res.status(400).json({ error: 'Pusta treść maila' });
       if (!to) return res.status(400).json({ error: 'Lead nie ma adresu e-mail' });
 
-      const userBox = req.user ? await gmail.mailboxForUser(db, req.user.id) : null;
-      if (!userBox) {
-        return res.status(400).json({
-          error: 'Brak podpiętej skrzynki Gmail dla Twojego konta',
-          connect: '/wiadomosci/api/gmail/auth',
-        });
-      }
-
       const lead = await findLeadByIdLeada(db, req.body?.lead_id);
-      const customer = await resolveCustomerForLead(db, {
-        digits, email: to, displayName: lead ? lead['Name'] : null,
-      });
-
-      const mailInfo = await findMailThread(db, [customer.id]);
-      const wWatku = Boolean(mailInfo && mailInfo.thread.meta.gmail.mailbox === userBox.email);
-      let sent;
-      let subjectUsed;
-      let threadRow;
-      if (wWatku) {
-        subjectUsed = mailInfo.temat;
-        sent = await gmail.sendReply(db, {
-          mailbox: userBox.email,
-          to,
-          subject: subjectUsed,
-          text: tresc,
-          gmailThreadId: mailInfo.thread.meta.gmail.threadId,
-          lastGmailMessageId: mailInfo.lastGmailMessageId,
+      let wynik;
+      try {
+        wynik = await sendMailAndLog(db, {
+          email: to,
+          temat: req.body?.temat,
+          tresc,
+          senderUserId: req.user ? req.user.id : null,
+          senderName: (req.user && req.user.name) || 'antoni',
+          lead,
+          zrodlo: 'karta_leada',
         });
-        threadRow = mailInfo.thread;
-      } else {
-        subjectUsed = String(req.body?.temat || '').trim();
-        if (!subjectUsed) return res.status(400).json({ error: 'Podaj temat — to będzie nowy mail (klient nie ma wątku w Twojej skrzynce)' });
-        sent = await gmail.sendNew(db, { mailbox: userBox.email, to, subject: subjectUsed, text: tresc });
-        const { thread } = await identity.attachThread(db, customer, 'email', sent.threadId);
-        threadRow = thread;
-        // meta.gmail jak przy ingest — odpowiedź klienta dołączy do tego
-        // samego wątku kom, a komunikator wie, z której skrzynki odpisywać.
-        const meta = { ...(thread.meta || {}), gmail: { ...(thread.meta?.gmail || {}), threadId: sent.threadId, mailbox: userBox.email } };
-        const { error: metaErr } = await db.from('kom_threads').update({ meta }).eq('id', thread.id);
-        if (metaErr) console.warn('kontakt: zapis meta wątku:', metaErr.message);
+      } catch (err) {
+        if (err.code === 'NO_MAILBOX') {
+          return res.status(400).json({
+            error: 'Brak podpiętej skrzynki Gmail dla Twojego konta',
+            connect: '/wiadomosci/api/gmail/auth',
+          });
+        }
+        if (err.code === 'TEMAT_REQUIRED') return res.status(400).json({ error: err.message });
+        throw err;
       }
 
-      const { error: msgErr } = await db.from('kom_messages').insert({
-        thread_id: threadRow.id,
-        direction: 'out',
-        body: tresc,
-        sent_by: (req.user && req.user.name) || 'antoni',
-        external_message_id: `gmail:${sent.id}`,
-        meta: { gmail: { id: sent.id, threadId: sent.threadId, subject: subjectUsed, mailbox: userBox.email }, zrodlo: 'karta_leada' },
-      });
-      if (msgErr) console.warn('kontakt: zapis kom_messages:', msgErr.message);
-      await db.from('kom_threads').update({ last_message_at: new Date().toISOString() }).eq('id', threadRow.id);
-
-      await appendHistoriaLine(db, lead, `[Mail→] ${subjectUsed} — ${tresc.replace(/\s+/g, ' ').slice(0, 120)}`);
-
-      res.json({ ok: true, tryb: wWatku ? 'watek' : 'nowy', temat: subjectUsed, skrzynka: userBox.email });
+      res.json({ ok: true, tryb: wynik.tryb, temat: wynik.temat, skrzynka: wynik.skrzynka });
     } catch (err) {
       handleError(res, err, 502);
     }
   });
 
   // POST /api/kontakt/sms — { lead_id, telefon, tresc }. Wysyłka przez API
-  // Zadarmy (/v1/sms/send/, konto firmowe; nadawca per user = v2). Ślad:
-  // kom_messages w wątku kanału 'sms' (jeden per klient, external_thread_id
-  // = 48XXXXXXXXX) + linia "[SMS→] …" w Historii rozmów.
+  // Zadarmy (/v1/sms/send/, nadawca = numer handlowca). Ślad: kom_messages
+  // w wątku kanału 'sms' (jeden per klient, external_thread_id = 48XXXXXXXXX)
+  // + linia "[SMS→] …" w Historii rozmów.
   app.post('/api/kontakt/sms', edit, async (req, res) => {
     try {
       const db = getClient();
@@ -358,47 +226,17 @@ function registerKontaktEndpoints(app, { getClient, requireView, requireEdit }) 
       const digits = normalizePhoneDigits(req.body?.telefon);
       if (!tresc) return res.status(400).json({ error: 'Pusta treść SMS-a' });
       if (!digits || digits.length < 9) return res.status(400).json({ error: 'Brak poprawnego numeru telefonu' });
-      const komPhone = identity.normalize('phone', digits);
-
-      // Nadawca SMS-a: numer HANDLOWCA (Lorenzo → jego numer Zadarmy),
-      // fallback = jawny override ZADARMA_SMS_CALLER_ID albo numer firmowy.
-      // Bez caller_id Zadarma podpisuje SMS-y "zadarma.com" — stąd zawsze
-      // próbujemy z numerem; musi to być numer potwierdzony w koncie Zadarmy
-      // (gdy odrzuci, błąd wraca do panelu wprost).
-      const perUser = { lorenzo: process.env.LORENZO_ZADARMA_NUMBER };
-      const rawCaller = perUser[String((req.user && req.user.name) || '').trim().toLowerCase()]
-        || process.env.ZADARMA_SMS_CALLER_ID
-        || process.env.ZADARMA_OWN_NUMBER;
-      const callerDigits = String(rawCaller || '').replace(/\D/g, '');
-
-      // Bez plusa: Zadarma trzyma numery jako '48459567870' (tak zwraca
-      // /v1/direct_numbers) i dopasowuje caller_id po dokładnym stringu —
-      // '+48…' nie łapie rejestracji i SMS wychodzi jako domyślny nadawca.
-      const params = { number: komPhone, message: tresc };
-      if (callerDigits) params.caller_id = callerDigits;
-      const wynik = await callZadarma('/v1/sms/send/', params, 'POST');
-      if (!wynik || wynik.status !== 'success') {
-        throw new Error(`Zadarma SMS: ${wynik && (wynik.message || wynik.status) || 'brak odpowiedzi'}`);
-      }
 
       const lead = await findLeadByIdLeada(db, req.body?.lead_id);
-      const customer = await resolveCustomerForLead(db, {
-        digits, email: null, displayName: lead ? lead['Name'] : null,
+      const wynik = await sendSmsAndLog(db, {
+        telefonDigits: digits,
+        tresc,
+        senderName: (req.user && req.user.name) || 'antoni',
+        lead,
+        zrodlo: 'karta_leada',
       });
-      const { thread } = await identity.attachThread(db, customer, 'sms', komPhone);
-      const { error: msgErr } = await db.from('kom_messages').insert({
-        thread_id: thread.id,
-        direction: 'out',
-        body: tresc,
-        sent_by: (req.user && req.user.name) || 'antoni',
-        meta: { sms: { messages: wynik.messages ?? null, cost: wynik.cost ?? null, nadawca: callerDigits || null }, zrodlo: 'karta_leada' },
-      });
-      if (msgErr) console.warn('kontakt: zapis kom_messages (sms):', msgErr.message);
-      await db.from('kom_threads').update({ last_message_at: new Date().toISOString() }).eq('id', thread.id);
 
-      await appendHistoriaLine(db, lead, `[SMS→] ${tresc.replace(/\s+/g, ' ').slice(0, 160)}`);
-
-      res.json({ ok: true, czesci: wynik.messages ?? null });
+      res.json({ ok: true, czesci: wynik.czesci });
     } catch (err) {
       handleError(res, err, 502);
     }
