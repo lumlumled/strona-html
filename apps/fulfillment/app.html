@@ -234,7 +234,8 @@
         if (zle.length) alert('Furgonetka - NIE udało się zamówić odbioru: ' + zle.map((f) => `#${f.wycena_id}`).join(', ') + '. Zamów w panelu Furgonetki.');
       }
       if (kurier.dispatch === 'zamowiony') {
-        alert(`Zamówiono odbiór kuriera InPost na dziś 15:00-17:00 (paczek: ${kurier.paczek}).`);
+        alert(`Zamówiono odbiór kuriera InPost na dziś 15:00-17:00 (paczek: ${kurier.paczek}).`
+          + (kurier.dispatch_ref ? `\n\nNumer potwierdzenia (Menedżer Paczek): ${kurier.dispatch_ref}` : ''));
       } else if (kurier.dispatch === 'za-pozno') {
         if (pierwszyRazDzis('zapozno')) alert('Po 15:00 - kurier InPost NIE zamówiony na dziś. Pierwszy druk etykiety / spakowanie jutro przed 15:00 zamówi odbiór.');
       } else if (kurier.dispatch === 'blad') {
@@ -312,7 +313,7 @@
       }
       if (o.bucket === 'do_spakowania' || o.bucket === 'spakowane') {
         if (o.shipment && o.shipment.label_printed_at) top.appendChild(h('span', 'chip good', 'etykieta wydrukowana'));
-        if (o.shipment && o.shipment.dispatch_order_id) top.appendChild(h('span', 'chip good', 'kurier zamówiony'));
+        if (o.shipment && o.shipment.dispatch_order_id) top.appendChild(h('span', 'chip good', `kurier zamówiony · nr ${o.shipment.dispatch_order_id}`));
       }
       top.appendChild(h('span', 'card-kwota', money(o.kwota)));
       c.appendChild(top);

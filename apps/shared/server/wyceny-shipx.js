@@ -116,24 +116,37 @@ async function getTracking(trackingNumber) {
   return shipxFetch(`/tracking/${trackingNumber}`);
 }
 
-// Zlecenie odbioru (zamawianie kuriera): kurier przyjeżdża pod adres nadawcy
-// po WSZYSTKIE podane przesyłki. Wymogi ShipX: przesyłki w statusie confirmed,
-// każda w maksymalnie JEDNYM zleceniu (inaczej 400 validation_failed dla
-// całego zlecenia); name/phone/address wymagane — ShipX robi z nich
-// dispatch_point. Okno 15:00-17:00 = decyzja z plan-furgonetka-jutro §3.
+async function listDispatchPoints() {
+  const res = await shipxFetch(`/organizations/${orgId()}/dispatch_points`);
+  return (res && res.items) || [];
+}
+
+// Zlecenie odbioru (zamawianie kuriera): kurier przyjeżdża pod adres nadawcy po
+// podane przesyłki. Wymogi ShipX: przesyłki confirmed, każda w MAX 1 zleceniu.
+//
+// ⚠️ KLUCZOWE (2026-07-15): NIE wysyłamy name/address — InPost robi z nich ZA
+// KAŻDYM razem NOWY dispatch_point (fantomowe punkty „LumLum (numer)" na koncie
+// Antoniego, których ShipX API nie pozwala skasować). Zamiast tego
+// REFERENCUJEMY istniejący punkt przez `dispatch_point_id` (konto ma jeden,
+// reużywamy go). Fallback name/address tylko gdy konto nie ma ŻADNEGO punktu
+// (utworzy go raz). Zwracamy też external_id = numer referencyjny w Menedżerze
+// Paczek (potwierdzenie odbioru dla Antoniego; bywa null tuż po utworzeniu —
+// jeden dociąg GET-em).
 async function createDispatchOrder(shipmentIds, { comment } = {}) {
-  return shipxFetch(`/organizations/${orgId()}/dispatch_orders`, {
-    method: 'post',
-    body: {
+  const punkt = (await listDispatchPoints().catch(() => []))[0];
+  const body = punkt
+    ? { shipments: shipmentIds.map(String), dispatch_point_id: punkt.id, comment: comment || undefined }
+    : {
       shipments: shipmentIds.map(String),
-      name: SENDER.company_name,
-      phone: SENDER.phone,
-      email: SENDER.email,
-      address: SENDER.address,
-      office_hours: '15:00 - 17:00',
-      comment: comment || undefined,
-    },
-  });
+      name: SENDER.company_name, phone: SENDER.phone, email: SENDER.email,
+      address: SENDER.address, office_hours: '15:00 - 17:00', comment: comment || undefined,
+    };
+  const order = await shipxFetch(`/organizations/${orgId()}/dispatch_orders`, { method: 'post', body });
+  let externalId = order.external_id || null;
+  if (!externalId && order.id) {
+    try { externalId = (await shipxFetch(`/dispatch_orders/${order.id}`)).external_id || null; } catch (_) { /* dociągnie panel */ }
+  }
+  return { ...order, external_id: externalId };
 }
 
 // ── JAWNE mapowanie statusów ShipX ───────────────────────────────────────────
@@ -168,5 +181,6 @@ module.exports = {
   downloadLabel,
   getTracking,
   createDispatchOrder,
+  listDispatchPoints,
   mapTrackingStatus,
 };

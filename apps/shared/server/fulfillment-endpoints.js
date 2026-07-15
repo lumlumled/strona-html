@@ -156,6 +156,13 @@ function serializeOrder(w, shipments, bucket, cennikBySku) {
 // zamawiamy (info w panelu); jutrzejszy pierwszy druk/spakowanie zamówi.
 const DISPATCH_CUTOFF_HOUR = 15;
 
+// Automatyczne zamawianie kuriera przez ShipX — DOMYŚLNIE WŁĄCZONE. Naprawione
+// 2026-07-15: createDispatchOrder REFERENCUJE istniejący dispatch_point (już nie
+// tworzy fantomowych punktów „LumLum (numer)") i zwraca external_id = numer
+// potwierdzenia w Menedżerze Paczek. Potwierdzone na żywo: zlecenie dociera do
+// kuriera, external_id widoczny. Awaryjne wyłączenie: env FULFILLMENT_AUTO_DISPATCH=0.
+const AUTO_DISPATCH = process.env.FULFILLMENT_AUTO_DISPATCH !== '0';
+
 function dataWarszawa(d) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Warsaw' }).format(d);
 }
@@ -205,16 +212,19 @@ async function zamowKurieraInPost(supabase, rows, { user } = {}) {
   const order = await shipx.createDispatchOrder(wZleceniu.map((s) => s.shipment_id), {
     comment: `LumLum fulfillment ${dzis}`,
   });
+  // Stemplujemy NUMEREM REFERENCYJNYM z Menedżera Paczek (external_id) — to on
+  // jest potwierdzeniem dla Antoniego; ShipX id trzymamy jako fallback.
+  const ref = String(order.external_id || order.id);
   const nowIso = new Date().toISOString();
   const { error: uErr } = await supabase.from('wyceny_shipments')
-    .update({ dispatch_order_id: String(order.id), dispatch_ordered_at: nowIso, updated_at: nowIso })
+    .update({ dispatch_order_id: ref, dispatch_ordered_at: nowIso, updated_at: nowIso })
     .in('id', doOdbioru.map((s) => s.id)); // stempel na WSZYSTKIE dzisiejsze
   if (uErr) throw uErr;
   await supabase.from('wyceny_events').insert(doOdbioru.map((s) => ({
     wycena_id: s.wycena_id, kind: 'dispatch.ordered',
-    payload: { dispatch_order_id: String(order.id), w_zleceniu: wZleceniu.some((x) => x.id === s.id), paczek: doOdbioru.length, user: user || null },
+    payload: { dispatch_ref: ref, shipx_id: String(order.id), w_zleceniu: wZleceniu.some((x) => x.id === s.id), paczek: doOdbioru.length, user: user || null },
   })));
-  return { dispatch: 'zamowiony', dispatch_order_id: String(order.id), paczek: doOdbioru.length };
+  return { dispatch: 'zamowiony', dispatch_order_id: ref, dispatch_ref: ref, paczek: doOdbioru.length };
 }
 
 // Odbiory Furgonetki (zagranica): per PACZKA, bez okna 15:00 (Furgonetka sama
@@ -249,6 +259,9 @@ async function zamowOdbioryFurgonetki(supabase, rows, { user } = {}) {
 }
 
 async function zamowKuriera(supabase, { user } = {}) {
+  // Wyłączone (patrz AUTO_DISPATCH) — nie ruszamy ShipX, żeby nie tworzyć
+  // fantomowych punktów odbioru. Odbiór zamawiany ręcznie w Menedżerze Paczek.
+  if (!AUTO_DISPATCH) return { dispatch: 'wylaczone', furgonetka: null };
   const { data: ships, error } = await supabase.from('wyceny_shipments').select('*');
   if (error) throw error;
   const all = ships || [];
