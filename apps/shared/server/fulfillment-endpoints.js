@@ -166,54 +166,55 @@ function godzinaWarszawy(d) {
 async function zamowKurieraInPost(supabase, rows, { user } = {}) {
   const teraz = new Date();
   const dzis = dataWarszawa(teraz);
-  if (rows.some((s) => s.dispatch_ordered_at && dataWarszawa(new Date(s.dispatch_ordered_at)) === dzis)) {
+  const potwierdzoneDzis = rows.filter((s) => String(s.status) === 'confirmed'
+    && !s.nadana_at && !s.delivered_at && s.tracking_number);
+  const juzZlecone = rows.find((s) => s.dispatch_ordered_at
+    && dataWarszawa(new Date(s.dispatch_ordered_at)) === dzis && s.dispatch_order_id);
+
+  // JEDNO zlecenie odbioru na dzień wystarczy (decyzja Antoniego 2026-07-14:
+  // kurier przyjeżdża raz i bierze WSZYSTKO — paczkomatowe i kurierskie —
+  // niezależnie ile jest formalnych zleceń). Jak podjazd na dziś już jest,
+  // drugiego nie zamawiamy; świeżo dołożone paczki tylko doklejamy do tego
+  // samego numeru (spójny chip „kurier zamówiony"), bez nowego podjazdu.
+  if (juzZlecone) {
+    const doDoklejenia = potwierdzoneDzis.filter((s) => !s.dispatch_order_id);
+    if (doDoklejenia.length) {
+      const nowIso = new Date().toISOString();
+      await supabase.from('wyceny_shipments')
+        .update({ dispatch_order_id: juzZlecone.dispatch_order_id, dispatch_ordered_at: nowIso, updated_at: nowIso })
+        .in('id', doDoklejenia.map((s) => s.id));
+    }
     return { dispatch: 'juz-zamowiony' };
   }
   if (godzinaWarszawy(teraz) >= DISPATCH_CUTOFF_HOUR) return { dispatch: 'za-pozno' };
-  // Tylko confirmed (wymóg ShipX) i bez wcześniejszego zlecenia — przesyłka
-  // może być w JEDNYM zleceniu, inaczej 400 dla całego zlecenia.
-  const doOdbioru = rows.filter((s) => String(s.status) === 'confirmed'
-    && !s.nadana_at && !s.delivered_at && s.tracking_number && !s.dispatch_order_id);
+
+  const doOdbioru = potwierdzoneDzis.filter((s) => !s.dispatch_order_id);
   if (!doOdbioru.length) return { dispatch: 'brak-paczek' };
   const shipx = require('./wyceny-shipx');
 
-  // InPost ODRZUCA zlecenie odbioru z mieszanymi typami usług (paczkomat vs
-  // kurier) → 400 various_types_of_carrier. Grupujemy po `service` i robimy
-  // OSOBNE zlecenie na każdy typ; przesyłki stemplujemy per grupa, więc udana
-  // grupa nie zamawia się drugi raz nawet gdy inna padnie.
-  const grupy = new Map();
-  for (const s of doOdbioru) {
-    const key = String(s.service || 'inpost');
-    if (!grupy.has(key)) grupy.set(key, []);
-    grupy.get(key).push(s);
-  }
+  // InPost nie przyjmuje MIESZANYCH typów usług w jednym zleceniu (paczkomat vs
+  // kurier → 400 various_types_of_carrier). Skoro jeden podjazd ma wziąć całość,
+  // formalne zlecenie robimy dla JEDNEGO typu (preferujemy kurierski — to realna
+  // wizyta kuriera; gdy brak kurierskich, bierzemy typ pierwszej paczki), a
+  // WSZYSTKIE dzisiejsze paczki stemplujemy jego numerem — kurier i tak
+  // odbierze też pozostałe, a znacznik blokuje drugie zlecenie.
+  const kurierskie = doOdbioru.filter((s) => String(s.service || '').includes('courier'));
+  const wZleceniu = kurierskie.length
+    ? kurierskie
+    : doOdbioru.filter((s) => String(s.service || '') === String(doOdbioru[0].service || ''));
+  const order = await shipx.createDispatchOrder(wZleceniu.map((s) => s.shipment_id), {
+    comment: `LumLum fulfillment ${dzis}`,
+  });
   const nowIso = new Date().toISOString();
-  const orderIds = [];
-  let zamowionych = 0; let ostatniBlad = null;
-  for (const [service, grupa] of grupy) {
-    try {
-      const order = await shipx.createDispatchOrder(grupa.map((s) => s.shipment_id), {
-        comment: `LumLum fulfillment ${dzis} (${service})`,
-      });
-      const { error: uErr } = await supabase.from('wyceny_shipments')
-        .update({ dispatch_order_id: String(order.id), dispatch_ordered_at: nowIso, updated_at: nowIso })
-        .in('id', grupa.map((s) => s.id));
-      if (uErr) throw uErr;
-      await supabase.from('wyceny_events').insert(grupa.map((s) => ({
-        wycena_id: s.wycena_id, kind: 'dispatch.ordered',
-        payload: { dispatch_order_id: String(order.id), service, paczek: grupa.length, user: user || null },
-      })));
-      orderIds.push(String(order.id));
-      zamowionych += grupa.length;
-    } catch (err) {
-      console.error(`Dispatch InPost (${service}):`, err.message);
-      ostatniBlad = err.message;
-    }
-  }
-  // Nic nie zamówione → zgłoś błąd (upstream pokaże alert). Część zamówiona →
-  // 'zamowiony' + flaga częściowego błędu (front doradzi Menedżer Paczek).
-  if (!zamowionych) throw new Error(ostatniBlad || 'Nie udało się zamówić odbioru InPost');
-  return { dispatch: 'zamowiony', dispatch_order_id: orderIds.join(','), paczek: zamowionych, blad_czesciowy: Boolean(ostatniBlad) };
+  const { error: uErr } = await supabase.from('wyceny_shipments')
+    .update({ dispatch_order_id: String(order.id), dispatch_ordered_at: nowIso, updated_at: nowIso })
+    .in('id', doOdbioru.map((s) => s.id)); // stempel na WSZYSTKIE dzisiejsze
+  if (uErr) throw uErr;
+  await supabase.from('wyceny_events').insert(doOdbioru.map((s) => ({
+    wycena_id: s.wycena_id, kind: 'dispatch.ordered',
+    payload: { dispatch_order_id: String(order.id), w_zleceniu: wZleceniu.some((x) => x.id === s.id), paczek: doOdbioru.length, user: user || null },
+  })));
+  return { dispatch: 'zamowiony', dispatch_order_id: String(order.id), paczek: doOdbioru.length };
 }
 
 // Odbiory Furgonetki (zagranica): per PACZKA, bez okna 15:00 (Furgonetka sama
