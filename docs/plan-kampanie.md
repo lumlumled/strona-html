@@ -77,6 +77,17 @@ Decyzje Antoniego (2026-07-15):
       "⚠ do zatwierdzenia" + przyciski Zatwierdź/Pomiń + deep-link
       /wyceny/?id=X do obejrzenia wyceny; ręczni odbiorcy bez flagi -
       świadoma decyzja). Testy: e2e 18 + mock DOM 37.
+- [x] v4 (2026-07-15): RABAT CZASOWY kampanii (migracja 004: kampanie.rabat
+      {typ procent|kwota, wartosc, wazny_do}; AI wyciąga go też z opisu wraz
+      z datą "do końca tygodnia") - nakładany na wyceny odbiorcy PRZY WYSYŁCE
+      (procent → zł od cenaFinalna per wycena, wpis w history_log; pomijane:
+      wyceny z JUŻ nadanym rabatem [cenaFinalna odejmuje go trwale - patrz
+      wyceny-cena.js], z kwotą sprzedaży, zamknięte); treść podaje cenę po
+      rabacie i termin + konkretną datę wysłania wyceny ("5 maja") + twardy
+      zakaz marketingowego żargonu i formy na "ty".
+      ⚠️ ZADARMA BLOKUJE WSZYSTKIE LINKI w SMS-ach na PL (sprawdzone na żywo,
+      też goła domena) - link do formularza dokleja się TYLKO w kampaniach
+      mailowych; SMS-owy walidator odrzuca URL-e z treści. Testy: e2e 21 + DOM 39.
 - [ ] Etap 2: ODBIÓR odpowiedzi SMS - ⚠ webhooki Zadarmy: sprawdzić, czy
       kategoria 'sms' (POST /v1/pbx/webhooks/url/) współdzieli URL z webhookiem
       rozmów (backlog-b2c/api/webhooks/zadarma) - NIE nadpisywać w ciemno!

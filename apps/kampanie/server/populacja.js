@@ -6,7 +6,7 @@
 // zamyka wszystkie). Snapshot kontekstu idzie do AI i zostaje w wierszu,
 // żeby treść odpowiadała temu, co klient faktycznie dostał.
 
-const { cenaFinalna } = require('../../shared/server/wyceny-cena');
+const { cenaFinalna, rabat24hKwota } = require('../../shared/server/wyceny-cena');
 
 // Wycena poniżej tej kwoty (albo bez kwoty) to prawie na pewno błąd/śmieć -
 // odbiorca dostaje flagę "podejrzany" i czeka na ręczne zatwierdzenie.
@@ -130,6 +130,9 @@ async function zbudujPopulacje(db, { minWiekDni = 30, owner = null, kanal = 'sms
         wiek_dni: wiekDni(najnowsza.created_at),
         wycena_created_at: najnowsza.created_at,
         liczba_wycen: g.wyceny.length,
+        // wycena z JUŻ nadanym rabatem: cena w kwocie jest po rabacie i rabatu
+        // kampanii NIE nakładamy/nie obiecujemy (cenaFinalna odejmuje go trwale)
+        ma_rabat: rabat24hKwota(najnowsza) > 0,
       },
     });
   }

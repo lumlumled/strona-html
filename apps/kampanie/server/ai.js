@@ -69,6 +69,43 @@ function transliteruj(tresc) {
   return String(tresc || '').replace(/[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]/g, (ch) => TRANSLIT[ch] || ch);
 }
 
+// Publiczny link formularza wyceny — celowo krótki ?id= bez tokenu
+// (ta sama reguła co formularzLink w wyceny-endpoints.js).
+function linkFormularza(wycenaId) {
+  const base = process.env.FORMULARZ_URL || 'https://lumlum.co/pages/formularz';
+  return `${base}?id=${wycenaId}`;
+}
+
+const MIESIACE = ['stycznia', 'lutego', 'marca', 'kwietnia', 'maja', 'czerwca', 'lipca', 'sierpnia', 'września', 'października', 'listopada', 'grudnia'];
+
+function dataPolska(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  const d = new Date(t);
+  return `${d.getUTCDate()} ${MIESIACE[d.getUTCMonth()]}`;
+}
+
+// Rabat kampanii przeliczony dla konkretnego odbiorcy (procent → złotówki od
+// kwoty jego wyceny). Zwraca null gdy rabat nieskonfigurowany/nieaktualny/
+// nie da się policzyć (brak kwoty przy rabacie procentowym).
+function rabatDlaOdbiorcy(rabat, kwota) {
+  if (!rabat || !rabat.wazny_do || !Number(rabat.wartosc)) return null;
+  if (Date.parse(`${rabat.wazny_do}T23:59:59`) < Date.now()) return null;
+  const k = Number(kwota);
+  let zl = null;
+  if (rabat.typ === 'kwota') zl = Math.round(Number(rabat.wartosc));
+  else if (Number.isFinite(k) && k > 0) zl = Math.round(k * Number(rabat.wartosc) / 100);
+  if (!zl || zl <= 0) return null;
+  if (Number.isFinite(k) && k > 0 && zl >= k) return null; // rabat nie może zjeść całej ceny
+  return {
+    zl,
+    procent: rabat.typ === 'procent' ? Number(rabat.wartosc) : null,
+    wazny_do: rabat.wazny_do,
+    wazny_do_slownie: dataPolska(rabat.wazny_do),
+    po_rabacie: Number.isFinite(k) && k > 0 ? Math.round(k - zl) : null,
+  };
+}
+
 // Naturalny, krótki opis pozycji wyceny do promptu ("3x Cyfrowa taśma COB…").
 function opiszItems(items) {
   if (!Array.isArray(items) || !items.length) return '';
@@ -113,7 +150,7 @@ function zawieraKonkret(tresc, kontekst) {
 // Walidacja wygenerowanej/edytowanej treści. Zwraca { ok, tresc, bledy, segmenty }.
 // Przy bezPolskich najpierw transliteracja (AI czasem przemyci diakrytyk) —
 // dopiero potem twarde odrzuty.
-function walidujTresc(surowa, { kontekst, bezPolskich, maxSegmenty, kanal }) {
+function walidujTresc(surowa, { kontekst, bezPolskich, maxSegmenty, kanal, limitZnakow = null }) {
   const bledy = [];
   let tresc = String(surowa || '').replace(/\s+$/g, '').trim();
   if (!tresc) return { ok: false, tresc, bledy: ['pusta treść'], segmenty: 0 };
@@ -124,7 +161,7 @@ function walidujTresc(surowa, { kontekst, bezPolskich, maxSegmenty, kanal }) {
     tresc = transliteruj(tresc);
     if (/[^\x00-\x7F]/.test(tresc.replace(/[€£¥§¿¡]/g, ''))) bledy.push('znaki spoza GSM-7 mimo trybu bez polskich znaków');
   }
-  const limit = maxDlugosc({ bezPolskich, maxSegmenty, kanal });
+  const limit = limitZnakow ?? maxDlugosc({ bezPolskich, maxSegmenty, kanal });
   const seg = policzSegmenty(tresc);
   const dlugosc = kanal === 'email' ? tresc.length : seg.znaki;
   if (dlugosc > limit) bledy.push(`za długa: ${dlugosc} > ${limit} znaków`);
@@ -134,11 +171,11 @@ function walidujTresc(surowa, { kontekst, bezPolskich, maxSegmenty, kanal }) {
 
 // ── Prompty ──────────────────────────────────────────────────────────────────
 
-function promptGeneracji(kampania, { followup = null } = {}) {
+function promptGeneracji(kampania, { followup = null, rezerwaZnakow = 0, rabatInfo = null } = {}) {
   const kanal = kampania.kanal === 'email' ? 'e-mail' : 'SMS';
   const nadawcaLabel = String(kampania.nadawca || 'lorenzo');
   const podpis = `${nadawcaLabel.charAt(0).toUpperCase()}${nadawcaLabel.slice(1)} z LumLum`;
-  const maxLen = maxDlugosc({ bezPolskich: kampania.bez_polskich_znakow, maxSegmenty: kampania.max_segmenty, kanal: kampania.kanal });
+  const maxLen = maxDlugosc({ bezPolskich: kampania.bez_polskich_znakow, maxSegmenty: kampania.max_segmenty, kanal: kampania.kanal }) - (rezerwaZnakow || 0);
   const korekty = kampania.korekty || { pary: [], reguly: [] };
   const instrukcje = (kampania.interpretacja && kampania.interpretacja.instrukcje) || '';
 
@@ -164,13 +201,26 @@ ZASADY TWARDE:
 - Wiadomość MUSI zawierać konkret z wyceny tego klienta: co było wyceniane (produkty własnymi słowami) lub kwotę. Generyczna wiadomość bez konkretu = błąd.
 - NIGDY nie używaj myślnika "—" ani "–". Zawsze zwykły łącznik "-".
 - Jeśli znasz imię: zwróć się grzecznościowo z POPRAWNYM polskim wołaczem ("Panie Michale" / "Pani Anno"), forma męska/żeńska dobrana po imieniu. Jeśli imienia brak: zacznij od "Dzień dobry" i pisz formami bezosobowymi (nie zgaduj płci).
+- KONSEKWENTNIE forma grzecznościowa Pan/Pani w całej wiadomości ("wysłaliśmy Panu", "ma Pani rabat") - nigdy na "ty" ("wysłaliśmy Ci", "masz").
 - Produkty opisuj naturalnie, krótko, BEZ kodów katalogowych i SKU (np. "taśmy LED z profilami" zamiast pełnej nazwy technicznej).
-- Ton: uprzejmy, konkretny, nienachalny - jak człowiek, nie marketing. Jedno pytanie na końcu.
+- Jeśli znasz datę wysłania wyceny, użyj jej ("wycenę wysłaliśmy 5 maja") zamiast ogólników.
+- PISZ JAK CZŁOWIEK, NIE JAK MARKETING. Zakazane frazy typu: "skorzystaj z okazji", "oferta specjalna", "nie przegap", "zapraszamy serdecznie", "wykorzystaj szansę", entuzjastyczne wykrzykniki. Handlowiec pisze zwyczajnie, rzeczowo.
+- Zakończenie: proste pytanie, czy temat jest jeszcze aktualny, plus furtka w stylu "jeśli nie, proszę o krótką wiadomość - zamkniemy temat i nie będziemy się odzywać bez powodu".
 - Maksymalnie ${maxLen} znaków ŁĄCZNIE.`;
   if (kampania.bez_polskich_znakow && kampania.kanal !== 'email') {
     s += `\n- NIE używaj polskich znaków (ą,ć,ę,ł,ń,ó,ś,ź,ż) - pisz a,c,e,l,n,o,s,z. Dotyczy też imienia w wołaczu.`;
   }
   s += `\n- Podpisz: "${podpis}".`;
+
+  if (rabatInfo) {
+    s += `\n\nRABAT CZASOWY (dane w opisie klienta): klient dostaje dodatkowy rabat na swoją wycenę, naliczony i widoczny w jego formularzu wyceny. Wspomnij o nim ZWYCZAJNIE, jednym zdaniem, z kwotą po rabacie i terminem ważności (np. "przy zamówieniu do ${rabatInfo.wazny_do_slownie || 'podanego dnia'} cena wyjdzie X zl zamiast Y zl"). Bez marketingowego tonu.`;
+    if (rezerwaZnakow > 0) {
+      s += ` Na końcu wiadomości zostanie automatycznie doklejony link do formularza - NIE wypisuj żadnego linku samodzielnie.`;
+    } else {
+      // Zadarma blokuje jakiekolwiek linki w SMS-ach na Polskę - zero URL-i
+      s += ` NIE wypisuj żadnych linków ani adresów stron (operator blokuje SMS-y z linkami) - zamiast tego zaproś do odpowiedzi na tę wiadomość lub telefonu.`;
+    }
+  }
 
   if ((korekty.reguly || []).length) {
     s += `\n\nKOREKTY WŁAŚCICIELA - reguły z jego poprawek, stosuj bezwzględnie:\n${korekty.reguly.map((r) => `- ${r}`).join('\n')}`;
@@ -190,25 +240,46 @@ ZASADY TWARDE:
   return s;
 }
 
-function opisOdbiorcy(kontekst) {
+function opisOdbiorcy(kontekst, rabatInfo = null) {
   const k = kontekst || {};
   const linie = [
     `Imię klienta: ${k.imie || 'BRAK (pisz bezosobowo)'}`,
     `Produkty z wyceny: ${opiszItems(k.items) || 'brak listy produktów'}`,
     `Kwota wyceny: ${Number.isFinite(Number(k.kwota)) && Number(k.kwota) > 0 ? `${Math.round(Number(k.kwota))} zł` : 'brak'}`,
   ];
+  const dataWyslania = k.wycena_created_at ? dataPolska(k.wycena_created_at) : null;
+  if (dataWyslania) linie.push(`Data wysłania wyceny: ${dataWyslania}`);
   if (k.komentarz) linie.push(`Notatka handlowca: ${String(k.komentarz).slice(0, 300)}`);
   if (k.opis) linie.push(`Opis zamówienia: ${String(k.opis).slice(0, 300)}`);
   if (k.wiek_dni) linie.push(`Wycena sprzed ${k.wiek_dni} dni`);
   if (Number(k.liczba_wycen) > 1) linie.push(`Uwaga: klient ma ${k.liczba_wycen} otwarte wyceny (kwota dotyczy najnowszej)`);
+  if (rabatInfo) {
+    linie.push(`Rabat czasowy: ${rabatInfo.zl} zł${rabatInfo.procent ? ` (${rabatInfo.procent}%)` : ''}, ważny do ${rabatInfo.wazny_do_slownie || rabatInfo.wazny_do}${rabatInfo.po_rabacie ? `, cena po rabacie: ${rabatInfo.po_rabacie} zł` : ''}`);
+  }
   return linie.join('\n');
 }
 
 // Generuje treść dla jednego odbiorcy. Retry z komunikatem walidatora w prompcie
 // (do 3 prób), potem rzuca — worker/endpoint decyduje o statusie failed.
-async function generujTresc(kampania, kontekst, { maxProby = 3, followup = null } = {}) {
-  const system = promptGeneracji(kampania, { followup });
-  let userMsg = `Napisz wiadomość dla tego klienta:\n\n${opisOdbiorcy(kontekst)}`;
+// Przy rabacie kampanii: AI dostaje wyliczony rabat/cenę po rabacie w opisie
+// klienta, a link do formularza doklejamy MECHANICZNIE po walidacji (AI nie
+// wolno pisać URL-i) — budżet znaków AI jest pomniejszony o rezerwę na link.
+async function generujTresc(kampania, kontekst, { maxProby = 3, followup = null, wycenaId = null } = {}) {
+  const rabatInfo = kontekst && kontekst.ma_rabat ? null : rabatDlaOdbiorcy(kampania.rabat, kontekst && kontekst.kwota);
+  // link do formularza TYLKO w mailu — Zadarma blokuje wszystkie linki
+  // w SMS-ach na Polskę (sprawdzone na żywo: "Linki w wiadomości SMS na ten
+  // kierunek są zabronione", również goła domena bez https)
+  const link = rabatInfo && wycenaId && kampania.kanal === 'email' ? linkFormularza(wycenaId) : null;
+  const rezerwaZnakow = link ? link.length + 1 : 0;
+  const system = promptGeneracji(kampania, { followup, rezerwaZnakow, rabatInfo });
+  let opis = opisOdbiorcy(kontekst, rabatInfo);
+  if (kampania.rabat && !rabatInfo) {
+    // kampania ma rabat, ale TEN klient go nie dostaje (ma już wcześniejszy
+    // rabat w cenie / brak kwoty) — AI nie może mu niczego obiecać
+    opis += '\nUWAGA: ten klient NIE dostaje rabatu kampanii (cena w danych jest już po wcześniejszym rabacie). NIE wspominaj o żadnym rabacie ani promocji.';
+  }
+  const limit = maxDlugosc({ bezPolskich: kampania.bez_polskich_znakow, maxSegmenty: kampania.max_segmenty, kanal: kampania.kanal }) - rezerwaZnakow;
+  let userMsg = `Napisz wiadomość dla tego klienta:\n\n${opis}`;
   let ostatnieBledy = [];
   for (let proba = 1; proba <= maxProby; proba++) {
     const out = await anthropicJson({ system, user: userMsg, maxTokens: kampania.kanal === 'email' ? 900 : 400 });
@@ -217,18 +288,26 @@ async function generujTresc(kampania, kontekst, { maxProby = 3, followup = null 
       bezPolskich: kampania.bez_polskich_znakow,
       maxSegmenty: kampania.max_segmenty,
       kanal: kampania.kanal,
+      limitZnakow: limit,
     });
+    // twardy bezpiecznik: żadnych URL-i w SMS-ach (Zadarma je odrzuca)
+    if (kampania.kanal !== 'email' && /https?:\/\/|www\.|lumlum\.(co|dev)/i.test(out.tresc || '')) {
+      wynik.ok = false;
+      wynik.bledy = [...(wynik.bledy || []), 'link/adres strony w SMS (operator blokuje takie wiadomości)'];
+    }
     if (wynik.ok) {
-      return { tresc: wynik.tresc, temat: out.temat ? String(out.temat).trim() : null, segmenty: wynik.segmenty };
+      const tresc = link ? `${wynik.tresc}\n${link}` : wynik.tresc;
+      return { tresc, temat: out.temat ? String(out.temat).trim() : null, segmenty: policzSegmenty(tresc).segmenty };
     }
     ostatnieBledy = wynik.bledy;
-    userMsg = `Napisz wiadomość dla tego klienta:\n\n${opisOdbiorcy(kontekst)}\n\nPOPRZEDNIA PRÓBA ODRZUCONA: ${wynik.bledy.join('; ')}. Popraw i zwróć JSON jeszcze raz.`;
+    userMsg = `Napisz wiadomość dla tego klienta:\n\n${opis}\n\nPOPRZEDNIA PRÓBA ODRZUCONA: ${wynik.bledy.join('; ')}. Popraw i zwróć JSON jeszcze raz.`;
   }
   throw new Error(`walidacja: ${ostatnieBledy.join('; ')}`);
 }
 
 // ── Interpretacja swobodnego opisu kampanii ─────────────────────────────────
-const PROMPT_INTERPRETACJI = `Jesteś asystentem panelu kampanii SMS/mail sklepu LumLum. Właściciel opisuje głosowo (tekst może być chaotyczny - dyktowany), jaką kampanię chce zrobić do klientów ze starymi wycenami. Wyciągnij z opisu ustawienia.
+function promptInterpretacji(dzisiaj) {
+  return `Jesteś asystentem panelu kampanii SMS/mail sklepu LumLum. Właściciel opisuje głosowo (tekst może być chaotyczny - dyktowany), jaką kampanię chce zrobić do klientów ze starymi wycenami. Dzisiaj jest ${dzisiaj}. Wyciągnij z opisu ustawienia.
 
 Zwróć WYŁĄCZNIE JSON:
 {
@@ -238,14 +317,17 @@ Zwróć WYŁĄCZNIE JSON:
   "limit_dzienny": liczba lub null (ile wiadomości dziennie, gdy podał),
   "instrukcje": "zwięzłe wytyczne treści wyciągnięte z opisu: co powiedzieć, jaki ton, o co zapytać - dla generatora wiadomości",
   "sekwencja": {"po_dniach": liczba, "brief": "wytyczne treści przypomnienia"} lub null (TYLKO gdy właściciel opisał follow-up/przypomnienie po X dniach bez odpowiedzi),
+  "rabat": {"typ": "procent" | "kwota", "wartosc": liczba, "wazny_do": "YYYY-MM-DD"} lub null (TYLKO gdy właściciel mówił o rabacie/zniżce; "do końca tygodnia" = najbliższa niedziela, "przez 5 dni" = dzisiaj + 5 dni),
   "uwagi": "wątpliwości/rzeczy niejasne w opisie lub null"
 }
 
 Zasady: nie wymyślaj ustawień, których nie podał (poza domyślnym min_wiek_dni). Kanał domyślnie "sms". Instrukcje po polsku, konkretne. Bez markdown, sam JSON.`;
+}
 
 async function interpretujBrief(opis, szablon) {
+  const dzisiaj = new Intl.DateTimeFormat('pl-PL', { timeZone: 'Europe/Warsaw', dateStyle: 'full' }).format(new Date());
   const user = `Opis kampanii od właściciela:\n"""\n${opis}\n"""${szablon ? `\n\nWkleił też przykładową wiadomość/szablon:\n"""\n${szablon}\n"""` : ''}`;
-  return anthropicJson({ system: PROMPT_INTERPRETACJI, user, maxTokens: 500 });
+  return anthropicJson({ system: promptInterpretacji(dzisiaj), user, maxTokens: 600 });
 }
 
 // ── Reguła z korekty ─────────────────────────────────────────────────────────
@@ -280,4 +362,7 @@ module.exports = {
   interpretujBrief,
   regulaZKorekty,
   promptGeneracji,
+  rabatDlaOdbiorcy,
+  linkFormularza,
+  dataPolska,
 };

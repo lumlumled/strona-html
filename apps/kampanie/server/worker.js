@@ -10,6 +10,7 @@
 
 const { sendSmsAndLog, sendMailAndLog, findLeadByIdLeada, warsawDateTimeStr } = require('../../shared/server/kontakt-send');
 const { notifyUser } = require('../../shared/server/push');
+const { cenaFinalna, rabat24hKwota } = require('../../shared/server/wyceny-cena');
 const identity = require('../../komunikator/server/identity');
 const { generujTresc } = require('./ai');
 
@@ -105,6 +106,43 @@ async function kontaktNaLeadzie(db, leadId, poIso) {
   return Number.isFinite(t) && t > Date.parse(poIso);
 }
 
+// Rabat czasowy kampanii → pola rabat24h_* na wycenach odbiorcy, w momencie
+// wysyłki wiadomości (klient klika link i od razu widzi cenę po rabacie).
+// Procent liczony od cenaFinalna KAŻDEJ wyceny. Pomijamy wyceny, które już
+// mają rabat (cenaFinalna odejmuje go trwale - nadpisanie zmieniłoby cenę)
+// oraz te z ustawioną kwotą sprzedaży (rabat24h nie obniżyłby ich ceny).
+async function nalozRabatNaWyceny(db, kampania, row) {
+  const rabat = kampania.rabat;
+  if (!rabat || !rabat.wazny_do || !Number(rabat.wartosc)) return { nalozone: 0 };
+  if (Date.parse(`${rabat.wazny_do}T23:59:59`) < Date.now()) return { nalozone: 0 };
+  const ids = Array.isArray(row.wyceny_ids) && row.wyceny_ids.length ? row.wyceny_ids : (row.wycena_id ? [row.wycena_id] : []);
+  if (!ids.length) return { nalozone: 0 };
+  const waznyDoIso = new Date(`${rabat.wazny_do}T23:59:59+02:00`).toISOString();
+  const { data: wyceny } = await db.from('wyceny')
+    .select('id, status, typ, kwota_proponowana_brutto, kwota_sprzedazy_brutto, rabat24h_kwota, rabat24h_wazny_do, history_log')
+    .in('id', ids);
+  let nalozone = 0;
+  for (const w of wyceny || []) {
+    if (w.status !== 'Open' || w.typ !== 'WYCENA') continue;
+    if (rabat24hKwota(w) > 0) continue;
+    if (w.kwota_sprzedazy_brutto != null && String(w.kwota_sprzedazy_brutto) !== '') continue;
+    const kwota = Number(cenaFinalna(w));
+    const zl = rabat.typ === 'kwota'
+      ? Math.round(Number(rabat.wartosc))
+      : (Number.isFinite(kwota) && kwota > 0 ? Math.round(kwota * Number(rabat.wartosc) / 100) : 0);
+    if (!zl || zl <= 0 || (Number.isFinite(kwota) && kwota > 0 && zl >= kwota)) continue;
+    const linia = `${warsawDateTimeStr()} - [Kampania #${kampania.id}] Rabat czasowy -${zl} zl (wazny do ${rabat.wazny_do})`;
+    const { error } = await db.from('wyceny').update({
+      rabat24h_kwota: zl,
+      rabat24h_wazny_do: waznyDoIso,
+      history_log: [w.history_log, linia].filter(Boolean).join('\n'),
+      updated_at: new Date().toISOString(),
+    }).eq('id', w.id);
+    if (!error) nalozone++;
+  }
+  return { nalozone };
+}
+
 // Generacja: pending → approved (po akceptacji próbki reszta idzie bez
 // ręcznego przeglądu - decyzja Antoniego; walidator pilnuje jakości).
 async function generujPaczke(db, kampania, deadline) {
@@ -116,7 +154,7 @@ async function generujPaczke(db, kampania, deadline) {
   for (const row of rows || []) {
     if (Date.now() > deadline) break;
     try {
-      const gen = await generujTresc(kampania, row.kontekst);
+      const gen = await generujTresc(kampania, row.kontekst, { wycenaId: row.wycena_id });
       await db.from('kampanie_odbiorcy').update({
         tresc: gen.tresc, temat: gen.temat, segmenty: gen.segmenty,
         status: 'approved', blad: null, updated_at: new Date().toISOString(),
@@ -183,6 +221,11 @@ async function wyslijPaczke(db, getClient, kampania, deadline, budzet) {
     if (!claimed || !claimed.length) continue;
 
     try {
+      // rabat na wycenach PRZED wysyłką - link z wiadomości od razu pokazuje
+      // cenę po rabacie (pomijamy odbiorców, których wycena już miała rabat)
+      if (kampania.rabat && !(row.kontekst && row.kontekst.ma_rabat)) {
+        await nalozRabatNaWyceny(db, kampania, row);
+      }
       const lead = row.lead_id ? await findLeadByIdLeada(db, row.lead_id) : null;
       let koszt = null;
       if (kampania.kanal === 'email') {
@@ -272,6 +315,7 @@ async function wyslijFollowupy(db, getClient, kampania, deadline, budzet) {
       // generacja PRZED claimem (powtórka AI jest tania), claim PRZED wysyłką
       const gen = await generujTresc(kampania, row.kontekst, {
         followup: { poprzedniaTresc: row.tresc, poDniach, brief: (sekw && sekw.brief) || '' },
+        wycenaId: row.wycena_id,
       });
       const { data: claimed, error: claimErr } = await db.from('kampanie_odbiorcy')
         .update({ sekwencja_krok: 1, sekwencja_at: new Date().toISOString(), updated_at: new Date().toISOString() })
@@ -364,4 +408,4 @@ async function runKampanieWorker(db, getClient, { budgetMs = 110000 } = {}) {
   return raport;
 }
 
-module.exports = { runKampanieWorker, generujPaczke, wyslijPaczke, wyslijFollowupy, warsawHour, warsawMidnightIso, wyslaneDzisTotal };
+module.exports = { runKampanieWorker, generujPaczke, wyslijPaczke, wyslijFollowupy, nalozRabatNaWyceny, warsawHour, warsawMidnightIso, wyslaneDzisTotal };

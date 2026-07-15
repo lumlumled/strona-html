@@ -65,6 +65,20 @@ function isCronAuthorized(req) {
 const KANALY = new Set(['sms', 'email']);
 const EDYTOWALNE = ['nazwa', 'limit_dzienny', 'godzina_od', 'godzina_do', 'max_segmenty', 'bez_polskich_znakow', 'nadawca'];
 
+// Rabat czasowy kampanii: procent (1-90) albo kwota (10-100000 zł) + data
+// ważności w przyszłości. Zwraca { rabat } / { error } / {} gdy brak.
+function walidujRabat(b) {
+  if (!b || (!b.wartosc && !b.wazny_do)) return {};
+  const typ = b.typ === 'kwota' ? 'kwota' : 'procent';
+  const wartosc = Math.round(Number(b.wartosc));
+  if (typ === 'procent' && !(wartosc >= 1 && wartosc <= 90)) return { error: 'Rabat procentowy: 1-90%' };
+  if (typ === 'kwota' && !(wartosc >= 10 && wartosc <= 100000)) return { error: 'Rabat kwotowy: 10-100000 zł' };
+  const waznyDo = String(b.wazny_do || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(waznyDo)) return { error: 'Rabat wymaga daty ważności (YYYY-MM-DD)' };
+  if (Date.parse(`${waznyDo}T23:59:59`) < Date.now()) return { error: 'Data ważności rabatu już minęła' };
+  return { rabat: { typ, wartosc, wazny_do: waznyDo } };
+}
+
 async function pobierzKampanie(db, id) {
   const { data, error } = await db.from('kampanie').select('*').eq('id', id).limit(1);
   if (error) throw error;
@@ -262,6 +276,10 @@ app.post('/api/kampanie', async (req, res) => {
         brief: String(b.sekwencja.brief || '').trim().slice(0, 500) || null,
       };
     }
+    // rabat czasowy: {typ procent|kwota, wartosc, wazny_do YYYY-MM-DD} albo null
+    const rabatWal = walidujRabat(b.rabat);
+    if (rabatWal.error) return res.status(400).json({ error: rabatWal.error });
+    if (rabatWal.rabat) insert.rabat = rabatWal.rabat;
     // tryb "wybrani ręcznie": bez filtra populacji, odbiorców dodaje się
     // pojedynczo z wyszukiwarki
     if (b.tryb === 'reczny') insert.filtr = null;
@@ -338,6 +356,11 @@ app.patch('/api/kampanie/:id(\\d+)', async (req, res) => {
         ? { po_dniach: Math.min(60, Math.round(Number(req.body.sekwencja.po_dniach))), brief: String(req.body.sekwencja.brief || '').trim().slice(0, 500) || null }
         : null;
     }
+    if (req.body.rabat !== undefined) {
+      const rabatWal = walidujRabat(req.body.rabat);
+      if (rabatWal.error) return res.status(400).json({ error: rabatWal.error });
+      patch.rabat = rabatWal.rabat || null;
+    }
     if (req.body.status === 'archived' && ['done', 'draft'].includes(kampania.status)) patch.status = 'archived';
     const { data, error } = await db.from('kampanie').update(patch).eq('id', kampania.id).select('*');
     if (error) throw error;
@@ -390,7 +413,9 @@ async function zbudujRecznegoOdbiorce(db, { telefon, imie, leadId }) {
         komentarz: String(najnowsza.komentarz || '').trim() || null,
         opis: String(najnowsza.opis_zamowienia || '').trim() || null,
         wiek_dni: Math.floor((Date.now() - Date.parse(najnowsza.created_at)) / 86400000),
+        wycena_created_at: najnowsza.created_at,
         liczba_wycen: wyceny.length,
+        ma_rabat: Number(najnowsza.rabat24h_kwota) > 0,
       },
     };
   }
@@ -483,7 +508,7 @@ async function generujProbke(db, kampania, rows) {
     const paczka = rows.slice(i, i + CONCURRENCY);
     const wygenerowane = await Promise.all(paczka.map(async (row) => {
       try {
-        const gen = await ai.generujTresc(kampania, row.kontekst);
+        const gen = await ai.generujTresc(kampania, row.kontekst, { wycenaId: row.wycena_id });
         await db.from('kampanie_odbiorcy').update({
           tresc: gen.tresc, temat: gen.temat, segmenty: gen.segmenty,
           sample: true, status: 'generated', blad: null, updated_at: new Date().toISOString(),

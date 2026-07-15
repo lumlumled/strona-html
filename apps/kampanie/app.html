@@ -242,6 +242,17 @@
             <textarea id="fSekwBrief" style="min-height:52px" placeholder="np. Krótko, jedno zdanie, z furtką 'jeśli nieaktualne, proszę o krótkie nie'"></textarea>
           </div>
         </div>
+        <div style="border-top:1px solid var(--border);padding-top:0.7rem">
+          <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+            <input type="checkbox" id="fRabat" style="width:auto">
+            <label for="fRabat" style="font-size:0.9rem;font-weight:600">Rabat czasowy:</label>
+            <input type="number" id="fRabatWartosc" min="1" value="15" style="width:80px">
+            <select id="fRabatTyp" style="width:auto"><option value="procent">%</option><option value="kwota">zł</option></select>
+            <span style="font-size:0.9rem">ważny do</span>
+            <input type="date" id="fRabatDo" style="width:auto">
+          </div>
+          <p class="muted" id="fRabatInfo" style="margin-top:0.35rem">Rabat naliczy się na wycenie klienta w momencie wysyłki (procent liczony od kwoty jego wyceny), a wiadomość poda cenę po rabacie i termin. Uwaga: operator blokuje linki w SMS-ach na Polskę - link do formularza dokleja się tylko w kampaniach mailowych. Wyceny, które już mają rabat, są pomijane.</p>
+        </div>
         <div id="popBox" class="muted">Liczenie populacji…</div>
         <div class="km-actions">
           <button class="primary" id="btnUtworz">Utwórz i wygeneruj próbkę</button>
@@ -492,6 +503,13 @@
           $('fSekwBrief').value = sekw.brief || '';
         }
         $('fSekwBriefBox').classList.toggle('hidden', !$('fSekw').checked);
+        const rab = out.interpretacja.rabat;
+        $('fRabat').checked = Boolean(rab && rab.wartosc && rab.wazny_do);
+        if (rab && rab.wartosc) {
+          $('fRabatWartosc').value = rab.wartosc;
+          $('fRabatTyp').value = rab.typ === 'kwota' ? 'kwota' : 'procent';
+          if (rab.wazny_do) $('fRabatDo').value = rab.wazny_do;
+        }
         const uw = $('interUwagi');
         if (out.interpretacja.uwagi) { uw.textContent = `⚠ ${out.interpretacja.uwagi}`; uw.classList.remove('hidden'); }
         else uw.classList.add('hidden');
@@ -537,6 +555,9 @@
             filtr: reczny ? undefined : { min_wiek_dni: Number($('fWiek').value) || 30 },
             sekwencja: $('fSekw').checked
               ? { po_dniach: Number($('fSekwDni').value) || 7, brief: $('fSekwBrief').value.trim() || null }
+              : null,
+            rabat: $('fRabat').checked
+              ? { typ: $('fRabatTyp').value, wartosc: Number($('fRabatWartosc').value), wazny_do: $('fRabatDo').value }
               : null,
             limit_dzienny: Number($('fLimit').value) || 25,
             godzina_od: Number($('fOd').value) || 9,
@@ -609,7 +630,8 @@
       st.textContent = K_STATUS[k.status] || k.status;
       st.className = `badge ${k.status}`;
       const sekwInfo = k.sekwencja && k.sekwencja.po_dniach ? ` · follow-up po ${k.sekwencja.po_dniach} dn. bez odpowiedzi` : '';
-      $('kBrief').textContent = `${k.kanal === 'email' ? 'E-mail' : 'SMS'} od ${k.nadawca} · ${k.limit_dzienny}/dzień w godz. ${k.godzina_od}-${k.godzina_do}${sekwInfo} · ${k.brief.slice(0, 180)}`;
+      const rabatInfo = k.rabat && k.rabat.wartosc ? ` · rabat ${k.rabat.wartosc}${k.rabat.typ === 'kwota' ? ' zł' : '%'} do ${k.rabat.wazny_do}` : '';
+      $('kBrief').textContent = `${k.kanal === 'email' ? 'E-mail' : 'SMS'} od ${k.nadawca} · ${k.limit_dzienny}/dzień w godz. ${k.godzina_od}-${k.godzina_do}${sekwInfo}${rabatInfo} · ${k.brief.slice(0, 180)}`;
       $('dodajBox').classList.toggle('hidden', !['draft', 'sampling', 'review', 'active'].includes(k.status));
 
       // akcje wg statusu
