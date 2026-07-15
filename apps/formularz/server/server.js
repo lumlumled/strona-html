@@ -58,6 +58,39 @@ function sumaPozycji(items) {
   return (Array.isArray(items) ? items : []).reduce((a, p) => a + num(p.price) * (num(p.quantity) || 1), 0);
 }
 
+// Scalanie pozycji po SKU do WYŚWIETLENIA w formularzu — lustro deterministycznego
+// DEDUPE z parsera (wyceny-parser-prompt.txt): kilka pozycji z tym samym niepustym
+// SKU → jedna, quantity zsumowane (null gdy którekolwiek null/niepoliczalne), reszta
+// pól z PIERWSZEGO wystąpienia, kolejność wg pierwszego wystąpienia, obraz uzupełniany
+// z grupy gdy bazowy pusty. Puste SKU = bez scalania. Nie rusza wycena.items w bazie
+// (suma pozycji się nie zmienia: 3×P w 3 wierszach == 1 wiersz P×3).
+function qtyNum(v) {
+  if (v == null || v === '') return null;
+  const n = Number(String(v).replace(',', '.'));
+  return Number.isFinite(n) ? n : null;
+}
+function aggregujPozycjePoSku(items) {
+  if (!Array.isArray(items)) return [];
+  const bySku = new Map();
+  const out = [];
+  for (const p of items) {
+    const sku = String((p && (p.SKU ?? p.sku)) || '').trim();
+    if (!sku) { out.push({ ...p }); continue; }
+    if (!bySku.has(sku)) {
+      const base = { ...p };
+      bySku.set(sku, base);
+      out.push(base);
+      continue;
+    }
+    const base = bySku.get(sku);
+    const qa = qtyNum(base.quantity);
+    const qb = qtyNum(p.quantity);
+    base.quantity = (qa == null || qb == null) ? null : qa + qb;
+    if ((!base.image_url || base.image_url === '') && p && p.image_url) base.image_url = p.image_url;
+  }
+  return out;
+}
+
 // Liquid parsuje rabat24h_wazny_do SZTYWNYM regexem "DD.MM.YYYY HH:mm"
 // (czas lokalny przeglądarki ≈ Europe/Warsaw dla klientów PL).
 function warsawDDMMYYYYHHmm(iso) {
@@ -156,7 +189,7 @@ app.get('/api/dane', async (req, res) => {
     res.json({
       id: `#${wycena.id}`,
       form_status: wycena.form_status || 'NEW',
-      produkty: Array.isArray(wycena.items) ? wycena.items : [],
+      produkty: aggregujPozycjePoSku(wycena.items),
       kwota_proponowana_brutto: kwota,
       kwota_finalna_brutto: kwotaFinalna,
       discount_amount: discount,
