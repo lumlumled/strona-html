@@ -750,6 +750,232 @@ window.LeadKarta = (() => {
     }
   }
 
+  // ── Dodatkowa przesyłka (dosyłka bez faktury) ─────────────────────────────
+  // Lista istniejących dosyłek leada + formularz „co dosłać / kiedy" (z
+  // dyktowaniem). „Nadaj do fulfillmentu" tworzy 0-zł zamówienie + etykietę.
+  function pozycjeSummary(pozycje) {
+    return (Array.isArray(pozycje) ? pozycje : [])
+      .map((p) => `${Number(p.ilosc) || 1}× ${p.nazwa || p.name || ''}`.trim())
+      .filter(Boolean).join(', ');
+  }
+
+  async function loadDodatkowaPrzesylka(apiBase, lead, container, readOnly) {
+    const digits = lead._telefon_digits || '';
+    if (!digits) {
+      container.innerHTML = '<p class="lk-empty-note">Brak numeru telefonu — nie można prowadzić dosyłek.</p>';
+      return;
+    }
+
+    async function render() {
+      container.innerHTML = '<p class="lk-empty-note">Wczytuję…</p>';
+      let lista = [];
+      try {
+        const res = await fetch(`${apiBase}/api/leady/przesylki?telefon=${encodeURIComponent(digits)}`);
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+        lista = body.data || [];
+      } catch (err) {
+        container.innerHTML = `<p class="lk-empty-note">Błąd wczytywania: ${err.message}</p>`;
+        return;
+      }
+      container.innerHTML = '';
+      const wrap = document.createElement('div');
+      wrap.className = 'lk-przesylka';
+
+      const aktywne = lista.filter((r) => r.status !== 'anulowane');
+      if (!aktywne.length) {
+        const empty = document.createElement('p');
+        empty.className = 'lk-empty-note';
+        empty.textContent = 'Brak dosyłek. Dodaj poniżej, jeśli trzeba coś dosłać bez faktury.';
+        wrap.appendChild(empty);
+      }
+      aktywne.forEach((row) => wrap.appendChild(buildItem(row)));
+
+      if (!readOnly) wrap.appendChild(buildForm());
+      container.appendChild(wrap);
+    }
+
+    function buildItem(row) {
+      const item = document.createElement('div');
+      item.className = `lk-przesylka-item status-${row.status || 'oczekuje'}`;
+
+      const head = document.createElement('div');
+      head.className = 'lk-przesylka-head';
+      const poz = document.createElement('span');
+      poz.className = 'lk-przesylka-poz';
+      poz.textContent = pozycjeSummary(row.pozycje) || '(bez pozycji)';
+      const stat = document.createElement('span');
+      stat.className = 'lk-przesylka-status';
+      stat.textContent = row.status === 'nadane'
+        ? `Nadane${row.wycena_id ? ` · #${row.wycena_id}` : ''}`
+        : (row.czeka_na_dostawe ? 'Czeka na dostawę' : 'Oczekuje');
+      head.append(poz, stat);
+      item.appendChild(head);
+
+      if (row.notatka) {
+        const nota = document.createElement('p');
+        nota.className = 'lk-przesylka-nota';
+        nota.textContent = row.notatka;
+        item.appendChild(nota);
+      }
+      if (row.planowana_data) {
+        const dt = document.createElement('p');
+        dt.className = 'lk-przesylka-meta';
+        dt.textContent = `Planowane nadanie: ${row.planowana_data}`;
+        item.appendChild(dt);
+      }
+
+      if (!readOnly && row.status === 'oczekuje') {
+        const actions = document.createElement('div');
+        actions.className = 'lk-przesylka-actions';
+        const msg = document.createElement('span');
+        msg.className = 'lk-przesylka-msg';
+        const setMsg = (t, err) => { msg.textContent = t || ''; msg.classList.toggle('err', Boolean(err)); };
+
+        const nadaj = document.createElement('button');
+        nadaj.type = 'button';
+        nadaj.className = 'lk-przesylka-nadaj';
+        nadaj.textContent = 'Nadaj do fulfillmentu (0 zł)';
+        nadaj.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (!confirm('Utworzyć etykietę i wysłać do pakowania (bez faktury)?')) return;
+          nadaj.disabled = true;
+          setMsg('Tworzę etykietę…');
+          try {
+            const res = await fetch(`${apiBase}/api/leady/przesylka/${row.id}/nadaj`, { method: 'POST' });
+            const b = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(b.error || `Błąd ${res.status}`);
+            await render();
+          } catch (err) {
+            setMsg(err.message, true);
+            nadaj.disabled = false;
+          }
+        });
+
+        const anuluj = document.createElement('button');
+        anuluj.type = 'button';
+        anuluj.className = 'lk-przesylka-anuluj';
+        anuluj.textContent = 'Anuluj';
+        anuluj.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (!confirm('Anulować tę dosyłkę?')) return;
+          anuluj.disabled = true;
+          try {
+            const res = await fetch(`${apiBase}/api/leady/przesylka/${row.id}/anuluj`, { method: 'POST' });
+            if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b.error || `Błąd ${res.status}`); }
+            await render();
+          } catch (err) {
+            setMsg(err.message, true);
+            anuluj.disabled = false;
+          }
+        });
+
+        actions.append(nadaj, anuluj, msg);
+        item.appendChild(actions);
+      }
+      return item;
+    }
+
+    function buildForm() {
+      const form = document.createElement('div');
+      form.className = 'lk-przesylka-form';
+
+      const pozWrap = document.createElement('div');
+      pozWrap.className = 'lk-przesylka-poz-rows';
+      const addRow = (nazwa = '', ilosc = 1) => {
+        const rowEl = document.createElement('div');
+        rowEl.className = 'lk-przesylka-poz-row';
+        const nazwaIn = document.createElement('input');
+        nazwaIn.type = 'text';
+        nazwaIn.placeholder = 'Co dosłać — np. czujnik ruchu';
+        nazwaIn.value = nazwa;
+        nazwaIn.className = 'lk-przesylka-in-nazwa';
+        const iloscIn = document.createElement('input');
+        iloscIn.type = 'number';
+        iloscIn.min = '1';
+        iloscIn.value = String(ilosc);
+        iloscIn.className = 'lk-przesylka-in-ilosc';
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'lk-przesylka-poz-del';
+        del.textContent = '×';
+        del.title = 'Usuń pozycję';
+        del.addEventListener('click', (e) => { e.stopPropagation(); rowEl.remove(); });
+        rowEl.append(nazwaIn, iloscIn, del);
+        pozWrap.appendChild(rowEl);
+      };
+      addRow();
+
+      const addPoz = document.createElement('button');
+      addPoz.type = 'button';
+      addPoz.className = 'lk-przesylka-add-poz';
+      addPoz.textContent = '+ pozycja';
+      addPoz.addEventListener('click', (e) => { e.stopPropagation(); addRow(); });
+
+      const ta = document.createElement('textarea');
+      ta.className = 'lk-przesylka-nota-in';
+      ta.placeholder = 'Notatka — np. „wysłać jak przyjdą nowe czujniki” (możesz podyktować)';
+      ta.addEventListener('click', (e) => e.stopPropagation());
+
+      const mic = document.createElement('button');
+      mic.type = 'button';
+      mic.className = 'lk-notatka-mic';
+      mic.title = 'Dyktuj';
+      mic.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/><path d="M19 11a1 1 0 0 0-2 0 5 5 0 0 1-10 0 1 1 0 0 0-2 0 7 7 0 0 0 6 6.92V20H9a1 1 0 0 0 0 2h6a1 1 0 0 0 0-2h-2v-2.08A7 7 0 0 0 19 11z"/></svg>';
+
+      const msg = document.createElement('span');
+      msg.className = 'lk-przesylka-msg';
+      const setMsg = (t, err) => { msg.textContent = t || ''; msg.classList.toggle('err', Boolean(err)); };
+      attachDictation(mic, ta, setMsg, apiBase);
+
+      const opcje = document.createElement('label');
+      opcje.className = 'lk-przesylka-czeka';
+      const czeka = document.createElement('input');
+      czeka.type = 'checkbox';
+      opcje.append(czeka, document.createTextNode(' Wyślę, gdy przyjdzie dostawa'));
+
+      const save = document.createElement('button');
+      save.type = 'button';
+      save.className = 'lk-przesylka-save';
+      save.textContent = 'Zapisz dosyłkę';
+      save.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const pozycje = [...pozWrap.querySelectorAll('.lk-przesylka-poz-row')].map((r) => ({
+          nazwa: r.querySelector('.lk-przesylka-in-nazwa').value.trim(),
+          ilosc: Number(r.querySelector('.lk-przesylka-in-ilosc').value) || 1,
+        })).filter((p) => p.nazwa);
+        const notatka = ta.value.trim();
+        if (!pozycje.length && !notatka) { setMsg('Dodaj pozycję albo notatkę', true); return; }
+        save.disabled = mic.disabled = true;
+        setMsg('Zapisuję…');
+        try {
+          const res = await fetch(`${apiBase}/api/leady/przesylka`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ telefon: digits, pozycje, notatka, czeka_na_dostawe: czeka.checked }),
+          });
+          const b = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(b.error || `Błąd ${res.status}`);
+          await render();
+        } catch (err) {
+          setMsg(err.message, true);
+          save.disabled = mic.disabled = false;
+        }
+      });
+
+      const title = document.createElement('div');
+      title.className = 'lk-przesylka-form-title';
+      title.textContent = 'Nowa dosyłka';
+      const actions = document.createElement('div');
+      actions.className = 'lk-przesylka-form-actions';
+      actions.append(mic, save, msg);
+      form.append(title, pozWrap, addPoz, ta, opcje, actions);
+      return form;
+    }
+
+    await render();
+  }
+
   function buildNestedDetails(titleText, loader) {
     const details = document.createElement('details');
     details.className = 'lk-historia-rozmow';
@@ -1149,6 +1375,12 @@ window.LeadKarta = (() => {
     // (format ze zdjęciami + edycja), albo przycisk "Utwórz wycenę".
     const wycena = buildNestedDetails('Wycena', (container) => loadWycena(apiBase, lead, container, readOnly));
     body.appendChild(wycena);
+
+    // ── Dodatkowa przesyłka (dosyłka bez faktury, 0 zł) ──
+    if (digits) {
+      const dodatkowa = buildNestedDetails('Dodatkowa przesyłka', (container) => loadDodatkowaPrzesylka(apiBase, lead, container, readOnly));
+      body.appendChild(dodatkowa);
+    }
 
     // ── Pełne rozmowy — zawsze na samym dole karty ──
     if (digits) {

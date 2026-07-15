@@ -137,6 +137,56 @@ async function hasWycenaNowa(supabase, phoneDigits, leadId) {
   return (data || []).length > 0;
 }
 
+// ── Dodatkowa przesyłka (dosyłka bez faktury) ───────────────────────────────
+const DODATKOWE_PRZESYLKI_TABLE = 'dodatkowe_przesylki';
+
+// Czy wiersz `wyceny` ma użyteczny adres (paczkomat albo adres kuriera) —
+// źródło danych do etykiety dosyłki (nadawcę zna ShipX/Furgonetka).
+function maAdresDostawy(w) {
+  if (!w) return false;
+  const locker = String(w.punkt_odbioru || '').replace(/[,\s]/g, '').length > 3;
+  return locker || Boolean(w.ship_postcode && w.ship_city);
+}
+
+// Najnowsza wycena/zamówienie leada z adresem dostawy — dosyłka jedzie na ten
+// sam adres, na który już coś wysłaliśmy. Match jak w hasWycenaNowa: po lead_id
+// (int-jako-tekst) LUB telefon_digits (cyfry bez prefiksu 48).
+async function findAddressWycenaForLead(supabase, phoneDigits, leadId) {
+  const ors = [];
+  const lidNum = Number(leadId);
+  if (Number.isFinite(lidNum)) ors.push(`lead_id.eq.${lidNum}`);
+  const tel = String(phoneDigits || '').replace(/^48/, '');
+  if (tel) ors.push(`telefon_digits.eq.${tel}`);
+  if (!ors.length) return null;
+  const { data, error } = await supabase
+    .from('wyceny').select('*').or(ors.join(',')).order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []).find(maAdresDostawy) || null;
+}
+
+// [{ nazwa, ilosc, sku }] (z karty) → items wyceny [{ name, SKU, quantity, unit }].
+function pozycjeToItems(pozycje) {
+  return (Array.isArray(pozycje) ? pozycje : [])
+    .map((p) => ({
+      name: String(p.nazwa || p.name || '').trim(),
+      SKU: String(p.sku || p.SKU || '').trim() || undefined,
+      quantity: Number(p.ilosc ?? p.quantity) || 1,
+      unit: 'szt',
+      price: 0,
+    }))
+    .filter((p) => p.name);
+}
+
+function normalizePozycje(pozycje) {
+  return (Array.isArray(pozycje) ? pozycje : [])
+    .map((p) => ({
+      nazwa: String(p.nazwa || p.name || '').trim(),
+      ilosc: Number(p.ilosc ?? p.quantity) || 1,
+      sku: String(p.sku || p.SKU || '').trim() || null,
+    }))
+    .filter((p) => p.nazwa);
+}
+
 // Ekstrakcja akcji z ręcznej notatki handlowca. null NIE czyści
 // dotychczasowej akcji — notatka bez wynikającego kroku zostawia ją w spokoju.
 function buildNotatkaAnalysisPrompt(dzisiaj, poprzedniaAkcja) {
@@ -468,6 +518,166 @@ function registerLeadyEndpoints(app, { getClient, requireView, requireEdit }) {
       if (logErr) console.error('Błąd zapisu manual_akcja do Log zmian:', logErr.message);
 
       res.json({ akcja: akcja || '', termin: termin || '', owner: owner || '' });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
+  // GET /api/leady/przesylki?telefon= — dodatkowe przesyłki (dosyłki) leada,
+  // najnowsze u góry. Zasila sekcję „Dodatkowa przesyłka" na karcie.
+  app.get('/api/leady/przesylki', view, async (req, res) => {
+    try {
+      const supabase = getClient();
+      const digits = normalizePhoneDigits(req.query.telefon);
+      if (!digits) return res.status(400).json({ error: 'Brak parametru telefon' });
+      const { data, error } = await supabase
+        .from(DODATKOWE_PRZESYLKI_TABLE)
+        .select('*')
+        .eq('telefon_digits', digits.replace(/^48/, ''))
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      res.json({ data: data || [] });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
+  // POST /api/leady/przesylka — zapis dosyłki (nic jeszcze nie wysyła). Body:
+  // { telefon, pozycje:[{nazwa,ilosc,sku?}], notatka, czeka_na_dostawe,
+  //   planowana_data, handlowiec }.
+  app.post('/api/leady/przesylka', edit, async (req, res) => {
+    try {
+      const digits = normalizePhoneDigits(req.body?.telefon);
+      if (!digits) return res.status(400).json({ error: 'Brak numeru telefonu' });
+      const pozycje = normalizePozycje(req.body?.pozycje);
+      const notatka = String(req.body?.notatka || '').trim();
+      if (!pozycje.length && !notatka) {
+        return res.status(400).json({ error: 'Dodaj co najmniej jedną pozycję albo notatkę' });
+      }
+
+      const supabase = getClient();
+      const lead = await findLeadByPhone(supabase, digits);
+      if (!lead) return res.status(404).json({ error: 'Nie znaleziono leada o tym numerze' });
+
+      const row = {
+        lead_id: lead['ID Leada'] != null ? String(lead['ID Leada']) : null,
+        telefon_digits: digits.replace(/^48/, ''),
+        imie: lead['Name'] || null,
+        owner: lead['Owner'] || req.body?.handlowiec || process.env.DEFAULT_HANDLOWIEC || null,
+        pozycje,
+        notatka: notatka || null,
+        czeka_na_dostawe: Boolean(req.body?.czeka_na_dostawe),
+        planowana_data: req.body?.planowana_data || null,
+        status: 'oczekuje',
+      };
+      const { data, error } = await supabase.from(DODATKOWE_PRZESYLKI_TABLE).insert(row).select('*');
+      if (error) throw error;
+      res.json({ data: data[0] });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
+  // POST /api/leady/przesylka/:id/anuluj — porzuć dosyłkę (nie usuwamy, ślad).
+  app.post('/api/leady/przesylka/:id(\\d+)/anuluj', edit, async (req, res) => {
+    try {
+      const supabase = getClient();
+      const id = Number(req.params.id);
+      const { data, error } = await supabase.from(DODATKOWE_PRZESYLKI_TABLE)
+        .update({ status: 'anulowane', updated_at: new Date().toISOString() })
+        .eq('id', id).select('*');
+      if (error) throw error;
+      if (!data || !data.length) return res.status(404).json({ error: 'Nie znaleziono dosyłki' });
+      res.json({ data: data[0] });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
+  // POST /api/leady/przesylka/:id/nadaj — zamień dosyłkę w realną wysyłkę: tworzy
+  // 0-zł ZAMÓWIENIE (source='dodatkowa-przesylka') na adres z ostatniej wyceny
+  // leada i odpala markPaidAndShip (etykieta + „Do spakowania" + push) — BEZ
+  // faktury (brak proformy → lekka ścieżka; paid=true + cod=null → onDelivered
+  // też nie wystawi FV). Adres bierzemy z istniejącej wyceny/zamówienia leada.
+  app.post('/api/leady/przesylka/:id(\\d+)/nadaj', edit, async (req, res) => {
+    try {
+      const supabase = getClient();
+      const id = Number(req.params.id);
+      const { data: rows, error: selErr } = await supabase
+        .from(DODATKOWE_PRZESYLKI_TABLE).select('*').eq('id', id).limit(1);
+      if (selErr) throw selErr;
+      const dosylka = rows && rows[0];
+      if (!dosylka) return res.status(404).json({ error: 'Nie znaleziono dosyłki' });
+      if (dosylka.status === 'nadane' && dosylka.wycena_id) {
+        return res.status(409).json({ error: `Dosyłka już nadana (zamówienie #${dosylka.wycena_id}).` });
+      }
+      const items = pozycjeToItems(dosylka.pozycje);
+      if (!items.length) {
+        return res.status(400).json({ error: 'Brak pozycji do wysłania — uzupełnij, co dosłać.' });
+      }
+
+      const zrodlo = await findAddressWycenaForLead(supabase, dosylka.telefon_digits, dosylka.lead_id);
+      if (!zrodlo) {
+        return res.status(400).json({
+          error: 'Brak adresu dostawy — ten lead nie ma wyceny/zamówienia z adresem. Uzupełnij adres na wycenie, potem nadaj dosyłkę.',
+        });
+      }
+
+      const { data: idData, error: idErr } = await supabase.rpc('wyceny_next_id');
+      if (idErr) throw idErr;
+      const nowaId = idData;
+      const crypto = require('crypto');
+      const komentarz = ['Dodatkowa przesyłka (dosyłka bez faktury)', dosylka.notatka]
+        .filter(Boolean).join(' — ');
+      const zamowienie = {
+        id: nowaId,
+        typ: 'ZAMÓWIENIE',
+        status: 'Fulfilled',
+        owner: dosylka.owner || zrodlo.owner || 'Antoni',
+        lead_id: dosylka.lead_id || zrodlo.lead_id || null,
+        source: 'dodatkowa-przesylka',
+        form_status: 'SUBMITTED',
+        form_submitted_at: new Date().toISOString(),
+        form_token: crypto.randomBytes(12).toString('base64url'),
+        process_stage: 'SUBMITTED',
+        payment_method: 'FREE',          // nie-przelew → gotowe do pakowania od razu
+        paid: false,                     // markPaidAndShip ustawi true (bez proformy = bez FV)
+        delivery_method: zrodlo.delivery_method || null,
+        imie_nazwisko: zrodlo.imie_nazwisko || dosylka.imie || null,
+        // Rozbicie jak w /realizuj — ShipX wymaga first_name/last_name (puste = 400).
+        first_name: zrodlo.first_name || String(zrodlo.imie_nazwisko || dosylka.imie || '').split(' ')[0] || null,
+        last_name: zrodlo.last_name || String(zrodlo.imie_nazwisko || '').split(' ').slice(1).join(' ') || null,
+        telefon_e164: zrodlo.telefon_e164 || null,
+        telefon_digits: zrodlo.telefon_digits || dosylka.telefon_digits || null,
+        email: zrodlo.email || null,
+        adres: zrodlo.adres || null,
+        ship_street: zrodlo.ship_street || null,
+        ship_house_no: zrodlo.ship_house_no || null,
+        ship_flat_no: zrodlo.ship_flat_no || null,
+        ship_postcode: zrodlo.ship_postcode || null,
+        ship_city: zrodlo.ship_city || null,
+        ship_country: zrodlo.ship_country || null,
+        punkt_odbioru: zrodlo.punkt_odbioru || null,
+        punkt_odbioru_adres: zrodlo.punkt_odbioru_adres || null,
+        items,
+        kwota_proponowana_brutto: 0,
+        kwota_sprzedazy_brutto: 0,
+        komentarz,
+      };
+      const { error: insErr } = await supabase.from('wyceny').insert(zamowienie);
+      if (insErr) throw insErr;
+
+      await supabase.from(DODATKOWE_PRZESYLKI_TABLE).update({
+        status: 'nadane', wycena_id: nowaId, nadane_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }).eq('id', id);
+
+      // Etykieta + „Do spakowania" + push (bez FV). Błąd tu = zamówienie
+      // istnieje, ale bez przesyłki — zwracamy 502, dosyłka zostaje 'nadane'
+      // z wycena_id, więc etykietę można dopiąć z Fulfillmentu („Oznacz opłacone").
+      const { markPaidAndShip } = require('./wyceny-pipeline');
+      const result = await markPaidAndShip(supabase, nowaId);
+      res.json({ ok: true, wycena_id: nowaId, ...result });
     } catch (err) {
       handleError(res, err, 502);
     }

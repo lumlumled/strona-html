@@ -222,6 +222,90 @@
 .lk-notatka-msg { font-size: 0.75rem; color: var(--text-muted); }
 .lk-notatka-msg.err { color: var(--bad, var(--feedback-overdue, #b5433f)); }
 
+/* Dodatkowa przesyłka (dosyłka bez faktury). */
+.lk-przesylka { display: flex; flex-direction: column; gap: 0.55rem; padding: 0.2rem 0; }
+
+.lk-przesylka-item {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.5rem 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  background: var(--surface-1);
+}
+.lk-przesylka-item.status-nadane { opacity: 0.75; }
+.lk-przesylka-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.lk-przesylka-poz { font-size: 0.88rem; font-weight: 600; color: var(--text-primary); }
+.lk-przesylka-status {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  white-space: nowrap;
+}
+.lk-przesylka-item.status-nadane .lk-przesylka-status { color: var(--surface-1); background: var(--accent); }
+.lk-przesylka-nota { font-size: 0.82rem; color: var(--text-secondary); margin: 0; }
+.lk-przesylka-meta { font-size: 0.75rem; color: var(--text-muted); margin: 0; }
+
+.lk-przesylka-actions { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.15rem; }
+.lk-przesylka-nadaj {
+  font: inherit; font-size: 0.8rem; font-weight: 600;
+  color: var(--surface-1); background: var(--accent);
+  border: none; border-radius: 999px; padding: 0.28rem 0.85rem; cursor: pointer;
+}
+.lk-przesylka-anuluj {
+  font: inherit; font-size: 0.8rem; color: var(--text-muted);
+  background: transparent; border: none; border-radius: 999px; padding: 0.28rem 0.5rem; cursor: pointer;
+}
+.lk-przesylka-actions button:disabled { opacity: 0.5; cursor: default; }
+.lk-przesylka-msg { font-size: 0.75rem; color: var(--text-muted); }
+.lk-przesylka-msg.err { color: var(--bad, var(--feedback-overdue, #b5433f)); }
+
+.lk-przesylka-form {
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 0.55rem 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.lk-przesylka-form-title { font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); }
+.lk-przesylka-poz-rows { display: flex; flex-direction: column; gap: 0.35rem; }
+.lk-przesylka-poz-row { display: flex; align-items: center; gap: 0.35rem; }
+.lk-przesylka-in-nazwa, .lk-przesylka-nota-in {
+  font: inherit; font-size: 0.85rem;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-1); color: var(--text-primary);
+  padding: 0.4rem 0.55rem;
+}
+.lk-przesylka-in-nazwa { flex: 1 1 auto; min-width: 0; }
+.lk-przesylka-in-ilosc {
+  font: inherit; font-size: 0.85rem; width: 3.4rem; text-align: center;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-1); color: var(--text-primary); padding: 0.4rem 0.3rem;
+}
+.lk-przesylka-poz-del {
+  font: inherit; font-size: 1rem; line-height: 1; color: var(--text-muted);
+  background: transparent; border: none; cursor: pointer; padding: 0.2rem 0.35rem;
+}
+.lk-przesylka-add-poz {
+  align-self: flex-start; font: inherit; font-size: 0.76rem; font-weight: 600;
+  color: var(--text-secondary); background: var(--accent-soft);
+  border: none; border-radius: 999px; padding: 0.2rem 0.6rem; cursor: pointer;
+}
+.lk-przesylka-nota-in { min-height: 2.8rem; resize: vertical; }
+.lk-przesylka-czeka { font-size: 0.8rem; color: var(--text-secondary); display: flex; align-items: center; gap: 0.35rem; }
+.lk-przesylka-form-actions { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.lk-przesylka-save {
+  font: inherit; font-size: 0.8rem; font-weight: 600;
+  color: var(--surface-1); background: var(--accent);
+  border: none; border-radius: 999px; padding: 0.28rem 0.85rem; cursor: pointer;
+}
+.lk-przesylka-form-actions button:disabled { opacity: 0.5; cursor: default; }
+
 /* Historia rozmów — oś czasu (kropka wypełniona = odebrane, pusta = nieodebrane). */
 .lk-historia-rozmow { margin-top: 0.1rem; }
 
