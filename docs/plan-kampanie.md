@@ -68,6 +68,15 @@ Decyzje Antoniego (2026-07-15):
       follow-upów (migracja 002, wspólny limit dzienny, wypisywanie po
       odpowiedzi/kontakcie). Testy: e2e 36 asercji (realny follow-up SMS,
       symulacja odpowiedzi przez kom in) + mock DOM 29.
+- [x] v3 (2026-07-15): usuwanie kampanii (DELETE, cascade; ślady zewnętrzne
+      zostają), uwagi zbiorcze do WSZYSTKICH wiadomości (POST :id/uwagi →
+      korekty.reguly, UI: pole + "Zastosuj do wszystkich i przegeneruj"),
+      podejrzane case'y do zatwierdzenia (migracja 003: kwota < 400 zł
+      [env KAMPANIE_PROG_KWOTY] albo brak kwoty → flaga podejrzany przy
+      populacji z filtra; wysyłka ich POMIJA aż do zatwierdzenia; chip
+      "⚠ do zatwierdzenia" + przyciski Zatwierdź/Pomiń + deep-link
+      /wyceny/?id=X do obejrzenia wyceny; ręczni odbiorcy bez flagi -
+      świadoma decyzja). Testy: e2e 18 + mock DOM 37.
 - [ ] Etap 2: ODBIÓR odpowiedzi SMS - ⚠ webhooki Zadarmy: sprawdzić, czy
       kategoria 'sms' (POST /v1/pbx/webhooks/url/) współdzieli URL z webhookiem
       rozmów (backlog-b2c/api/webhooks/zadarma) - NIE nadpisywać w ciemno!

@@ -8,6 +8,21 @@
 
 const { cenaFinalna } = require('../../shared/server/wyceny-cena');
 
+// Wycena poniżej tej kwoty (albo bez kwoty) to prawie na pewno błąd/śmieć -
+// odbiorca dostaje flagę "podejrzany" i czeka na ręczne zatwierdzenie.
+const PROG_KWOTY = Number(process.env.KAMPANIE_PROG_KWOTY) || 400;
+
+function ocenPodejrzanego(kwota) {
+  // cenaFinalna dla wyceny bez kwoty potrafi zwrócić 0 - to też "brak kwoty"
+  if (kwota == null || !Number.isFinite(Number(kwota)) || Number(kwota) <= 0) {
+    return { podejrzany: true, podejrzany_powod: 'brak kwoty wyceny' };
+  }
+  if (Number(kwota) < PROG_KWOTY) {
+    return { podejrzany: true, podejrzany_powod: `kwota ${Math.round(Number(kwota))} zl - ponizej progu ${PROG_KWOTY} zl` };
+  }
+  return { podejrzany: false, podejrzany_powod: null };
+}
+
 // wyceny.telefon_digits bywa z prefiksem i bez - klucz dedupe to 9 ostatnich
 // cyfr numeru krajowego (konwencja jak GET /api/rozmowy/szukaj).
 function telefonKlucz(digits) {
@@ -103,6 +118,7 @@ async function zbudujPopulacje(db, { minWiekDni = 30, owner = null, kanal = 'sms
       lead_id: leadId,
       wycena_id: najnowsza.id,
       wyceny_ids: g.wyceny.map((w) => w.id),
+      ...ocenPodejrzanego(Number.isFinite(Number(kwota)) ? Number(kwota) : null),
       kontekst: {
         imie,
         items: (Array.isArray(najnowsza.items) ? najnowsza.items : []).map((it) => ({
@@ -118,7 +134,13 @@ async function zbudujPopulacje(db, { minWiekDni = 30, owner = null, kanal = 'sms
     });
   }
 
-  return { odbiorcy, wykluczeni, liczba: odbiorcy.length, suma_kwot: Math.round(suma) };
+  return {
+    odbiorcy,
+    wykluczeni,
+    liczba: odbiorcy.length,
+    suma_kwot: Math.round(suma),
+    podejrzani: odbiorcy.filter((o) => o.podejrzany).length,
+  };
 }
 
 // Zamraża populację kampanii w kampanie_odbiorcy (unique kampania+telefon
@@ -140,4 +162,4 @@ async function zamrozPopulacje(db, kampania) {
   return { dodano, pominieto: odbiorcy.length - dodano, wykluczeni };
 }
 
-module.exports = { zbudujPopulacje, zamrozPopulacje, telefonKlucz };
+module.exports = { zbudujPopulacje, zamrozPopulacje, telefonKlucz, ocenPodejrzanego, PROG_KWOTY };

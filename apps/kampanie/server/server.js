@@ -73,16 +73,18 @@ async function pobierzKampanie(db, id) {
 }
 
 async function liczniki(db, kampaniaIds) {
-  const wynik = new Map(kampaniaIds.map((id) => [id, { pending: 0, generated: 0, approved: 0, sent: 0, failed: 0, replied: 0, closed: 0, optout: 0, skipped: 0, razem: 0 }]));
+  const wynik = new Map(kampaniaIds.map((id) => [id, { pending: 0, generated: 0, approved: 0, sent: 0, failed: 0, replied: 0, closed: 0, optout: 0, skipped: 0, razem: 0, podejrzani: 0 }]));
   if (!kampaniaIds.length) return wynik;
   const { data, error } = await db.from('kampanie_odbiorcy')
-    .select('kampania_id, status').in('kampania_id', kampaniaIds);
+    .select('kampania_id, status, podejrzany').in('kampania_id', kampaniaIds);
   if (error) throw error;
   (data || []).forEach((r) => {
     const l = wynik.get(r.kampania_id);
     if (!l) return;
     l[r.status] = (l[r.status] || 0) + 1;
     l.razem++;
+    // podejrzani czekający na decyzję (terminalni już nie blokują niczego)
+    if (r.podejrzany && ['pending', 'generated', 'approved'].includes(r.status)) l.podejrzani++;
   });
   return wynik;
 }
@@ -107,6 +109,7 @@ app.post('/api/kampanie/interpretuj', async (req, res) => {
       populacja: {
         liczba: pop.liczba,
         suma_kwot: pop.suma_kwot,
+        podejrzani: pop.podejrzani,
         wykluczeni: pop.wykluczeni,
         probka: pop.odbiorcy.slice(0, 20).map((o) => ({
           telefon: o.telefon, imie: o.imie, kwota: o.kontekst.kwota, wiek_dni: o.kontekst.wiek_dni,
@@ -129,6 +132,7 @@ app.get('/api/kampanie/populacja', async (req, res) => {
     res.json({
       liczba: pop.liczba,
       suma_kwot: pop.suma_kwot,
+      podejrzani: pop.podejrzani,
       wykluczeni: pop.wykluczeni,
       probka: pop.odbiorcy.slice(0, 20).map((o) => ({
         telefon: o.telefon, imie: o.imie, kwota: o.kontekst.kwota, wiek_dni: o.kontekst.wiek_dni,
@@ -276,10 +280,47 @@ app.get('/api/kampanie/:id(\\d+)', async (req, res) => {
       .order('sample', { ascending: false }).order('id', { ascending: true })
       .limit(Math.min(500, Number(req.query.limit) || 300));
     if (req.query.status) q = q.eq('status', String(req.query.status));
+    if (req.query.podejrzany === '1') q = q.eq('podejrzany', true).in('status', ['pending', 'generated', 'approved']);
     const { data: odbiorcy, error } = await q;
     if (error) throw error;
     const stat = await liczniki(db, [kampania.id]);
     res.json({ kampania, liczniki: stat.get(kampania.id), odbiorcy: odbiorcy || [] });
+  } catch (err) { handleError(res, err, 502); }
+});
+
+// Usunięcie kampanii (cascade zabiera odbiorców). Ślady zewnętrzne
+// (kom_messages, Historia rozmów, history_log wycen) celowo ZOSTAJĄ -
+// SMS-y naprawdę wyszły. Aktywną kampanię usunięcie po prostu przerywa.
+app.delete('/api/kampanie/:id(\\d+)', async (req, res) => {
+  try {
+    const db = getClient();
+    const kampania = await pobierzKampanie(db, req.params.id);
+    if (!kampania) return res.status(404).json({ error: 'Nie ma takiej kampanii' });
+    const { error } = await db.from('kampanie').delete().eq('id', kampania.id);
+    if (error) throw error;
+    res.json({ ok: true, usunieta: kampania.nazwa });
+  } catch (err) { handleError(res, err, 502); }
+});
+
+// Zbiorcze uwagi do WSZYSTKICH wiadomości kampanii - zamiast poprawiać
+// 10 próbek ręcznie, jedna uwaga trafia do reguł (korekty.reguly) i generator
+// stosuje ją przy przegenerowaniu próbki oraz przy całej reszcie wysyłki.
+app.post('/api/kampanie/:id(\\d+)/uwagi', async (req, res) => {
+  try {
+    const db = getClient();
+    const kampania = await pobierzKampanie(db, req.params.id);
+    if (!kampania) return res.status(404).json({ error: 'Nie ma takiej kampanii' });
+    const tekst = String(req.body?.tekst || '').trim();
+    if (tekst.length < 3) return res.status(400).json({ error: 'Napisz uwagę' });
+    if (/[—–]/.test(tekst)) return res.status(400).json({ error: 'Zakazany myślnik — / – (używamy "-")' });
+    const stare = kampania.korekty || { pary: [], reguly: [] };
+    const korekty = {
+      pary: stare.pary || [],
+      reguly: [...(stare.reguly || []), tekst].slice(-12),
+    };
+    const { error } = await db.from('kampanie').update({ korekty, updated_at: new Date().toISOString() }).eq('id', kampania.id);
+    if (error) throw error;
+    res.json({ ok: true, korekty });
   } catch (err) { handleError(res, err, 502); }
 });
 
@@ -472,7 +513,10 @@ app.post('/api/kampanie/:id(\\d+)/probka', async (req, res) => {
       .select('*').eq('kampania_id', kampania.id).eq('status', 'pending').order('id');
     if (error) throw error;
     if (!pending || !pending.length) return res.status(400).json({ error: 'Brak odbiorców do próbki (populacja pusta?)' });
-    const probka = wybierzProbke(pending, kampania.proba_size || 8);
+    // próbka ma reprezentować to, co faktycznie wyjdzie - podejrzani
+    // (czekający na zatwierdzenie) wchodzą do niej tylko gdy nie ma innych
+    const czysci = pending.filter((r) => !r.podejrzany);
+    const probka = wybierzProbke(czysci.length ? czysci : pending, kampania.proba_size || 8);
     const wyniki = await generujProbke(db, kampania, probka);
     await db.from('kampanie').update({ status: 'review', updated_at: new Date().toISOString() }).eq('id', kampania.id);
     res.json({ probka: wyniki });
@@ -548,6 +592,33 @@ app.patch('/api/kampanie/:id(\\d+)/odbiorcy/:oid(\\d+)', async (req, res) => {
     const { data: upd, error: updErr } = await db.from('kampanie_odbiorcy').update(patch).eq('id', row.id).select('*');
     if (updErr) throw updErr;
     res.json({ odbiorca: upd[0], segmenty: walidacja.segmenty, ostrzezenia: walidacja.bledy, korekty: uczyMy ? korekty : undefined });
+  } catch (err) { handleError(res, err, 502); }
+});
+
+// Zatwierdzenie podejrzanego case'u - wraca do normalnej kolejki wysyłki.
+app.post('/api/kampanie/:id(\\d+)/odbiorcy/:oid(\\d+)/zatwierdz', async (req, res) => {
+  try {
+    const db = getClient();
+    const { data, error } = await db.from('kampanie_odbiorcy')
+      .update({ podejrzany: false, updated_at: new Date().toISOString() })
+      .eq('id', req.params.oid).eq('kampania_id', req.params.id).eq('podejrzany', true).select('*');
+    if (error) throw error;
+    if (!data || !data.length) return res.status(404).json({ error: 'Brak podejrzanego odbiorcy' });
+    res.json({ odbiorca: data[0] });
+  } catch (err) { handleError(res, err, 502); }
+});
+
+// Pominięcie odbiorcy (podejrzany-śmieć albo świadoma decyzja) - nie wysyłamy.
+app.post('/api/kampanie/:id(\\d+)/odbiorcy/:oid(\\d+)/pomin', async (req, res) => {
+  try {
+    const db = getClient();
+    const { data, error } = await db.from('kampanie_odbiorcy')
+      .update({ status: 'skipped', blad: 'pominięty ręcznie', updated_at: new Date().toISOString() })
+      .eq('id', req.params.oid).eq('kampania_id', req.params.id)
+      .in('status', ['pending', 'generated', 'approved']).select('*');
+    if (error) throw error;
+    if (!data || !data.length) return res.status(404).json({ error: 'Nie można pominąć tego odbiorcy' });
+    res.json({ odbiorca: data[0] });
   } catch (err) { handleError(res, err, 502); }
 });
 

@@ -278,6 +278,10 @@
           <span class="muted" id="probkaInfo"></span>
         </div>
         <p class="muted" style="margin-top:-0.3rem">Popraw treści śmiało - z każdej poprawki system uczy się na resztę wysyłki. Potem „Przegeneruj" (sprawdzisz, czy zrozumiał) albo od razu „Akceptuj i wystartuj".</p>
+        <div style="display:flex;gap:0.6rem;align-items:flex-start;flex-wrap:wrap">
+          <textarea id="uwagiZbiorcze" style="flex:1;min-height:52px;min-width:220px" placeholder="Uwagi do WSZYSTKICH wiadomości naraz, np. 'krócej, bez zdrobnień, kwota zawsze na końcu'"></textarea>
+          <button id="btnUwagi">Zastosuj do wszystkich<br>i przegeneruj</button>
+        </div>
         <div id="probkaList" style="display:flex;flex-direction:column;gap:0.7rem"></div>
       </div>
 
@@ -419,6 +423,7 @@
               <span>czeka: <b>${(l.pending || 0) + (l.generated || 0) + (l.approved || 0)}</b></span>
               <span>wysłane: <b>${l.sent || 0}</b></span>
               <span>odpowiedzi: <b>${l.replied || 0}</b></span>
+              ${l.podejrzani ? `<span style="color:var(--warn)">⚠ do zatwierdzenia: <b>${l.podejrzani}</b></span>` : ''}
               ${l.failed ? `<span style="color:var(--bad)">błędy: <b>${l.failed}</b></span>` : ''}
               <span>limit: <b>${k.limit_dzienny}/dzień</b> (${k.godzina_od}-${k.godzina_do})</span>
             </div>`;
@@ -499,6 +504,7 @@
     function renderPopulacja(pop) {
       const w = pop.wykluczeni || {};
       $('popBox').innerHTML = `Populacja: <b>${pop.liczba} osób</b> na łącznie <b>${money(pop.suma_kwot)}</b> otwartych wycen`
+        + (pop.podejrzani ? ` <span style="color:var(--warn)">· ⚠ ${pop.podejrzani} podejrzanych (kwota poniżej 400 zł) - wyjdą dopiero po Twoim zatwierdzeniu</span>` : '')
         + ` <span class="muted">(pominięci: ${w.bez_kontaktu || 0} bez kontaktu, ${w.optout || 0} wypisanych, ${w.w_kampanii || 0} w innej kampanii)</span>`;
     }
 
@@ -586,7 +592,8 @@
 
     async function openKampania(id, filtr) {
       try {
-        const out = await api(`/api/kampanie/${id}${filtr ? `?status=${encodeURIComponent(filtr)}` : ''}`);
+        const query = filtr === '__podejrzani' ? '?podejrzany=1' : (filtr ? `?status=${encodeURIComponent(filtr)}` : '');
+        const out = await api(`/api/kampanie/${id}${query}`);
         state.kampania = out.kampania;
         state.odbiorcy = out.odbiorcy;
         state.filtr = filtr || '';
@@ -627,6 +634,17 @@
         try { await api(`/api/kampanie/${k.id}/probka`, { method: 'POST' }); openKampania(k.id); }
         catch (err) { toast(err.message); }
       });
+      btn('Usuń kampanię', '', async () => {
+        const ostrzezenie = k.status === 'active'
+          ? `Kampania "${k.nazwa}" jest AKTYWNA - usunięcie przerywa wysyłkę i sekwencję. Wysłane SMS-y zostają w historii. Usunąć?`
+          : `Usunąć kampanię "${k.nazwa}" z wszystkimi odbiorcami? Wysłane wiadomości zostają w historii.`;
+        if (!confirm(ostrzezenie)) return;
+        try {
+          await api(`/api/kampanie/${k.id}`, { method: 'DELETE' });
+          toast('Kampania usunięta');
+          loadLista();
+        } catch (err) { toast(err.message); }
+      });
 
       // korekty ("czego się nauczyłem")
       const kor = (k.korekty && k.korekty.reguly) || [];
@@ -655,6 +673,7 @@
         filters.appendChild(b);
       };
       mk('Wszyscy', '', liczniki.razem);
+      if (liczniki.podejrzani) mk('⚠ do zatwierdzenia', '__podejrzani', liczniki.podejrzani);
       Object.entries(O_STATUS).forEach(([kod, label]) => {
         if (liczniki[kod]) mk(label, kod, liczniki[kod]);
       });
@@ -716,6 +735,9 @@
       const el = document.createElement('div');
       el.className = 'odb-row';
       const badgeCls = o.status === 'failed' ? 'failed' : (o.status === 'sent' ? 'active' : '');
+      const czeka = ['pending', 'generated', 'approved'].includes(o.status);
+      const podejrzany = Boolean(o.podejrzany && czeka);
+      const wycenaUrl = (id) => `${(window.LUMLUM_LINKS || {}).wyceny || '/wyceny/'}?id=${encodeURIComponent(id)}`;
       el.innerHTML = `
         <div class="odb-line">
           <span class="tel">${esc(o.telefon)}</span>
@@ -723,21 +745,38 @@
           ${o.kontekst && o.kontekst.kwota ? `<span class="muted">${money(o.kontekst.kwota)}</span>` : ''}
           ${o.zrodlo === 'reczny' ? '<span class="badge">ręczny</span>' : ''}
           ${o.sekwencja_krok > 0 ? '<span class="badge review">follow-up</span>' : ''}
+          ${podejrzany ? '<span class="badge review">⚠ do zatwierdzenia</span>' : ''}
           <span class="badge ${badgeCls}">${esc(O_STATUS[o.status] || o.status)}</span>
         </div>
         <div class="odb-body">
+          ${podejrzany ? `<p style="color:var(--warn);font-size:0.85rem;margin-bottom:0.4rem">⚠ ${esc(o.podejrzany_powod || 'podejrzany case')} - sprawdź wycenę zanim wyjdzie wiadomość.</p>` : ''}
           ${o.tresc ? `<div class="odb-tresc">${esc(o.tresc)}</div>` : '<p class="muted">Treść jeszcze nie wygenerowana.</p>'}
           ${o.blad ? `<div class="odb-err">${esc(o.blad)}</div>` : ''}
           ${o.wyslano_at ? `<p class="muted" style="margin-top:0.3rem">Wysłano: ${new Date(o.wyslano_at).toLocaleString('pl-PL')}</p>` : ''}
           ${o.sekwencja_krok > 0 && o.sekwencja_at ? `<p class="muted" style="margin-top:0.2rem">Follow-up wysłany: ${new Date(o.sekwencja_at).toLocaleString('pl-PL')}</p>` : ''}
           ${o.sekwencja_stop ? `<p class="muted" style="margin-top:0.2rem">Sekwencja zakończona: ${esc(o.sekwencja_stop)}</p>` : ''}
           <div class="km-actions" style="margin-top:0.5rem">
+            ${podejrzany ? '<button class="small primary odb-zatwierdz">Zatwierdź do wysyłki</button>' : ''}
+            ${czeka ? '<button class="small odb-pomin">Pomiń</button>' : ''}
             ${o.status === 'failed' ? '<button class="small odb-ponow">Ponów</button>' : ''}
-            ${['pending', 'generated', 'approved'].includes(o.status) ? '<button class="small odb-optout">Nie kontaktować</button>' : ''}
-            ${o.wycena_id ? `<a class="muted" style="font-size:0.8rem" href="${esc((window.LUMLUM_LINKS || {}).wyceny || '/wyceny/')}" target="_blank">wycena #${esc(o.wycena_id)}</a>` : ''}
+            ${czeka ? '<button class="small odb-optout">Nie kontaktować</button>' : ''}
+            ${o.wycena_id ? `<a class="muted" style="font-size:0.8rem" href="${esc(wycenaUrl(o.wycena_id))}" target="_blank">otwórz wycenę #${esc(o.wycena_id)}</a>` : ''}
+            ${(o.wyceny_ids || []).filter((id) => id !== o.wycena_id).map((id) => `<a class="muted" style="font-size:0.8rem" href="${esc(wycenaUrl(id))}" target="_blank">#${esc(id)}</a>`).join(' ')}
           </div>
         </div>`;
       el.querySelector('.odb-line').addEventListener('click', () => el.classList.toggle('open'));
+      const zatwierdz = el.querySelector('.odb-zatwierdz');
+      if (zatwierdz) zatwierdz.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try { await api(`/api/kampanie/${state.kampania.id}/odbiorcy/${o.id}/zatwierdz`, { method: 'POST' }); toast('Zatwierdzony - wyjdzie w kolejnej paczce'); openKampania(state.kampania.id, state.filtr); }
+        catch (err) { toast(err.message); }
+      });
+      const pomin = el.querySelector('.odb-pomin');
+      if (pomin) pomin.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try { await api(`/api/kampanie/${state.kampania.id}/odbiorcy/${o.id}/pomin`, { method: 'POST' }); toast('Pominięty'); openKampania(state.kampania.id, state.filtr); }
+        catch (err) { toast(err.message); }
+      });
       const ponow = el.querySelector('.odb-ponow');
       if (ponow) ponow.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -753,6 +792,23 @@
       });
       return el;
     }
+
+    // uwagi zbiorcze: jedna uwaga trafia do reguł generatora (wszystkie
+    // wiadomości - próbka po przegenerowaniu ORAZ cała reszta wysyłki)
+    $('btnUwagi').addEventListener('click', async () => {
+      const tekst = $('uwagiZbiorcze').value.trim();
+      if (tekst.length < 3) return toast('Napisz uwagę');
+      $('btnUwagi').disabled = true;
+      try {
+        await api(`/api/kampanie/${state.kampania.id}/uwagi`, { method: 'POST', body: { tekst } });
+        $('uwagiZbiorcze').value = '';
+        toast('Uwaga zapisana - przegenerowuję próbkę…');
+        await api(`/api/kampanie/${state.kampania.id}/probka/przegeneruj`, { method: 'POST' });
+        toast('Nowa próbka z Twoją uwagą gotowa');
+        openKampania(state.kampania.id);
+      } catch (err) { toast(err.message); }
+      $('btnUwagi').disabled = false;
+    });
 
     // wyszukiwarka w widoku kampanii — dodaje odbiorcę od razu do kampanii
     initSzukaj('szukajKamp', 'szukajKampWyniki', async (w) => {

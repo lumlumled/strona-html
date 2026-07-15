@@ -142,8 +142,11 @@ async function wyslijPaczke(db, getClient, kampania, deadline, budzet) {
   const wynik = { wyslane: 0, pominiete: 0, bledy: 0 };
   if (budzet <= 0) return wynik;
 
+  // podejrzani (kwota poniżej progu / brak kwoty) czekają na ręczne
+  // zatwierdzenie - wysyłka ich nie dotyka
   const { data: rows, error } = await db.from('kampanie_odbiorcy')
     .select('*').eq('kampania_id', kampania.id).eq('status', 'approved')
+    .eq('podejrzany', false)
     .order('sample', { ascending: false }).order('id', { ascending: true })
     .limit(Math.min(budzet, SEND_BATCH));
   if (error) throw error;
