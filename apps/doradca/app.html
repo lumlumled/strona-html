@@ -143,6 +143,14 @@
   .ctx-file-btn:hover{border-color:var(--accent);color:var(--accent)}
   .ctx-clear{margin-left:auto;background:none;border:none;color:var(--ink-faint);cursor:pointer;font-size:12px;font-family:inherit}
   .ctx-clear:hover{color:var(--bad)}
+
+  /* Pasek przewijania dopasowany do ciemnego motywu (zamiast systemowego szarego) */
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border-radius:999px;border:2px solid transparent;background-clip:padding-box}
+  ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.30);background-clip:padding-box}
+  ::-webkit-scrollbar-corner{background:transparent}
+  .stream,.col-mem,.col-chats,.chats-list,.ctx-panel textarea{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.20) transparent}
 </style>
 </head>
 <body>
