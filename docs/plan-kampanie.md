@@ -18,6 +18,19 @@ Decyzje Antoniego (2026-07-15):
   niejasne → propozycja dla człowieka (sekcja Do decyzji) + push.
 - Dostęp: Antoni + Lorenzo (panelKey 'kampanie', bez adminOnly).
 - Nadawca SMS: numer Lorenzo (resolveSmsCaller z kontakt-send), wybieralny.
+- (v2, 2026-07-15) RĘCZNI ODBIORCY: tryb „wybrani ręcznie" w kreatorze +
+  sekcja „Dodaj odbiorcę" w kampanii (też aktywnej) - wyszukiwarka po numerze
+  /imieniu (wyceny + Leady B2C, GET /api/kampanie/szukaj), goły numer spoza
+  bazy też można dodać (test do siebie); zbudujRecznegoOdbiorce dociąga
+  otwarte wyceny telefonu i leada, więc kontekst personalizacji jest pełny.
+- (v2) SEKWENCJA: kampanie.sekwencja={po_dniach,brief} (AI wyciąga ją też
+  z opisu w interpretacji) - po N dniach bez odpowiedzi worker wysyła
+  follow-up (AI: krótsze przypomnienie nawiązujące do poprzedniej wiadomości,
+  z furtką „jeśli nieaktualne, krótkie nie"); odpowiedź SMS (kom in),
+  kontakt na leadzie (Ostatni kontakt), zamknięta wycena albo optout
+  WYPISUJE odbiorcę (sekwencja_stop z powodem); follow-upy liczą się do
+  wspólnego limitu dziennego; kampania done wciąż domyka sekwencję; v1
+  sekwencji = jeden krok, tylko SMS.
 
 ## Architektura
 
@@ -51,15 +64,20 @@ Decyzje Antoniego (2026-07-15):
       uczenie z korekt, worker, limit dzienny, optout). Testy: e2e na żywej
       bazie 44 asercje + realny SMS (Zadarma OK, kom_messages, history_log
       obu wycen odbiorcy, limit dzienny) + mock DOM 19 asercji.
+- [x] v2 (2026-07-15): ręczni odbiorcy (wyszukiwarka + goły numer) + sekwencja
+      follow-upów (migracja 002, wspólny limit dzienny, wypisywanie po
+      odpowiedzi/kontakcie). Testy: e2e 36 asercji (realny follow-up SMS,
+      symulacja odpowiedzi przez kom in) + mock DOM 29.
 - [ ] Etap 2: ODBIÓR odpowiedzi SMS - ⚠ webhooki Zadarmy: sprawdzić, czy
       kategoria 'sms' (POST /v1/pbx/webhooks/url/) współdzieli URL z webhookiem
       rozmów (backlog-b2c/api/webhooks/zadarma) - NIE nadpisywać w ciemno!
-      Logger-first: surowy payload → kampanie_sms_inbox, parser dopiero po
-      obejrzeniu realnego SMS-a przychodzącego (numer 48459567870 ma
+      Logger-first: surowy payload → kampanie_sms_inbox (migracja 003), parser
+      dopiero po obejrzeniu realnego SMS-a przychodzącego (numer 48459567870 ma
       receive_sms:true). Potem: kom_messages in → dopasowanie odbiorcy po
       telefonie (90 dni od wysyłki) → regex STOP → triage AI (nieaktualna
       ≥0.85 → auto-Stracone wszystkich wyceny_ids + resolveWatch + push;
-      termin → follow-up; reszta → Do decyzji + push).
+      termin → follow-up; reszta → Do decyzji + push). Sekwencja już dziś
+      sprawdza kom in - odbiór zacznie ją zasilać bez zmian w kodzie.
 - [ ] Etap 3: follow-upy scheduled (kampanie_followupy: auto-SMS dzień przed
       terminem + task na plan dnia w dniu terminu przez wyekstrahowany
       plan-dnia-task.js z POST /api/doradca/akcja).

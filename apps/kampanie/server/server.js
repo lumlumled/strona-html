@@ -14,6 +14,7 @@ const { createAuth, clientPayload, panelLinks } = require('../../shared/server/a
 const { servePushWorker, registerPushEndpoints } = require('../../shared/server/push');
 const { callZadarma } = require('../../backlog-b2c/server/zadarma');
 const { zbudujPopulacje, zamrozPopulacje, telefonKlucz } = require('./populacja');
+const { cenaFinalna } = require('../../shared/server/wyceny-cena');
 const ai = require('./ai');
 const { runKampanieWorker } = require('./worker');
 
@@ -137,6 +138,64 @@ app.get('/api/kampanie/populacja', async (req, res) => {
   } catch (err) { handleError(res, err, 502); }
 });
 
+// Wyszukiwarka odbiorców: numer telefonu (pełny lub fragment) albo imię.
+// Szuka w wycenach i Leady B2C, skleja po telefonie — do ręcznego dodawania
+// konkretnych osób do kampanii (w tym testu na własny numer).
+app.get('/api/kampanie/szukaj', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 3) return res.json({ wyniki: [] });
+    const db = getClient();
+    const digits = q.replace(/\D/g, '');
+    const poTelefonie = new Map();
+    const dodaj = (tel, patch) => {
+      const klucz = telefonKlucz(tel);
+      if (klucz.length < 9) return;
+      const w = poTelefonie.get(klucz) || { telefon: klucz, imie: null, lead_id: null, wycena_id: null, kwota: null, wycen_otwartych: 0 };
+      poTelefonie.set(klucz, { ...w, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v != null && v !== 0)) });
+    };
+
+    if (digits.length >= 4) {
+      const { data: wyc } = await db.from('wyceny')
+        .select('id, imie_nazwisko, telefon_digits, status, typ, kwota_proponowana_brutto, kwota_sprzedazy_brutto, rabat24h_kwota, rabat24h_wazny_do, created_at')
+        .ilike('telefon_digits', `%${digits}%`)
+        .order('created_at', { ascending: false }).limit(20);
+      (wyc || []).forEach((w) => dodaj(w.telefon_digits, {
+        imie: String(w.imie_nazwisko || '').trim() || null,
+        wycena_id: w.typ === 'WYCENA' && w.status === 'Open' ? w.id : null,
+        kwota: w.typ === 'WYCENA' && w.status === 'Open' ? cenaFinalna(w) : null,
+        wycen_otwartych: w.typ === 'WYCENA' && w.status === 'Open' ? 1 : 0,
+      }));
+      if (digits.length >= 9) {
+        const { data: leady } = await db.from('Leady B2C')
+          .select('"ID Leada", "Name", "Phone number"')
+          .eq('Phone number', Number(telefonKlucz(digits))).limit(3);
+        (leady || []).forEach((l) => dodaj(String(l['Phone number']), {
+          imie: String(l['Name'] || '').trim() || null,
+          lead_id: String(l['ID Leada']),
+        }));
+      }
+    }
+    if (digits.length < q.length) {
+      // w zapytaniu są litery — szukamy po imieniu
+      const [{ data: leady }, { data: wyc }] = await Promise.all([
+        db.from('Leady B2C').select('"ID Leada", "Name", "Phone number"').ilike('Name', `%${q}%`).limit(10),
+        db.from('wyceny').select('id, imie_nazwisko, telefon_digits, status, typ, kwota_proponowana_brutto, kwota_sprzedazy_brutto, rabat24h_kwota, rabat24h_wazny_do, created_at')
+          .ilike('imie_nazwisko', `%${q}%`).order('created_at', { ascending: false }).limit(10),
+      ]);
+      (leady || []).forEach((l) => dodaj(String(l['Phone number']), {
+        imie: String(l['Name'] || '').trim() || null, lead_id: String(l['ID Leada']),
+      }));
+      (wyc || []).forEach((w) => dodaj(w.telefon_digits, {
+        imie: String(w.imie_nazwisko || '').trim() || null,
+        wycena_id: w.typ === 'WYCENA' && w.status === 'Open' ? w.id : null,
+        kwota: w.typ === 'WYCENA' && w.status === 'Open' ? cenaFinalna(w) : null,
+      }));
+    }
+    res.json({ wyniki: [...poTelefonie.values()].slice(0, 12), goly_numer: digits.length >= 9 && !poTelefonie.size ? telefonKlucz(digits) : null });
+  } catch (err) { handleError(res, err, 502); }
+});
+
 // Ręczny optout (globalny — telefon nie dostanie już żadnej kampanii).
 app.post('/api/kampanie/optout', async (req, res) => {
   try {
@@ -192,6 +251,16 @@ app.post('/api/kampanie', async (req, res) => {
       proba_size: Math.min(15, Math.max(3, Number(b.proba_size) || 8)),
       created_by: (req.user && req.user.name) || null,
     };
+    // sekwencja follow-upów: {po_dniach, brief} albo null (wyłączona)
+    if (b.sekwencja && Number(b.sekwencja.po_dniach) >= 1) {
+      insert.sekwencja = {
+        po_dniach: Math.min(60, Math.round(Number(b.sekwencja.po_dniach))),
+        brief: String(b.sekwencja.brief || '').trim().slice(0, 500) || null,
+      };
+    }
+    // tryb "wybrani ręcznie": bez filtra populacji, odbiorców dodaje się
+    // pojedynczo z wyszukiwarki
+    if (b.tryb === 'reczny') insert.filtr = null;
     const { data, error } = await db.from('kampanie').insert(insert).select('*');
     if (error) throw error;
     res.json({ kampania: data[0] });
@@ -223,10 +292,116 @@ app.patch('/api/kampanie/:id(\\d+)', async (req, res) => {
     for (const pole of EDYTOWALNE) {
       if (req.body[pole] !== undefined) patch[pole] = req.body[pole];
     }
+    if (req.body.sekwencja !== undefined) {
+      patch.sekwencja = req.body.sekwencja && Number(req.body.sekwencja.po_dniach) >= 1
+        ? { po_dniach: Math.min(60, Math.round(Number(req.body.sekwencja.po_dniach))), brief: String(req.body.sekwencja.brief || '').trim().slice(0, 500) || null }
+        : null;
+    }
     if (req.body.status === 'archived' && ['done', 'draft'].includes(kampania.status)) patch.status = 'archived';
     const { data, error } = await db.from('kampanie').update(patch).eq('id', kampania.id).select('*');
     if (error) throw error;
     res.json({ kampania: data[0] });
+  } catch (err) { handleError(res, err, 502); }
+});
+
+// ── Ręczni odbiorcy ──────────────────────────────────────────────────────────
+
+// Buduje odbiorcę z samego numeru: dociąga otwarte wyceny tego telefonu
+// (pełny kontekst jak z populacji) i leada (imię, kwota/produkty z arkusza),
+// więc ręcznie dodana osoba dostaje tak samo spersonalizowaną wiadomość.
+async function zbudujRecznegoOdbiorce(db, { telefon, imie, leadId }) {
+  const tel = telefonKlucz(telefon);
+  if (tel.length < 9) throw new Error('Podaj poprawny numer telefonu');
+
+  const { data: wyceny } = await db.from('wyceny')
+    .select('id, imie_nazwisko, telefon_digits, email, lead_id, items, kwota_proponowana_brutto, kwota_sprzedazy_brutto, rabat24h_kwota, rabat24h_wazny_do, komentarz, opis_zamowienia, created_at')
+    .eq('typ', 'WYCENA').eq('status', 'Open')
+    .in('telefon_digits', [tel, `48${tel}`])
+    .order('created_at', { ascending: false });
+
+  let lead = null;
+  if (leadId) {
+    const { data } = await db.from('Leady B2C').select('"ID Leada", "Name", "Kwota wyceny", "Produkty z wyceny"').eq('ID Leada', Number(leadId)).limit(1);
+    lead = data && data[0];
+  } else {
+    const { data } = await db.from('Leady B2C').select('"ID Leada", "Name", "Kwota wyceny", "Produkty z wyceny"').eq('Phone number', Number(tel)).limit(1);
+    lead = data && data[0];
+  }
+
+  const najnowsza = (wyceny || [])[0] || null;
+  const imieFinal = String(imie || '').trim()
+    || (najnowsza && String(najnowsza.imie_nazwisko || '').trim())
+    || (lead && String(lead['Name'] || '').trim()) || null;
+
+  if (najnowsza) {
+    const kwota = cenaFinalna(najnowsza);
+    return {
+      telefon: tel,
+      email: String(najnowsza.email || '').trim().toLowerCase() || null,
+      imie: imieFinal,
+      lead_id: lead ? String(lead['ID Leada']) : (najnowsza.lead_id ? String(Number(najnowsza.lead_id)) : null),
+      wycena_id: najnowsza.id,
+      wyceny_ids: wyceny.map((w) => w.id),
+      kontekst: {
+        imie: imieFinal,
+        items: (Array.isArray(najnowsza.items) ? najnowsza.items : []).map((it) => ({ name: it.name || '', quantity: it.quantity || 1, unit: it.unit || 'szt' })),
+        kwota: Number.isFinite(Number(kwota)) ? Number(kwota) : null,
+        komentarz: String(najnowsza.komentarz || '').trim() || null,
+        opis: String(najnowsza.opis_zamowienia || '').trim() || null,
+        wiek_dni: Math.floor((Date.now() - Date.parse(najnowsza.created_at)) / 86400000),
+        liczba_wycen: wyceny.length,
+      },
+    };
+  }
+
+  const kwotaLeada = lead ? Number(String(lead['Kwota wyceny'] || '').replace(/[^\d.]/g, '')) : NaN;
+  return {
+    telefon: tel,
+    email: null,
+    imie: imieFinal,
+    lead_id: lead ? String(lead['ID Leada']) : null,
+    wycena_id: null,
+    wyceny_ids: [],
+    kontekst: {
+      imie: imieFinal,
+      items: [],
+      kwota: Number.isFinite(kwotaLeada) && kwotaLeada > 0 ? kwotaLeada : null,
+      opis: lead && String(lead['Produkty z wyceny'] || '').trim() || null,
+      komentarz: null,
+      wiek_dni: null,
+      liczba_wycen: 0,
+    },
+  };
+}
+
+// Ręczne dodanie konkretnej osoby (z wyszukiwarki albo goły numer — np. test
+// do siebie). Działa też na aktywnej kampanii: pending podchwyci worker.
+app.post('/api/kampanie/:id(\\d+)/odbiorcy', async (req, res) => {
+  try {
+    const db = getClient();
+    const kampania = await pobierzKampanie(db, req.params.id);
+    if (!kampania) return res.status(404).json({ error: 'Nie ma takiej kampanii' });
+    if (!['draft', 'sampling', 'review', 'active'].includes(kampania.status)) {
+      return res.status(400).json({ error: `Nie można dodawać odbiorców w statusie ${kampania.status}` });
+    }
+    const odbiorca = await zbudujRecznegoOdbiorce(db, {
+      telefon: req.body?.telefon, imie: req.body?.imie, leadId: req.body?.lead_id,
+    });
+    const { data: opt } = await db.from('kampanie_optout').select('telefon').eq('telefon', odbiorca.telefon).limit(1);
+    if (opt && opt.length) return res.status(400).json({ error: 'Ten numer jest wypisany (optout)' });
+    if (kampania.kanal === 'email' && !odbiorca.email) {
+      return res.status(400).json({ error: 'Kampania mailowa, a ta osoba nie ma adresu e-mail' });
+    }
+    const { data, error } = await db.from('kampanie_odbiorcy')
+      .insert({ kampania_id: kampania.id, ...odbiorca, zrodlo: 'reczny' })
+      .select('*');
+    if (error) {
+      if (String(error.message).includes('duplicate') || error.code === '23505') {
+        return res.status(400).json({ error: 'Ten numer już jest w tej kampanii' });
+      }
+      throw error;
+    }
+    res.json({ odbiorca: data[0] });
   } catch (err) { handleError(res, err, 502); }
 });
 
@@ -240,6 +415,7 @@ app.post('/api/kampanie/:id(\\d+)/populacja', async (req, res) => {
     if (!['draft', 'sampling'].includes(kampania.status)) {
       return res.status(400).json({ error: `Populację zamraża się w statusie draft (jest: ${kampania.status})` });
     }
+    if (!kampania.filtr) return res.status(400).json({ error: 'Kampania z ręcznie wybranymi odbiorcami - dodawaj ich wyszukiwarką' });
     const wynik = await zamrozPopulacje(db, kampania);
     await db.from('kampanie').update({ status: 'sampling', updated_at: new Date().toISOString() }).eq('id', kampania.id);
     res.json(wynik);
@@ -289,8 +465,8 @@ app.post('/api/kampanie/:id(\\d+)/probka', async (req, res) => {
     const db = getClient();
     const kampania = await pobierzKampanie(db, req.params.id);
     if (!kampania) return res.status(404).json({ error: 'Nie ma takiej kampanii' });
-    if (!['sampling', 'review'].includes(kampania.status)) {
-      return res.status(400).json({ error: `Próbkę generuje się po zamrożeniu populacji (jest: ${kampania.status})` });
+    if (!['draft', 'sampling', 'review'].includes(kampania.status)) {
+      return res.status(400).json({ error: `Próbkę generuje się przed startem kampanii (jest: ${kampania.status})` });
     }
     const { data: pending, error } = await db.from('kampanie_odbiorcy')
       .select('*').eq('kampania_id', kampania.id).eq('status', 'pending').order('id');

@@ -1,14 +1,16 @@
 // ── Worker kampanii (pg_cron → /api/cron/kampanie, co 15 min całą dobę) ──────
 // Bramka godzin wysyłki liczona TUTAJ w czasie Warszawy (pg_cron chodzi
 // w UTC - twardy zakres godzin w harmonogramie rozjeżdża się na DST).
-// Przebieg per kampania active: generacja pending→approved (paczka), wysyłka
-// approved→sent do limitu dziennego, potem push podsumowania do ownera.
+// Przebieg per kampania: generacja pending→approved (paczka), wysyłka
+// approved→sent do limitu dziennego, follow-upy sekwencji (kampanie active
+// ORAZ done - sekwencja żyje dłużej niż pierwsza wysyłka), push podsumowania.
 // Wysyłka = wspólna ścieżka sendSmsAndLog/sendMailAndLog (kom_messages +
 // Historia rozmów leada) + dopis do wyceny.history_log KAŻDEJ wyceny odbiorcy
 // (ślad także dla wycen bez leada).
 
 const { sendSmsAndLog, sendMailAndLog, findLeadByIdLeada, warsawDateTimeStr } = require('../../shared/server/kontakt-send');
 const { notifyUser } = require('../../shared/server/push');
+const identity = require('../../komunikator/server/identity');
 const { generujTresc } = require('./ai');
 
 const GEN_BATCH = 8;      // generacje AI na przebieg (~3 s/szt.)
@@ -50,6 +52,59 @@ async function dopiszHistoryLog(db, wycenyIds, linia) {
   }
 }
 
+// Dzienny licznik kampanii = pierwsze wysyłki + follow-upy (jeden wspólny
+// limit - klient widzi jedną skrzynkę, Zadarma jedno saldo).
+async function wyslaneDzisTotal(db, kampaniaId) {
+  const odPolnocy = warsawMidnightIso();
+  const [a, b] = await Promise.all([
+    db.from('kampanie_odbiorcy').select('id', { count: 'exact', head: true })
+      .eq('kampania_id', kampaniaId).eq('status', 'sent').gte('wyslano_at', odPolnocy),
+    db.from('kampanie_odbiorcy').select('id', { count: 'exact', head: true })
+      .eq('kampania_id', kampaniaId).gte('sekwencja_at', odPolnocy),
+  ]);
+  if (a.error) throw a.error;
+  if (b.error) throw b.error;
+  return (a.count || 0) + (b.count || 0);
+}
+
+async function jestOptout(db, telefon) {
+  const { data } = await db.from('kampanie_optout').select('telefon').eq('telefon', telefon).limit(1);
+  return Boolean(data && data.length);
+}
+
+async function wycenaNieaktywna(db, wycenaId) {
+  if (!wycenaId) return false;
+  const { data } = await db.from('wyceny').select('status, typ').eq('id', wycenaId).limit(1);
+  return !data || !data.length || data[0].status !== 'Open' || data[0].typ !== 'WYCENA';
+}
+
+// Czy klient odpisał SMS-em po naszej wysyłce? (wątek sms w komunikatorze;
+// dziś zapełnia się z Etapu 2/odbioru, ale sprawdzamy już teraz — jak tylko
+// odbiór ruszy, sekwencja zacznie go respektować bez zmian w kodzie).
+async function odpowiedzialSmsem(db, telefon, poIso) {
+  const komPhone = identity.normalize('phone', telefon);
+  const { data: ids } = await db.from('kom_customer_identities')
+    .select('customer_id').eq('type', 'phone').eq('value', komPhone);
+  if (!ids || !ids.length) return false;
+  const { data: threads } = await db.from('kom_threads')
+    .select('id').in('customer_id', ids.map((r) => r.customer_id));
+  if (!threads || !threads.length) return false;
+  const { data: msgs } = await db.from('kom_messages')
+    .select('id').in('thread_id', threads.map((t) => t.id))
+    .eq('direction', 'in').gt('created_at', poIso).limit(1);
+  return Boolean(msgs && msgs.length);
+}
+
+// Czy był jakikolwiek kontakt na leadzie po wysyłce (telefon odebrany,
+// notatka)? Lead trzyma "Ostatni kontakt" - grubszy, ale uczciwy sygnał.
+async function kontaktNaLeadzie(db, leadId, poIso) {
+  if (!leadId) return false;
+  const lead = await findLeadByIdLeada(db, leadId).catch(() => null);
+  if (!lead) return false;
+  const t = Date.parse(lead['Ostatni kontakt']);
+  return Number.isFinite(t) && t > Date.parse(poIso);
+}
+
 // Generacja: pending → approved (po akceptacji próbki reszta idzie bez
 // ręcznego przeglądu - decyzja Antoniego; walidator pilnuje jakości).
 async function generujPaczke(db, kampania, deadline) {
@@ -83,16 +138,9 @@ async function generujPaczke(db, kampania, deadline) {
 // Wysyłka: approved → sent z limitem dziennym. Claim atomowy PRZED wysyłką
 // (update where status='approved') - podwójny SMS jest gorszy niż fałszywy
 // "sent"; błąd Zadarmy po claimie ląduje jako failed z opisem.
-async function wyslijPaczke(db, getClient, kampania, deadline) {
-  const wynik = { wyslane: 0, pominiete: 0, bledy: 0, dzis: 0 };
-  const odPolnocy = warsawMidnightIso();
-  const { count: wyslaneDzis, error: cntErr } = await db.from('kampanie_odbiorcy')
-    .select('id', { count: 'exact', head: true })
-    .eq('kampania_id', kampania.id).eq('status', 'sent').gte('wyslano_at', odPolnocy);
-  if (cntErr) throw cntErr;
-  wynik.dzis = wyslaneDzis || 0;
-  const budzet = Math.max(0, (kampania.limit_dzienny || 25) - wynik.dzis);
-  if (!budzet) return wynik;
+async function wyslijPaczke(db, getClient, kampania, deadline, budzet) {
+  const wynik = { wyslane: 0, pominiete: 0, bledy: 0 };
+  if (budzet <= 0) return wynik;
 
   const { data: rows, error } = await db.from('kampanie_odbiorcy')
     .select('*').eq('kampania_id', kampania.id).eq('status', 'approved')
@@ -112,21 +160,17 @@ async function wyslijPaczke(db, getClient, kampania, deadline) {
     if (Date.now() > deadline) break;
 
     // świeże bezpieczniki: optout + wycena wciąż otwarta
-    const { data: opt } = await db.from('kampanie_optout').select('telefon').eq('telefon', row.telefon).limit(1);
-    if (opt && opt.length) {
+    if (await jestOptout(db, row.telefon)) {
       await db.from('kampanie_odbiorcy').update({ status: 'optout', updated_at: new Date().toISOString() }).eq('id', row.id);
       wynik.pominiete++;
       continue;
     }
-    if (row.wycena_id) {
-      const { data: w } = await db.from('wyceny').select('status, typ').eq('id', row.wycena_id).limit(1);
-      if (!w || !w.length || w[0].status !== 'Open' || w[0].typ !== 'WYCENA') {
-        await db.from('kampanie_odbiorcy').update({
-          status: 'skipped', blad: 'wycena nieaktywna przy wysyłce', updated_at: new Date().toISOString(),
-        }).eq('id', row.id);
-        wynik.pominiete++;
-        continue;
-      }
+    if (row.wycena_id && await wycenaNieaktywna(db, row.wycena_id)) {
+      await db.from('kampanie_odbiorcy').update({
+        status: 'skipped', blad: 'wycena nieaktywna przy wysyłce', updated_at: new Date().toISOString(),
+      }).eq('id', row.id);
+      wynik.pominiete++;
+      continue;
     }
 
     const { data: claimed, error: claimErr } = await db.from('kampanie_odbiorcy')
@@ -156,7 +200,6 @@ async function wyslijPaczke(db, getClient, kampania, deadline) {
       const skrot = String(row.tresc || '').replace(/\s+/g, ' ').slice(0, 100);
       await dopiszHistoryLog(db, row.wyceny_ids, `${warsawDateTimeStr()} - [Kampania #${kampania.id}] ${kampania.kanal === 'email' ? 'Mail' : 'SMS'} wyslany: "${skrot}"`);
       wynik.wyslane++;
-      wynik.dzis++;
       streak = 0;
     } catch (err) {
       await db.from('kampanie_odbiorcy').update({
@@ -181,48 +224,133 @@ async function wyslijPaczke(db, getClient, kampania, deadline) {
   return wynik;
 }
 
+// Sekwencja: follow-up po sekwencja.po_dniach bez odpowiedzi. Odpowiedź
+// SMS-em / kontakt na leadzie / zamknięta wycena / optout WYPISUJE odbiorcę
+// (sekwencja_stop z powodem). Follow-upy liczą się do wspólnego limitu
+// dziennego. Kampania done wciąż domyka swoją sekwencję.
+async function wyslijFollowupy(db, getClient, kampania, deadline, budzet) {
+  const wynik = { wyslane: 0, wypisani: 0, bledy: 0 };
+  const sekw = kampania.sekwencja;
+  const poDniach = sekw && Number(sekw.po_dniach);
+  if (!poDniach || poDniach < 1 || budzet <= 0) return wynik;
+  if (kampania.kanal === 'email') return wynik; // v1: sekwencja tylko SMS
+
+  const cutoff = new Date(Date.now() - poDniach * 86400000).toISOString();
+  const { data: rows, error } = await db.from('kampanie_odbiorcy')
+    .select('*').eq('kampania_id', kampania.id).eq('status', 'sent')
+    .eq('sekwencja_krok', 0).is('sekwencja_stop', null)
+    .lte('wyslano_at', cutoff)
+    .order('wyslano_at', { ascending: true })
+    .limit(Math.min(budzet, SEND_BATCH));
+  if (error) throw error;
+
+  for (const row of rows || []) {
+    if (Date.now() > deadline) break;
+
+    const stop = async (powod) => {
+      await db.from('kampanie_odbiorcy').update({
+        sekwencja_stop: powod, updated_at: new Date().toISOString(),
+      }).eq('id', row.id);
+      wynik.wypisani++;
+    };
+
+    if (await jestOptout(db, row.telefon)) { await stop('optout'); continue; }
+    if (row.wycena_id && await wycenaNieaktywna(db, row.wycena_id)) { await stop('wycena-zamknieta'); continue; }
+    if (await odpowiedzialSmsem(db, row.telefon, row.wyslano_at)) {
+      await db.from('kampanie_odbiorcy').update({
+        status: 'replied', sekwencja_stop: 'odpowiedz', updated_at: new Date().toISOString(),
+      }).eq('id', row.id);
+      wynik.wypisani++;
+      continue;
+    }
+    if (await kontaktNaLeadzie(db, row.lead_id, row.wyslano_at)) { await stop('kontakt'); continue; }
+
+    try {
+      // generacja PRZED claimem (powtórka AI jest tania), claim PRZED wysyłką
+      const gen = await generujTresc(kampania, row.kontekst, {
+        followup: { poprzedniaTresc: row.tresc, poDniach, brief: (sekw && sekw.brief) || '' },
+      });
+      const { data: claimed, error: claimErr } = await db.from('kampanie_odbiorcy')
+        .update({ sekwencja_krok: 1, sekwencja_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq('id', row.id).eq('sekwencja_krok', 0).select('id');
+      if (claimErr) throw claimErr;
+      if (!claimed || !claimed.length) continue;
+
+      const lead = row.lead_id ? await findLeadByIdLeada(db, row.lead_id) : null;
+      await sendSmsAndLog(db, {
+        telefonDigits: row.telefon, tresc: gen.tresc,
+        senderName: kampania.nadawca, lead, displayName: row.imie,
+        zrodlo: 'kampania', metaExtra: { kampania_id: kampania.id, odbiorca_id: row.id, followup: 1 },
+      });
+      const skrot = gen.tresc.replace(/\s+/g, ' ').slice(0, 100);
+      await dopiszHistoryLog(db, row.wyceny_ids, `${warsawDateTimeStr()} - [Kampania #${kampania.id}] Follow-up SMS: "${skrot}"`);
+      wynik.wyslane++;
+    } catch (err) {
+      await db.from('kampanie_odbiorcy').update({
+        sekwencja_stop: `blad: ${err.message.slice(0, 200)}`, updated_at: new Date().toISOString(),
+      }).eq('id', row.id);
+      wynik.bledy++;
+    }
+    await sleep(SEND_SLEEP_MS);
+  }
+  return wynik;
+}
+
 async function runKampanieWorker(db, getClient, { budgetMs = 110000 } = {}) {
   const deadline = Date.now() + budgetMs;
   const raport = { kampanie: [] };
-  const { data: aktywne, error } = await db.from('kampanie').select('*').eq('status', 'active').order('id');
+  // done z sekwencją wciąż wysyła follow-upy - stąd oba statusy
+  const { data: lista, error } = await db.from('kampanie').select('*').in('status', ['active', 'done']).order('id');
   if (error) throw error;
 
-  for (const k of aktywne || []) {
+  for (const k of lista || []) {
     if (Date.now() > deadline) break;
-    const wpis = { id: k.id, nazwa: k.nazwa };
+    if (k.status === 'done' && !k.sekwencja) continue;
+    const wpis = { id: k.id, nazwa: k.nazwa, status: k.status };
     try {
-      wpis.generacja = await generujPaczke(db, k, deadline);
+      if (k.status === 'active') wpis.generacja = await generujPaczke(db, k, deadline);
+
       const hour = warsawHour();
       if (hour >= (k.godzina_od ?? 9) && hour < (k.godzina_do ?? 17)) {
-        wpis.wysylka = await wyslijPaczke(db, getClient, k, deadline);
-        if (wpis.wysylka.wyslane > 0) {
+        const dzis = await wyslaneDzisTotal(db, k.id);
+        let budzet = Math.max(0, (k.limit_dzienny || 25) - dzis);
+        if (k.status === 'active') {
+          wpis.wysylka = await wyslijPaczke(db, getClient, k, deadline, budzet);
+          budzet -= wpis.wysylka.wyslane;
+        }
+        wpis.followupy = await wyslijFollowupy(db, getClient, k, deadline, budzet);
+
+        const razem = ((wpis.wysylka && wpis.wysylka.wyslane) || 0) + wpis.followupy.wyslane;
+        if (razem > 0) {
           const { count: all } = await db.from('kampanie_odbiorcy').select('id', { count: 'exact', head: true }).eq('kampania_id', k.id);
           const { count: sent } = await db.from('kampanie_odbiorcy').select('id', { count: 'exact', head: true }).eq('kampania_id', k.id).eq('status', 'sent');
           await notifyByName(db, getClient, k.owner, {
-            title: `Kampania "${k.nazwa}": wysłano ${wpis.wysylka.wyslane}`,
-            body: `Dziś ${wpis.wysylka.dzis}/${k.limit_dzienny}, łącznie ${sent || 0}/${all || 0}`,
+            title: `Kampania "${k.nazwa}": wysłano ${razem}${wpis.followupy.wyslane ? ` (w tym ${wpis.followupy.wyslane} follow-up)` : ''}`,
+            body: `Dziś ${dzis + razem}/${k.limit_dzienny}, łącznie ${sent || 0}/${all || 0}`,
             url: '/kampanie/', tag: `kampania-${k.id}-paczka`,
           });
         }
       } else {
-        wpis.wysylka = { pozaOknem: true };
+        wpis.pozaOknem = true;
       }
 
       // koniec kampanii: nic do zrobienia (nikt nie czeka na generację/wysyłkę)
-      const { count: wToku } = await db.from('kampanie_odbiorcy')
-        .select('id', { count: 'exact', head: true })
-        .eq('kampania_id', k.id).in('status', ['pending', 'approved', 'generated']);
-      if (!wToku) {
-        const { data: aktualna } = await db.from('kampanie').select('status').eq('id', k.id).limit(1);
-        if (aktualna && aktualna[0] && aktualna[0].status === 'active') {
-          await db.from('kampanie').update({ status: 'done', updated_at: new Date().toISOString() }).eq('id', k.id);
-          const { count: sent } = await db.from('kampanie_odbiorcy').select('id', { count: 'exact', head: true }).eq('kampania_id', k.id).eq('status', 'sent');
-          await notifyByName(db, getClient, k.owner, {
-            title: `Kampania "${k.nazwa}" zakończona`,
-            body: `Wysłano łącznie ${sent || 0} wiadomości. Odpowiedzi będą spływać na karty leadów.`,
-            url: '/kampanie/', tag: `kampania-${k.id}-koniec`,
-          });
-          wpis.done = true;
+      if (k.status === 'active') {
+        const { count: wToku } = await db.from('kampanie_odbiorcy')
+          .select('id', { count: 'exact', head: true })
+          .eq('kampania_id', k.id).in('status', ['pending', 'approved', 'generated']);
+        if (!wToku) {
+          const { data: aktualna } = await db.from('kampanie').select('status').eq('id', k.id).limit(1);
+          if (aktualna && aktualna[0] && aktualna[0].status === 'active') {
+            await db.from('kampanie').update({ status: 'done', updated_at: new Date().toISOString() }).eq('id', k.id);
+            const { count: sent } = await db.from('kampanie_odbiorcy').select('id', { count: 'exact', head: true }).eq('kampania_id', k.id).eq('status', 'sent');
+            await notifyByName(db, getClient, k.owner, {
+              title: `Kampania "${k.nazwa}" zakończona`,
+              body: `Wysłano łącznie ${sent || 0} wiadomości.${k.sekwencja ? ' Sekwencja follow-upów działa dalej.' : ''}`,
+              url: '/kampanie/', tag: `kampania-${k.id}-koniec`,
+            });
+            wpis.done = true;
+          }
         }
       }
     } catch (err) {
@@ -233,4 +361,4 @@ async function runKampanieWorker(db, getClient, { budgetMs = 110000 } = {}) {
   return raport;
 }
 
-module.exports = { runKampanieWorker, generujPaczke, wyslijPaczke, warsawHour, warsawMidnightIso };
+module.exports = { runKampanieWorker, generujPaczke, wyslijPaczke, wyslijFollowupy, warsawHour, warsawMidnightIso, wyslaneDzisTotal };

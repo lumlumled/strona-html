@@ -96,13 +96,17 @@ function slowaKluczoweItems(items) {
 function zawieraKonkret(tresc, kontekst) {
   const norm = transliteruj(String(tresc || '')).toLowerCase();
   const kwota = Number(kontekst && kontekst.kwota);
-  if (Number.isFinite(kwota) && kwota > 0) {
+  const maKwote = Number.isFinite(kwota) && kwota > 0;
+  const slowa = slowaKluczoweItems(kontekst && kontekst.items);
+  // odbiorca bez wyceny (ręcznie dodany numer/lead) — nie ma konkretu,
+  // którego można wymagać; personalizację niesie brief/imię
+  if (!maKwote && !slowa.length) return true;
+  if (maKwote) {
     const calo = String(Math.round(kwota));
     if (norm.includes(calo)) return true;
     // kwoty pisane z separatorem: "3 200" / "3200 zl"
     if (calo.length > 3 && norm.replace(/[\s.,]/g, '').includes(calo)) return true;
   }
-  const slowa = slowaKluczoweItems(kontekst && kontekst.items);
   return slowa.some((w) => norm.includes(w));
 }
 
@@ -130,7 +134,7 @@ function walidujTresc(surowa, { kontekst, bezPolskich, maxSegmenty, kanal }) {
 
 // ── Prompty ──────────────────────────────────────────────────────────────────
 
-function promptGeneracji(kampania) {
+function promptGeneracji(kampania, { followup = null } = {}) {
   const kanal = kampania.kanal === 'email' ? 'e-mail' : 'SMS';
   const nadawcaLabel = String(kampania.nadawca || 'lorenzo');
   const podpis = `${nadawcaLabel.charAt(0).toUpperCase()}${nadawcaLabel.slice(1)} z LumLum`;
@@ -143,6 +147,10 @@ function promptGeneracji(kampania) {
 CEL KAMPANII (opis właściciela):
 ${kampania.brief}
 ${instrukcje ? `\nDOPRECYZOWANIE:\n${instrukcje}\n` : ''}`;
+
+  if (followup) {
+    s += `\nTO JEST FOLLOW-UP: klient dostał już wiadomość ${followup.poDniach} dni temu i NIE odpowiedział. Napisz KRÓTSZE, lekkie przypomnienie nawiązujące do tamtej wiadomości (bez powtarzania jej w całości), z wyraźną furtką "jeśli temat nieaktualny, proszę o krótkie 'nie' i nie będę więcej pisać".${followup.brief ? `\nWytyczne właściciela do follow-upu: ${followup.brief}` : ''}\nPOPRZEDNIA WIADOMOŚĆ DO TEGO KLIENTA:\n"""\n${followup.poprzedniaTresc}\n"""\n`;
+  }
 
   if (kampania.szablon) {
     s += `\nSZABLON WŁAŚCICIELA - trzymaj się jego struktury i tonu, tylko personalizuj pod klienta:
@@ -198,8 +206,8 @@ function opisOdbiorcy(kontekst) {
 
 // Generuje treść dla jednego odbiorcy. Retry z komunikatem walidatora w prompcie
 // (do 3 prób), potem rzuca — worker/endpoint decyduje o statusie failed.
-async function generujTresc(kampania, kontekst, { maxProby = 3 } = {}) {
-  const system = promptGeneracji(kampania);
+async function generujTresc(kampania, kontekst, { maxProby = 3, followup = null } = {}) {
+  const system = promptGeneracji(kampania, { followup });
   let userMsg = `Napisz wiadomość dla tego klienta:\n\n${opisOdbiorcy(kontekst)}`;
   let ostatnieBledy = [];
   for (let proba = 1; proba <= maxProby; proba++) {
@@ -229,6 +237,7 @@ Zwróć WYŁĄCZNIE JSON:
   "min_wiek_dni": liczba (ile dni musi mieć wycena; domyślnie 30 gdy nie podano),
   "limit_dzienny": liczba lub null (ile wiadomości dziennie, gdy podał),
   "instrukcje": "zwięzłe wytyczne treści wyciągnięte z opisu: co powiedzieć, jaki ton, o co zapytać - dla generatora wiadomości",
+  "sekwencja": {"po_dniach": liczba, "brief": "wytyczne treści przypomnienia"} lub null (TYLKO gdy właściciel opisał follow-up/przypomnienie po X dniach bez odpowiedzi),
   "uwagi": "wątpliwości/rzeczy niejasne w opisie lub null"
 }
 

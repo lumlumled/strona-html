@@ -129,6 +129,21 @@
     .odb-err { color: var(--bad); font-size: 0.8rem; margin-top: 0.3rem; }
     .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--text-primary); border-radius: 50%; animation: kreci 0.8s linear infinite; vertical-align: -2px; }
     @keyframes kreci { to { transform: rotate(360deg); } }
+    /* wyszukiwarka odbiorców */
+    .sz-wynik {
+      display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap;
+      border: 1px solid var(--border); border-radius: 10px;
+      padding: 0.45rem 0.65rem; margin-top: 0.4rem; cursor: pointer;
+      background: var(--surface-2); font-size: 0.87rem;
+    }
+    .sz-wynik:hover { border-color: var(--text-muted); }
+    .sz-wynik .plus { margin-left: auto; font-weight: 700; }
+    .wybrany-row {
+      display: flex; gap: 0.6rem; align-items: center;
+      border: 1px solid var(--border); border-radius: 10px;
+      padding: 0.4rem 0.65rem; font-size: 0.87rem; background: var(--surface-2);
+    }
+    .wybrany-row .usun { margin-left: auto; cursor: pointer; color: var(--bad); font-weight: 700; }
     .toast {
       position: fixed; left: 50%; bottom: 1.4rem; transform: translateX(-50%);
       background: var(--accent); color: var(--accent-contrast);
@@ -182,7 +197,24 @@
           <div style="flex:2 1 200px"><label class="km-lbl">Nazwa kampanii</label><input type="text" id="fNazwa"></div>
           <div><label class="km-lbl">Kanał</label>
             <select id="fKanal"><option value="sms">SMS</option><option value="email">E-mail</option></select></div>
-          <div><label class="km-lbl">Wyceny starsze niż (dni)</label><input type="number" id="fWiek" min="1" value="30"></div>
+        </div>
+        <div>
+          <label class="km-lbl">Odbiorcy</label>
+          <div class="km-actions">
+            <button class="small on" id="trybFiltr">Stare wyceny (filtr)</button>
+            <button class="small" id="trybReczny">Wybrani ręcznie</button>
+          </div>
+        </div>
+        <div id="trybFiltrBox">
+          <div class="km-row">
+            <div><label class="km-lbl">Wyceny starsze niż (dni)</label><input type="number" id="fWiek" min="1" value="30"></div>
+          </div>
+        </div>
+        <div id="trybRecznyBox" class="hidden">
+          <label class="km-lbl">Szukaj po numerze telefonu lub imieniu (możesz też dodać dowolny numer, np. swój do testu)</label>
+          <input type="text" id="szukajKreator" placeholder="np. 501 234 567 albo Kowalski" autocomplete="off">
+          <div id="szukajKreatorWyniki"></div>
+          <div id="wybraniList" style="display:flex;flex-direction:column;gap:0.3rem;margin-top:0.4rem"></div>
         </div>
         <div class="km-row">
           <div><label class="km-lbl">Limit dziennie</label><input type="number" id="fLimit" min="1" max="200" value="25"></div>
@@ -199,6 +231,17 @@
           </div>
         </div>
         <div><label class="km-lbl">Wytyczne treści (dla AI)</label><textarea id="fInstrukcje" style="min-height:64px"></textarea></div>
+        <div style="border-top:1px solid var(--border);padding-top:0.7rem">
+          <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+            <input type="checkbox" id="fSekw" style="width:auto">
+            <label for="fSekw" style="font-size:0.9rem;font-weight:600">Sekwencja: przypomnienie, gdy brak odpowiedzi po</label>
+            <input type="number" id="fSekwDni" min="1" max="60" value="7" style="width:70px"> dniach
+          </div>
+          <div id="fSekwBriefBox" class="hidden" style="margin-top:0.5rem">
+            <label class="km-lbl">Wytyczne przypomnienia (opcjonalnie)</label>
+            <textarea id="fSekwBrief" style="min-height:52px" placeholder="np. Krótko, jedno zdanie, z furtką 'jeśli nieaktualne, proszę o krótkie nie'"></textarea>
+          </div>
+        </div>
         <div id="popBox" class="muted">Liczenie populacji…</div>
         <div class="km-actions">
           <button class="primary" id="btnUtworz">Utwórz i wygeneruj próbkę</button>
@@ -217,6 +260,12 @@
       </div>
       <p class="muted" id="kBrief" style="margin:0.3rem 0 0"></p>
       <div class="km-actions" id="kAkcje" style="margin-top:0.7rem"></div>
+
+      <div class="km-card hidden" id="dodajBox" style="margin-top:0.8rem">
+        <h2>Dodaj odbiorcę</h2>
+        <input type="text" id="szukajKamp" placeholder="Numer telefonu lub imię (dowolny numer też zadziała, np. Twój do testu)" autocomplete="off">
+        <div id="szukajKampWyniki"></div>
+      </div>
 
       <div class="km-card hidden" id="korBox" style="margin-top:0.8rem">
         <h2>Czego się nauczyłem z Twoich poprawek</h2>
@@ -295,7 +344,44 @@
       optout: 'wypisany', skipped: 'pominięta',
     };
 
-    const state = { kampania: null, odbiorcy: [], filtr: '', interpretacja: null };
+    const state = { kampania: null, odbiorcy: [], filtr: '', interpretacja: null, tryb: 'filtr', wybrani: [] };
+
+    // ── wspólna wyszukiwarka odbiorców (kreator + widok kampanii) ──────────
+    function initSzukaj(inputId, wynikiId, onPick) {
+      const input = $(inputId);
+      const box = $(wynikiId);
+      let timer = null;
+      input.addEventListener('input', () => {
+        clearTimeout(timer);
+        const q = input.value.trim();
+        if (q.length < 3) { box.innerHTML = ''; return; }
+        timer = setTimeout(async () => {
+          try {
+            const out = await api(`/api/kampanie/szukaj?q=${encodeURIComponent(q)}`);
+            box.innerHTML = '';
+            (out.wyniki || []).forEach((w) => {
+              const el = document.createElement('div');
+              el.className = 'sz-wynik';
+              el.innerHTML = `<b>${esc(w.imie || 'bez imienia')}</b><span class="tel">${esc(w.telefon)}</span>`
+                + (w.kwota ? `<span class="muted">${money(w.kwota)}</span>` : '')
+                + (w.wycena_id ? '<span class="badge">wycena</span>' : '')
+                + (w.lead_id ? '<span class="badge">lead</span>' : '')
+                + '<span class="plus">+ dodaj</span>';
+              el.addEventListener('click', () => { onPick(w); input.value = ''; box.innerHTML = ''; });
+              box.appendChild(el);
+            });
+            if (out.goly_numer) {
+              const el = document.createElement('div');
+              el.className = 'sz-wynik';
+              el.innerHTML = `<b>Dodaj numer ${esc(out.goly_numer)}</b><span class="muted">spoza bazy (np. test do siebie)</span><span class="plus">+ dodaj</span>`;
+              el.addEventListener('click', () => { onPick({ telefon: out.goly_numer, imie: null }); input.value = ''; box.innerHTML = ''; });
+              box.appendChild(el);
+            }
+            if (!box.children.length) box.innerHTML = '<p class="muted" style="margin-top:0.4rem">Nic nie znaleziono (pełny numer doda osobę spoza bazy).</p>';
+          } catch (err) { box.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+        }, 300);
+      });
+    }
 
     function show(view) {
       ['view-lista', 'view-kreator', 'view-kampania'].forEach((v) => $(v).classList.toggle('hidden', v !== view));
@@ -346,6 +432,41 @@
     $('btnNowa').addEventListener('click', () => { show('view-kreator'); });
     $('btnKreatorWroc').addEventListener('click', loadLista);
 
+    // tryb odbiorców: filtr (stare wyceny) vs wybrani ręcznie
+    function setTryb(tryb) {
+      state.tryb = tryb;
+      $('trybFiltr').classList.toggle('on', tryb === 'filtr');
+      $('trybReczny').classList.toggle('on', tryb === 'reczny');
+      $('trybFiltrBox').classList.toggle('hidden', tryb !== 'filtr');
+      $('popBox').classList.toggle('hidden', tryb !== 'filtr');
+      $('trybRecznyBox').classList.toggle('hidden', tryb !== 'reczny');
+      if (tryb === 'reczny') renderWybrani();
+    }
+    $('trybFiltr').addEventListener('click', () => setTryb('filtr'));
+    $('trybReczny').addEventListener('click', () => setTryb('reczny'));
+
+    function renderWybrani() {
+      const box = $('wybraniList');
+      box.innerHTML = '';
+      state.wybrani.forEach((w, i) => {
+        const el = document.createElement('div');
+        el.className = 'wybrany-row';
+        el.innerHTML = `<b>${esc(w.imie || 'bez imienia')}</b><span class="tel">${esc(w.telefon)}</span>`
+          + (w.kwota ? `<span class="muted">${money(w.kwota)}</span>` : '')
+          + '<span class="usun" title="Usuń">✕</span>';
+        el.querySelector('.usun').addEventListener('click', () => { state.wybrani.splice(i, 1); renderWybrani(); });
+        box.appendChild(el);
+      });
+      if (!state.wybrani.length) box.innerHTML = '<p class="muted">Nikogo jeszcze nie wybrano.</p>';
+    }
+    initSzukaj('szukajKreator', 'szukajKreatorWyniki', (w) => {
+      if (state.wybrani.some((x) => x.telefon === w.telefon)) return toast('Ten numer już jest na liście');
+      state.wybrani.push(w);
+      renderWybrani();
+    });
+
+    $('fSekw').addEventListener('change', () => $('fSekwBriefBox').classList.toggle('hidden', !$('fSekw').checked));
+
     $('btnInterpretuj').addEventListener('click', async () => {
       const opis = $('opis').value.trim();
       if (opis.length < 10) return toast('Opisz kampanię choć kilkoma zdaniami');
@@ -359,6 +480,13 @@
         $('fWiek').value = out.interpretacja.min_wiek_dni || 30;
         if (out.interpretacja.limit_dzienny) $('fLimit').value = out.interpretacja.limit_dzienny;
         $('fInstrukcje').value = out.interpretacja.instrukcje || '';
+        const sekw = out.interpretacja.sekwencja;
+        $('fSekw').checked = Boolean(sekw && sekw.po_dniach);
+        if (sekw && sekw.po_dniach) {
+          $('fSekwDni').value = sekw.po_dniach;
+          $('fSekwBrief').value = sekw.brief || '';
+        }
+        $('fSekwBriefBox').classList.toggle('hidden', !$('fSekw').checked);
         const uw = $('interUwagi');
         if (out.interpretacja.uwagi) { uw.textContent = `⚠ ${out.interpretacja.uwagi}`; uw.classList.remove('hidden'); }
         else uw.classList.add('hidden');
@@ -387,6 +515,8 @@
 
     $('btnUtworz').addEventListener('click', async () => {
       const krok = (t) => { $('utworzKrok').textContent = t; };
+      const reczny = state.tryb === 'reczny';
+      if (reczny && !state.wybrani.length) return toast('Wybierz choć jedną osobę z wyszukiwarki');
       $('btnUtworz').disabled = true; $('utworzSpin').classList.remove('hidden');
       try {
         krok('Tworzenie kampanii…');
@@ -397,7 +527,11 @@
             brief: $('opis').value.trim(), szablon: $('szablon').value.trim() || null,
             interpretacja: { ...(state.interpretacja || {}), instrukcje: $('fInstrukcje').value.trim() },
             nadawca: $('fNadawca').value,
-            filtr: { min_wiek_dni: Number($('fWiek').value) || 30 },
+            tryb: reczny ? 'reczny' : undefined,
+            filtr: reczny ? undefined : { min_wiek_dni: Number($('fWiek').value) || 30 },
+            sekwencja: $('fSekw').checked
+              ? { po_dniach: Number($('fSekwDni').value) || 7, brief: $('fSekwBrief').value.trim() || null }
+              : null,
             limit_dzienny: Number($('fLimit').value) || 25,
             godzina_od: Number($('fOd').value) || 9,
             godzina_do: Number($('fDo').value) || 17,
@@ -405,8 +539,18 @@
             max_segmenty: Number($('fSeg').value) || 2,
           },
         });
-        krok('Zamrażanie populacji…');
-        await api(`/api/kampanie/${kampania.id}/populacja`, { method: 'POST' });
+        if (reczny) {
+          krok('Dodawanie wybranych odbiorców…');
+          for (const w of state.wybrani) {
+            await api(`/api/kampanie/${kampania.id}/odbiorcy`, {
+              method: 'POST', body: { telefon: w.telefon, imie: w.imie, lead_id: w.lead_id },
+            }).catch((err) => toast(`${w.telefon}: ${err.message}`));
+          }
+          state.wybrani = [];
+        } else {
+          krok('Zamrażanie populacji…');
+          await api(`/api/kampanie/${kampania.id}/populacja`, { method: 'POST' });
+        }
         krok('AI pisze próbkę (to chwilę trwa)…');
         await api(`/api/kampanie/${kampania.id}/probka`, { method: 'POST' });
         toast('Próbka gotowa - przejrzyj i popraw');
@@ -457,7 +601,9 @@
       const st = $('kStatus');
       st.textContent = K_STATUS[k.status] || k.status;
       st.className = `badge ${k.status}`;
-      $('kBrief').textContent = `${k.kanal === 'email' ? 'E-mail' : 'SMS'} od ${k.nadawca} · ${k.limit_dzienny}/dzień w godz. ${k.godzina_od}-${k.godzina_do} · ${k.brief.slice(0, 180)}`;
+      const sekwInfo = k.sekwencja && k.sekwencja.po_dniach ? ` · follow-up po ${k.sekwencja.po_dniach} dn. bez odpowiedzi` : '';
+      $('kBrief').textContent = `${k.kanal === 'email' ? 'E-mail' : 'SMS'} od ${k.nadawca} · ${k.limit_dzienny}/dzień w godz. ${k.godzina_od}-${k.godzina_do}${sekwInfo} · ${k.brief.slice(0, 180)}`;
+      $('dodajBox').classList.toggle('hidden', !['draft', 'sampling', 'review', 'active'].includes(k.status));
 
       // akcje wg statusu
       const akcje = $('kAkcje');
@@ -575,12 +721,16 @@
           <span class="tel">${esc(o.telefon)}</span>
           <span class="im">${esc(o.imie || '')}</span>
           ${o.kontekst && o.kontekst.kwota ? `<span class="muted">${money(o.kontekst.kwota)}</span>` : ''}
+          ${o.zrodlo === 'reczny' ? '<span class="badge">ręczny</span>' : ''}
+          ${o.sekwencja_krok > 0 ? '<span class="badge review">follow-up</span>' : ''}
           <span class="badge ${badgeCls}">${esc(O_STATUS[o.status] || o.status)}</span>
         </div>
         <div class="odb-body">
           ${o.tresc ? `<div class="odb-tresc">${esc(o.tresc)}</div>` : '<p class="muted">Treść jeszcze nie wygenerowana.</p>'}
           ${o.blad ? `<div class="odb-err">${esc(o.blad)}</div>` : ''}
           ${o.wyslano_at ? `<p class="muted" style="margin-top:0.3rem">Wysłano: ${new Date(o.wyslano_at).toLocaleString('pl-PL')}</p>` : ''}
+          ${o.sekwencja_krok > 0 && o.sekwencja_at ? `<p class="muted" style="margin-top:0.2rem">Follow-up wysłany: ${new Date(o.sekwencja_at).toLocaleString('pl-PL')}</p>` : ''}
+          ${o.sekwencja_stop ? `<p class="muted" style="margin-top:0.2rem">Sekwencja zakończona: ${esc(o.sekwencja_stop)}</p>` : ''}
           <div class="km-actions" style="margin-top:0.5rem">
             ${o.status === 'failed' ? '<button class="small odb-ponow">Ponów</button>' : ''}
             ${['pending', 'generated', 'approved'].includes(o.status) ? '<button class="small odb-optout">Nie kontaktować</button>' : ''}
@@ -603,6 +753,17 @@
       });
       return el;
     }
+
+    // wyszukiwarka w widoku kampanii — dodaje odbiorcę od razu do kampanii
+    initSzukaj('szukajKamp', 'szukajKampWyniki', async (w) => {
+      try {
+        await api(`/api/kampanie/${state.kampania.id}/odbiorcy`, {
+          method: 'POST', body: { telefon: w.telefon, imie: w.imie, lead_id: w.lead_id },
+        });
+        toast(`Dodano ${w.imie || w.telefon}`);
+        openKampania(state.kampania.id, state.filtr);
+      } catch (err) { toast(err.message); }
+    });
 
     async function prostaAkcja(path) {
       try { await api(path, { method: 'POST' }); openKampania(state.kampania.id, state.filtr); }
