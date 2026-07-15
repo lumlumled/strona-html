@@ -336,6 +336,55 @@
       color: var(--text-muted);
     }
 
+    /* Punkt rozwijalny = bąbelek, który po kliknięciu pokazuje pełną kartę
+       leada (jak case w Priorytecie dnia). Padding przenosimy z bąbelka na
+       summary/kartę, żeby border-left obejmował oba stany bez podwójnej ramki. */
+    .komentarz-bubble--rozwijalny {
+      padding: 0;
+      overflow: hidden;
+    }
+    .komentarz-summary {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.55rem;
+      padding: 0.75rem 0.95rem;
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
+      transition: background 0.15s ease;
+    }
+    .komentarz-summary::-webkit-details-marker { display: none; }
+    .komentarz-summary:hover { background: var(--border); }
+    .punkt-tekst { flex: 1 1 auto; line-height: 1.5; }
+    .komentarz-summary .chevron {
+      flex: 0 0 auto;
+      width: 1.6rem;
+      height: 1.6rem;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s ease;
+      margin-top: -0.05rem;
+    }
+    .komentarz-summary:hover .chevron { background: var(--page); }
+    .komentarz-summary .chevron::before {
+      content: '';
+      width: 0;
+      height: 0;
+      border-style: solid;
+      border-width: 0.32rem 0 0.32rem 0.44rem;
+      border-color: transparent transparent transparent var(--text-secondary);
+      transition: transform 0.15s ease;
+    }
+    .komentarz-bubble--rozwijalny[open] .komentarz-summary .chevron::before {
+      transform: rotate(90deg);
+    }
+    .punkt-karta {
+      padding: 0 0.6rem 0.4rem;
+    }
+
     /* Segmentowany pasek (Realizacja planu / Priorytety) — zamiast suchych
        liczb w kafelkach, część-do-całości widać na pierwszy rzut oka. */
     .seg-bar {
@@ -2527,16 +2576,74 @@
       list.innerHTML = '';
       punkty.forEach((p) => {
         const typ = PUNKT_ICONS[p.typ] ? p.typ : 'neutralne';
-        const bubble = document.createElement('div');
-        bubble.className = `komentarz-bubble komentarz-bubble--punkt komentarz-bubble--${typ}`;
+        const telefon = String(p.telefon || '').trim();
+
+        // Punkt bez telefonu (ogólna statystyka dnia, brak konkretnego leada) —
+        // płaski bąbelek jak dawniej, nic do rozwijania.
+        if (!telefon) {
+          const bubble = document.createElement('div');
+          bubble.className = `komentarz-bubble komentarz-bubble--punkt komentarz-bubble--${typ}`;
+          const icon = document.createElement('span');
+          icon.className = 'punkt-icon';
+          icon.textContent = PUNKT_ICONS[typ];
+          const text = document.createElement('span');
+          text.textContent = p.tekst;
+          bubble.appendChild(icon);
+          bubble.appendChild(text);
+          list.appendChild(bubble);
+          return;
+        }
+
+        // Punkt z leadem — rozwijalny jak case. Summary = ikona + zdanie +
+        // chevron; pełna karta leada dociągana leniwie przy pierwszym otwarciu
+        // (ten sam wzorzec i endpoint co zwinięte case'y w Priorytecie dnia).
+        const details = document.createElement('details');
+        details.className = `komentarz-bubble komentarz-bubble--punkt komentarz-bubble--${typ} komentarz-bubble--rozwijalny`;
+
+        const summary = document.createElement('summary');
+        summary.className = 'komentarz-summary';
         const icon = document.createElement('span');
         icon.className = 'punkt-icon';
         icon.textContent = PUNKT_ICONS[typ];
         const text = document.createElement('span');
+        text.className = 'punkt-tekst';
         text.textContent = p.tekst;
-        bubble.appendChild(icon);
-        bubble.appendChild(text);
-        list.appendChild(bubble);
+        const chevron = document.createElement('span');
+        chevron.className = 'chevron';
+        summary.appendChild(icon);
+        summary.appendChild(text);
+        summary.appendChild(chevron);
+        details.appendChild(summary);
+
+        const body = document.createElement('div');
+        body.className = 'punkt-karta';
+        body.innerHTML = '<p class="lk-empty-note">Wczytywanie…</p>';
+        details.appendChild(body);
+
+        let kartaZaladowana = false;
+        details.addEventListener('toggle', async () => {
+          if (!details.open || kartaZaladowana) return;
+          kartaZaladowana = true;
+          try {
+            const res = await fetch(`${API_BASE}/api/leady/pelny?telefon=${encodeURIComponent(telefon)}`);
+            const resBody = await res.json().catch(() => ({}));
+            if (!res.ok || !resBody.data) throw new Error(resBody.error || `Błąd ${res.status}`);
+            const karta = LeadKarta.buildBody(resBody.data, {
+              apiBase: API_BASE,
+              hostDetails: details,
+              onAkcjaChange: (digits, a) => applyAkcjaToPhone(digits, a),
+            });
+            // Karta ma własny border-top/padding (.lk-lead-body) — czyścimy
+            // klasę wrappera, żeby nie dublować ramki (jak w leadItem).
+            body.className = '';
+            body.innerHTML = '';
+            body.appendChild(karta.el);
+          } catch (err) {
+            body.innerHTML = `<p class="lk-empty-note">Nie udało się wczytać leada: ${err.message}</p>`;
+          }
+        });
+
+        list.appendChild(details);
       });
     }
 

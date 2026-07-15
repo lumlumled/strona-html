@@ -2581,7 +2581,7 @@ app.all('/api/cron/log-polaczen-closeout', async (req, res) => {
 function buildPodsumowanieSystemPrompt(dzisiaj) {
   return `Jesteś asystentem operacyjnym LumLum (premium oświetlenie LED COB, lumlum.co).
 Piszesz krótkie podsumowanie dnia dla handlowca Lorenzzo: porównanie dzisiejszego planu (Umowa) z tym, co faktycznie się wydarzyło (Log zmian).
-Generujesz WYŁĄCZNIE czysty JSON — bez tekstu przed, bez komentarza, bez markdown, bez backtick. Dokładnie ten kształt: {"punkty": [{"tekst": "...", "typ": "dobre"}]}.
+Generujesz WYŁĄCZNIE czysty JSON — bez tekstu przed, bez komentarza, bez markdown, bez backtick. Dokładnie ten kształt: {"punkty": [{"tekst": "...", "typ": "dobre", "telefon": "..."}]}.
 
 ## DANE WEJŚCIOWE
 
@@ -2597,6 +2597,7 @@ Przeczytaj \`transkrypcja\`/\`opis\` każdej rozmowy — to Twoje główne źró
 Zwróć \`punkty\`: tablicę 4-8 obiektów, każdy jeden konkretny fakt/wydarzenie z dziś, po polsku, max ~15-20 słów — krótko mimo bogatszego materiału źródłowego, bez wstępu/podpisu/liczników (te liczone osobno). Każdy obiekt ma:
 - \`tekst\`: samo zdanie, np. "Sebastian Ludyga — potwierdził 8 pasków, czeka na dobór sterownika od Antoniego."
 - \`typ\`: jedno z \`"dobre"\` (sukces/pozytywny postęp — sprzedaż, wysłana wycena, zamknięty case, konkretna deklaracja klienta), \`"problem"\` (coś utknęło/nie wyszło — nieodebrany telefon, brak odpowiedzi, zastrzeżenie klienta, przełożone bez konkretu), \`"neutralne"\` (fakt/ustalenie bez wydźwięku)
+- \`telefon\`: numer telefonu leada, którego dotyczy ten punkt — przepisz DOKŁADNIE (znak w znak) z pola \`telefon\` w PRIORYTET DZIŚ lub LOG ZMIAN. Dzięki temu punkt da się rozwinąć do pełnej karty leada. Jeśli punkt nie dotyczy jednego konkretnego leada (np. ogólna liczba/statystyka dnia), zostaw pusty string \`""\`.
 
 Priorytet: najpierw najważniejsze "dobre", potem najważniejsze "problem". Jeśli oba zestawy danych są puste, zwróć jeden punkt typu "neutralne" wprost mówiący, że nic się dziś nie wydarzyło.`;
 }
@@ -2673,10 +2674,33 @@ app.all('/api/cron/podsumowanie-dnia', async (req, res) => {
       throw new Error('AI zwróciło JSON, którego nie da się sparsować');
     }
 
+    // Telefon przy punkcie pozwala rozwinąć go we froncie do pełnej karty
+    // leada (jak case). Ufamy tylko numerom, które faktycznie podaliśmy modelowi
+    // (PRIORYTET DZIŚ + LOG ZMIAN) — dzięki temu zmyślony numer nie wygeneruje
+    // martwego "rozwiń". Dopasowanie po 9 ostatnich cyfrach (bez prefiksu 48);
+    // zapisujemy oryginalny format numeru, /api/leady/pelny i tak go normalizuje.
+    const znaneTelefony = new Map();
+    const zapamietajTelefon = (t) => {
+      const raw = String(t || '').trim();
+      const d = normalizePhoneDigits(raw).replace(/^48/, '');
+      if (d.length >= 9 && !znaneTelefony.has(d.slice(-9))) znaneTelefony.set(d.slice(-9), raw);
+    };
+    priorytetDzis.forEach((i) => zapamietajTelefon(i && i.telefon));
+    logZmianDzis.forEach((r) => zapamietajTelefon(r && r.telefon));
+    const dopasujTelefon = (t) => {
+      const d = normalizePhoneDigits(t).replace(/^48/, '');
+      if (d.length < 9) return '';
+      return znaneTelefony.get(d.slice(-9)) || '';
+    };
+
     const punkty = Array.isArray(parsedAi?.punkty)
       ? parsedAi.punkty
           .filter((p) => p && p.tekst)
-          .map((p) => ({ tekst: String(p.tekst), typ: ['dobre', 'problem', 'neutralne'].includes(p.typ) ? p.typ : 'neutralne' }))
+          .map((p) => ({
+            tekst: String(p.tekst),
+            typ: ['dobre', 'problem', 'neutralne'].includes(p.typ) ? p.typ : 'neutralne',
+            telefon: dopasujTelefon(p.telefon),
+          }))
       : [];
 
     const parsed = {
