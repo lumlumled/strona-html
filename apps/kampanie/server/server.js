@@ -16,7 +16,7 @@ const { callZadarma } = require('../../backlog-b2c/server/zadarma');
 const { zbudujPopulacje, zamrozPopulacje, telefonKlucz } = require('./populacja');
 const { cenaFinalna } = require('../../shared/server/wyceny-cena');
 const ai = require('./ai');
-const { runKampanieWorker } = require('./worker');
+const { runKampanieWorker, wyslijPaczke, wyslaneDzisTotal } = require('./worker');
 
 const app = express();
 app.use(cors());
@@ -351,6 +351,15 @@ app.patch('/api/kampanie/:id(\\d+)', async (req, res) => {
     for (const pole of EDYTOWALNE) {
       if (req.body[pole] !== undefined) patch[pole] = req.body[pole];
     }
+    // sanityzacja jak przy tworzeniu (edycja parametrów działa też na
+    // aktywnej kampanii - worker czyta świeże wartości przy każdym przebiegu)
+    if (patch.nazwa !== undefined) patch.nazwa = String(patch.nazwa || '').trim() || kampania.nazwa;
+    if (patch.limit_dzienny !== undefined) patch.limit_dzienny = Math.min(200, Math.max(1, Number(patch.limit_dzienny) || 25));
+    if (patch.godzina_od !== undefined) patch.godzina_od = Math.min(20, Math.max(6, Number(patch.godzina_od) || 9));
+    if (patch.godzina_do !== undefined) patch.godzina_do = Math.min(21, Math.max(7, Number(patch.godzina_do) || 17));
+    if (patch.max_segmenty !== undefined) patch.max_segmenty = Math.min(4, Math.max(1, Number(patch.max_segmenty) || 2));
+    if (patch.bez_polskich_znakow !== undefined) patch.bez_polskich_znakow = patch.bez_polskich_znakow !== false;
+    if (patch.nadawca !== undefined) patch.nadawca = String(patch.nadawca || 'lorenzo').trim().toLowerCase();
     if (req.body.sekwencja !== undefined) {
       patch.sekwencja = req.body.sekwencja && Number(req.body.sekwencja.po_dniach) >= 1
         ? { po_dniach: Math.min(60, Math.round(Number(req.body.sekwencja.po_dniach))), brief: String(req.body.sekwencja.brief || '').trim().slice(0, 500) || null }
@@ -693,6 +702,26 @@ app.post('/api/kampanie/:id(\\d+)/akceptuj', async (req, res) => {
       .eq('id', kampania.id).select('*');
     if (updErr) throw updErr;
     res.json({ kampania: upd[0], approved_sample: (sample || []).length, szacunek });
+  } catch (err) { handleError(res, err, 502); }
+});
+
+// "Wyślij teraz": natychmiastowa paczka bez czekania na cron i OKNO GODZIN
+// (świadome kliknięcie właściciela). Limit dzienny dalej obowiązuje -
+// to bezpiecznik przed zalaniem ludzi; wysyła zatwierdzone treści
+// (approved), pending dogeneruje worker w tle.
+app.post('/api/kampanie/:id(\\d+)/wyslij-teraz', async (req, res) => {
+  try {
+    const db = getClient();
+    const kampania = await pobierzKampanie(db, req.params.id);
+    if (!kampania) return res.status(404).json({ error: 'Nie ma takiej kampanii' });
+    if (kampania.status !== 'active') return res.status(400).json({ error: 'Wysłać od razu można tylko aktywną kampanię (najpierw Akceptuj)' });
+    const dzis = await wyslaneDzisTotal(db, kampania.id);
+    const budzet = Math.max(0, (kampania.limit_dzienny || 25) - dzis);
+    if (!budzet) return res.status(400).json({ error: `Limit dzienny wyczerpany (${dzis}/${kampania.limit_dzienny}) - zwiększ go w Ustawieniach albo poczekaj do jutra` });
+    const wynik = await wyslijPaczke(db, getClient, kampania, Date.now() + 110000, budzet, { maxBatch: 30 });
+    const stat = await liczniki(db, [kampania.id]);
+    const l = stat.get(kampania.id);
+    res.json({ ok: true, ...wynik, dzis: dzis + wynik.wyslane, limit: kampania.limit_dzienny, w_kolejce: (l.approved || 0) + (l.pending || 0) + (l.generated || 0) });
   } catch (err) { handleError(res, err, 502); }
 });
 

@@ -176,7 +176,7 @@ async function generujPaczke(db, kampania, deadline) {
 // Wysyłka: approved → sent z limitem dziennym. Claim atomowy PRZED wysyłką
 // (update where status='approved') - podwójny SMS jest gorszy niż fałszywy
 // "sent"; błąd Zadarmy po claimie ląduje jako failed z opisem.
-async function wyslijPaczke(db, getClient, kampania, deadline, budzet) {
+async function wyslijPaczke(db, getClient, kampania, deadline, budzet, { maxBatch = SEND_BATCH } = {}) {
   const wynik = { wyslane: 0, pominiete: 0, bledy: 0 };
   if (budzet <= 0) return wynik;
 
@@ -186,7 +186,7 @@ async function wyslijPaczke(db, getClient, kampania, deadline, budzet) {
     .select('*').eq('kampania_id', kampania.id).eq('status', 'approved')
     .eq('podejrzany', false)
     .order('sample', { ascending: false }).order('id', { ascending: true })
-    .limit(Math.min(budzet, SEND_BATCH));
+    .limit(Math.min(budzet, maxBatch));
   if (error) throw error;
 
   // nadawca maila: user o nazwie = kampania.nadawca (skrzynka z kom_mailboxes)

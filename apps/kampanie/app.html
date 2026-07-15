@@ -272,6 +272,41 @@
       <p class="muted" id="kBrief" style="margin:0.3rem 0 0"></p>
       <div class="km-actions" id="kAkcje" style="margin-top:0.7rem"></div>
 
+      <div class="km-card hidden" id="ustawieniaBox" style="margin-top:0.8rem">
+        <h2>Ustawienia kampanii</h2>
+        <div class="km-row">
+          <div style="flex:2 1 180px"><label class="km-lbl">Nazwa</label><input type="text" id="uNazwa"></div>
+          <div><label class="km-lbl">Limit dziennie</label><input type="number" id="uLimit" min="1" max="200"></div>
+          <div><label class="km-lbl">Wysyłka od (godz.)</label><input type="number" id="uOd" min="6" max="20"></div>
+          <div><label class="km-lbl">do (godz.)</label><input type="number" id="uDo" min="7" max="21"></div>
+        </div>
+        <div class="km-row">
+          <div><label class="km-lbl">Nadawca</label>
+            <select id="uNadawca"><option value="lorenzo">Lorenzo</option><option value="antoni">Antoni</option></select></div>
+          <div><label class="km-lbl">Maks. segmentów SMS</label><input type="number" id="uSeg" min="1" max="4"></div>
+          <div style="flex:2 1 200px;display:flex;align-items:center;gap:0.5rem;padding-top:1.1rem">
+            <input type="checkbox" id="uBezPl" style="width:auto">
+            <label for="uBezPl" style="font-size:0.84rem">bez polskich znaków</label>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:0.6rem">
+          <input type="checkbox" id="uSekw" style="width:auto">
+          <label for="uSekw" style="font-size:0.88rem;font-weight:600">Sekwencja: przypomnienie po</label>
+          <input type="number" id="uSekwDni" min="1" max="60" value="7" style="width:70px"> dniach bez odpowiedzi
+        </div>
+        <textarea id="uSekwBrief" style="min-height:44px" placeholder="Wytyczne przypomnienia (opcjonalnie)"></textarea>
+        <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:0.6rem">
+          <input type="checkbox" id="uRabat" style="width:auto">
+          <label for="uRabat" style="font-size:0.88rem;font-weight:600">Rabat czasowy:</label>
+          <input type="number" id="uRabatWartosc" min="1" value="15" style="width:80px">
+          <select id="uRabatTyp" style="width:auto"><option value="procent">%</option><option value="kwota">zł</option></select>
+          <span style="font-size:0.88rem">ważny do</span>
+          <input type="date" id="uRabatDo" style="width:auto">
+        </div>
+        <p class="muted">Zmiany działają od kolejnych wysyłek. Już wygenerowane treści się nie zmieniają - w przeglądzie próbki użyj „Przegeneruj".</p>
+        <div class="km-actions"><button class="primary" id="uZapisz">Zapisz ustawienia</button></div>
+      </div>
+
       <div class="km-card hidden" id="dodajBox" style="margin-top:0.8rem">
         <h2>Dodaj odbiorcę</h2>
         <input type="text" id="szukajKamp" placeholder="Numer telefonu lub imię (dowolny numer też zadziała, np. Twój do testu)" autocomplete="off">
@@ -629,6 +664,7 @@
       const st = $('kStatus');
       st.textContent = K_STATUS[k.status] || k.status;
       st.className = `badge ${k.status}`;
+      $('ustawieniaBox').classList.add('hidden');
       const sekwInfo = k.sekwencja && k.sekwencja.po_dniach ? ` · follow-up po ${k.sekwencja.po_dniach} dn. bez odpowiedzi` : '';
       const rabatInfo = k.rabat && k.rabat.wartosc ? ` · rabat ${k.rabat.wartosc}${k.rabat.typ === 'kwota' ? ' zł' : '%'} do ${k.rabat.wazny_do}` : '';
       $('kBrief').textContent = `${k.kanal === 'email' ? 'E-mail' : 'SMS'} od ${k.nadawca} · ${k.limit_dzienny}/dzień w godz. ${k.godzina_od}-${k.godzina_do}${sekwInfo}${rabatInfo} · ${k.brief.slice(0, 180)}`;
@@ -649,12 +685,20 @@
         btn('Akceptuj i wystartuj', 'primary', akceptuj);
         btn('Przegeneruj próbkę z poprawkami', '', przegeneruj);
       }
-      if (k.status === 'active') btn('Wstrzymaj', '', () => prostaAkcja(`/api/kampanie/${k.id}/pauza`));
+      if (k.status === 'active') {
+        btn('Wyślij teraz', 'primary', wyslijTeraz);
+        btn('Wstrzymaj', '', () => prostaAkcja(`/api/kampanie/${k.id}/pauza`));
+      }
       if (k.status === 'paused') btn('Wznów', 'primary', () => prostaAkcja(`/api/kampanie/${k.id}/wznow`));
       if (k.status === 'sampling') btn('Wygeneruj próbkę', 'primary', async () => {
         toast('AI pisze próbkę…');
         try { await api(`/api/kampanie/${k.id}/probka`, { method: 'POST' }); openKampania(k.id); }
         catch (err) { toast(err.message); }
+      });
+      if (k.status !== 'archived') btn('Ustawienia', '', () => {
+        const box = $('ustawieniaBox');
+        if (box.classList.contains('hidden')) { fillUstawienia(k); box.classList.remove('hidden'); box.scrollIntoView({ behavior: 'smooth' }); }
+        else box.classList.add('hidden');
       });
       btn('Usuń kampanię', '', async () => {
         const ostrzezenie = k.status === 'active'
@@ -813,6 +857,63 @@
         catch (err) { toast(err.message); }
       });
       return el;
+    }
+
+    // ── ustawienia kampanii (edycja parametrów po utworzeniu) ──────────────
+    function fillUstawienia(k) {
+      $('uNazwa').value = k.nazwa || '';
+      $('uLimit').value = k.limit_dzienny || 25;
+      $('uOd').value = k.godzina_od ?? 9;
+      $('uDo').value = k.godzina_do ?? 17;
+      $('uNadawca').value = k.nadawca || 'lorenzo';
+      $('uSeg').value = k.max_segmenty || 2;
+      $('uBezPl').checked = k.bez_polskich_znakow !== false;
+      $('uSekw').checked = Boolean(k.sekwencja && k.sekwencja.po_dniach);
+      $('uSekwDni').value = (k.sekwencja && k.sekwencja.po_dniach) || 7;
+      $('uSekwBrief').value = (k.sekwencja && k.sekwencja.brief) || '';
+      $('uRabat').checked = Boolean(k.rabat && k.rabat.wartosc);
+      $('uRabatWartosc').value = (k.rabat && k.rabat.wartosc) || 15;
+      $('uRabatTyp').value = (k.rabat && k.rabat.typ) || 'procent';
+      $('uRabatDo').value = (k.rabat && k.rabat.wazny_do) || '';
+    }
+    $('uZapisz').addEventListener('click', async () => {
+      $('uZapisz').disabled = true;
+      try {
+        await api(`/api/kampanie/${state.kampania.id}`, {
+          method: 'PATCH',
+          body: {
+            nazwa: $('uNazwa').value,
+            limit_dzienny: Number($('uLimit').value),
+            godzina_od: Number($('uOd').value),
+            godzina_do: Number($('uDo').value),
+            nadawca: $('uNadawca').value,
+            max_segmenty: Number($('uSeg').value),
+            bez_polskich_znakow: $('uBezPl').checked,
+            sekwencja: $('uSekw').checked
+              ? { po_dniach: Number($('uSekwDni').value) || 7, brief: $('uSekwBrief').value.trim() || null }
+              : null,
+            rabat: $('uRabat').checked
+              ? { typ: $('uRabatTyp').value, wartosc: Number($('uRabatWartosc').value), wazny_do: $('uRabatDo').value }
+              : null,
+          },
+        });
+        toast('Ustawienia zapisane');
+        $('ustawieniaBox').classList.add('hidden');
+        openKampania(state.kampania.id, state.filtr);
+      } catch (err) { toast(err.message); }
+      $('uZapisz').disabled = false;
+    });
+
+    // "Wyślij teraz": paczka od ręki, bez czekania na cron/okno godzin
+    async function wyslijTeraz() {
+      const k = state.kampania;
+      if (!confirm(`Wysłać teraz zatwierdzone wiadomości kampanii "${k.nazwa}"?\n(w ramach limitu dziennego ${k.limit_dzienny}, bez czekania na godziny ${k.godzina_od}-${k.godzina_do})`)) return;
+      toast('Wysyłam…');
+      try {
+        const out = await api(`/api/kampanie/${k.id}/wyslij-teraz`, { method: 'POST' });
+        toast(`Wysłano ${out.wyslane} (dziś ${out.dzis}/${out.limit}), w kolejce jeszcze ${out.w_kolejce}`);
+        openKampania(k.id, state.filtr);
+      } catch (err) { toast(err.message); }
     }
 
     // uwagi zbiorcze: jedna uwaga trafia do reguł generatora (wszystkie

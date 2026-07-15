@@ -88,6 +88,13 @@ Decyzje Antoniego (2026-07-15):
       ⚠️ ZADARMA BLOKUJE WSZYSTKIE LINKI w SMS-ach na PL (sprawdzone na żywo,
       też goła domena) - link do formularza dokleja się TYLKO w kampaniach
       mailowych; SMS-owy walidator odrzuca URL-e z treści. Testy: e2e 21 + DOM 39.
+- [x] v5 (2026-07-15): edycja parametrów kampanii po utworzeniu (karta
+      „Ustawienia" w widoku: nazwa, limit, godziny, nadawca, segmenty,
+      sekwencja, rabat; PATCH z sanityzacją/clampami; działa też na aktywnej -
+      worker czyta świeże wartości co przebieg) + „Wyślij teraz" (POST
+      :id/wyslij-teraz: paczka od ręki Z POMINIĘCIEM okna godzin, limit
+      dzienny dalej obowiązuje jako bezpiecznik, maxBatch 30, tylko active).
+      Testy: e2e 14 + DOM 47.
 - [ ] Etap 2: ODBIÓR odpowiedzi SMS - ⚠ webhooki Zadarmy: sprawdzić, czy
       kategoria 'sms' (POST /v1/pbx/webhooks/url/) współdzieli URL z webhookiem
       rozmów (backlog-b2c/api/webhooks/zadarma) - NIE nadpisywać w ciemno!
