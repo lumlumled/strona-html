@@ -203,7 +203,30 @@ function registerKontaktEndpoints(app, { getClient, requireView, requireEdit }) 
         }
       }
 
-      if (!customers.length) return res.json({ customers: [], messages: [] });
+      // Dane dla composera (Etap 3-4) liczone ZAWSZE — także gdy lead nie ma
+      // jeszcze klienta w komunikatorze (dziś to większość leadów: zero
+      // tożsamości phone). Właśnie brak tej sekcji na wczesnym returnie
+      // chował composer na kartach bez dopasowania (bug 2026-07-14).
+      // Reply-in-thread tylko gdy wątek należy do skrzynki piszącego —
+      // wysyłka z cudzej skrzynki byłaby podszyciem, wtedy nowy mail.
+      let wysylka = null;
+      try {
+        const userBox = req.user ? await gmail.mailboxForUser(db, req.user.id) : null;
+        const mailInfo = await findMailThread(db, customers.map((c) => c.id));
+        const wWatku = Boolean(mailInfo && userBox && mailInfo.thread.meta.gmail.mailbox === userBox.email);
+        wysylka = {
+          mail: {
+            skrzynka: userBox ? userBox.email : null,
+            tryb: wWatku ? 'watek' : 'nowy',
+            temat: wWatku ? mailInfo.temat : null,
+          },
+          sms: { skonfigurowany: Boolean(process.env.ZADARMA_API_KEY && process.env.ZADARMA_API_SECRET) },
+        };
+      } catch (err) {
+        console.warn('kontakt: info o wysyłce niedostępne:', err.message);
+      }
+
+      if (!customers.length) return res.json({ customers: [], messages: [], wysylka });
 
       const { data: threads, error: thErr } = await db
         .from('kom_threads')
@@ -231,27 +254,6 @@ function registerKontaktEndpoints(app, { getClient, requireView, requireEdit }) 
           // meta.kind: 'comment' = publiczny komentarz FB/IG/TikTok (nie DM).
           kind: (m.meta && m.meta.kind) || null,
         }));
-      }
-
-      // Dane dla composera (Etap 3-4): skrzynka zalogowanego użytkownika,
-      // tryb wysyłki maila (odpowiedź w wątku vs nowy) i gotowość SMS.
-      // Reply-in-thread tylko gdy wątek należy do skrzynki piszącego —
-      // wysyłka z cudzej skrzynki byłaby podszyciem, wtedy nowy mail.
-      let wysylka = null;
-      try {
-        const userBox = req.user ? await gmail.mailboxForUser(db, req.user.id) : null;
-        const mailInfo = await findMailThread(db, customers.map((c) => c.id));
-        const wWatku = Boolean(mailInfo && userBox && mailInfo.thread.meta.gmail.mailbox === userBox.email);
-        wysylka = {
-          mail: {
-            skrzynka: userBox ? userBox.email : null,
-            tryb: wWatku ? 'watek' : 'nowy',
-            temat: wWatku ? mailInfo.temat : null,
-          },
-          sms: { skonfigurowany: Boolean(process.env.ZADARMA_API_KEY && process.env.ZADARMA_API_SECRET) },
-        };
-      } catch (err) {
-        console.warn('kontakt: info o wysyłce niedostępne:', err.message);
       }
 
       res.json({
