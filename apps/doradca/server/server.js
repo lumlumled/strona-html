@@ -173,50 +173,58 @@ app.delete('/api/doradca/chaty/:id', auth.requireAdmin, async (req, res) => {
 });
 
 // ── Klikalny case: resolver leada/wyceny → streszczenie + link do panelu ─────
+// Resolver leada/wyceny → znormalizowany obiekt (imię, telefon, kwota, status,
+// link). Współdzielony przez pigułkę case ORAZ akcję delegowania (żeby zadanie
+// na backlogu miało prawdziwe dane kontaktowe, nie goły tekst). Zwraca null gdy
+// nie znaleziono.
+async function resolveCase(db, type, id) {
+  const links = panelLinks();
+  if (type === 'wycena') {
+    const { data, error } = await db.from('wyceny')
+      .select('id,imie_nazwisko,first_name,last_name,kwota_proponowana_brutto,status,owner,telefon_e164,telefon_digits,created_at,lead_id')
+      .eq('id', id).limit(1);
+    if (error) throw error;
+    const w = (data || [])[0];
+    if (!w) return null;
+    const name = w.imie_nazwisko || [w.first_name, w.last_name].filter(Boolean).join(' ') || null;
+    const wiek = w.created_at ? Math.floor((Date.now() - new Date(w.created_at).getTime()) / 86400000) : null;
+    // Link: karta leada w CRM (pokazuje lead + jego wyceny) gdy znamy lead_id,
+    // inaczej panel Wyceny.
+    const link = w.lead_id ? `${links.crm}?lead=${encodeURIComponent(w.lead_id)}` : links.wyceny;
+    return {
+      type: 'wycena', id: w.id, tytul: name || `Wycena #${w.id}`, imie: name,
+      kwota: Number(w.kwota_proponowana_brutto) || null, status: w.status || null,
+      owner: w.owner || null, telefon: w.telefon_e164 || w.telefon_digits || null,
+      wiek_dni: wiek, created_at: w.created_at || null, lead_id: w.lead_id || null,
+      link, link_label: w.lead_id ? 'Otwórz lead w CRM' : 'Otwórz w Wycenach',
+    };
+  }
+  const { data, error } = await db.from('Leady B2C')
+    .select('"ID Leada","Name","Phone number","Owner","Deal stage","Historia rozmów"')
+    .eq('ID Leada', id).limit(1);
+  if (error) throw error;
+  const l = (data || [])[0];
+  if (!l) return null;
+  const hist = l['Historia rozmów'];
+  const histStr = typeof hist === 'string' ? hist : (hist ? JSON.stringify(hist) : '');
+  const ostatnia = histStr.trim() ? histStr.trim().split('\n').filter(Boolean).slice(-1)[0].slice(0, 240) : null;
+  return {
+    type: 'lead', id: l['ID Leada'], tytul: l['Name'] || `Lead #${l['ID Leada']}`, imie: l['Name'] || null,
+    status: l['Deal stage'] || null, owner: l['Owner'] || null, telefon: l['Phone number'] || null,
+    ostatnia_notatka: ostatnia, kwota: null,
+    link: `${links.crm}?lead=${encodeURIComponent(l['ID Leada'])}`, link_label: 'Otwórz lead w CRM',
+  };
+}
+
 // Zasila pigułkę ⟦case:TYP:ID⟧ w odpowiedzi doradcy. Read-only.
 app.get('/api/doradca/case', auth.requireAdmin, async (req, res) => {
   try {
     const type = String(req.query.type || '');
     const id = String(req.query.id || '').trim();
     if (!id || (type !== 'wycena' && type !== 'lead')) return res.status(400).json({ error: 'Zły typ lub id' });
-    const db = getClient();
-    const links = panelLinks();
-
-    if (type === 'wycena') {
-      const { data, error } = await db.from('wyceny')
-        .select('id,imie_nazwisko,first_name,last_name,kwota_proponowana_brutto,status,owner,telefon_e164,telefon_digits,created_at,lead_id')
-        .eq('id', id).limit(1);
-      if (error) throw error;
-      const w = (data || [])[0];
-      if (!w) return res.status(404).json({ error: `Nie znaleziono wyceny #${id}` });
-      const name = w.imie_nazwisko || [w.first_name, w.last_name].filter(Boolean).join(' ') || null;
-      const wiek = w.created_at ? Math.floor((Date.now() - new Date(w.created_at).getTime()) / 86400000) : null;
-      // Link: karta leada w CRM (pokazuje lead + jego wyceny) gdy znamy lead_id,
-      // inaczej panel Wyceny.
-      const link = w.lead_id ? `${links.crm}?lead=${encodeURIComponent(w.lead_id)}` : links.wyceny;
-      return res.json({
-        type, id: w.id, tytul: name || `Wycena #${w.id}`,
-        kwota: Number(w.kwota_proponowana_brutto) || null, status: w.status || null,
-        owner: w.owner || null, telefon: w.telefon_e164 || w.telefon_digits || null,
-        wiek_dni: wiek, link, link_label: w.lead_id ? 'Otwórz lead w CRM' : 'Otwórz w Wycenach',
-      });
-    }
-
-    const { data, error } = await db.from('Leady B2C')
-      .select('"ID Leada","Name","Phone number","Owner","Deal stage","Historia rozmów"')
-      .eq('ID Leada', id).limit(1);
-    if (error) throw error;
-    const l = (data || [])[0];
-    if (!l) return res.status(404).json({ error: `Nie znaleziono leada #${id}` });
-    const hist = l['Historia rozmów'];
-    const histStr = typeof hist === 'string' ? hist : (hist ? JSON.stringify(hist) : '');
-    const ostatnia = histStr.trim() ? histStr.trim().split('\n').filter(Boolean).slice(-1)[0].slice(0, 240) : null;
-    return res.json({
-      type, id: l['ID Leada'], tytul: l['Name'] || `Lead #${l['ID Leada']}`,
-      status: l['Deal stage'] || null, owner: l['Owner'] || null, telefon: l['Phone number'] || null,
-      ostatnia_notatka: ostatnia,
-      link: `${links.crm}?lead=${encodeURIComponent(l['ID Leada'])}`, link_label: 'Otwórz lead w CRM',
-    });
+    const d = await resolveCase(getClient(), type, id);
+    if (!d) return res.status(404).json({ error: `Nie znaleziono ${type === 'wycena' ? 'wyceny' : 'leada'} #${id}` });
+    res.json(d);
   } catch (err) { res.status(502).json({ error: err.message }); }
 });
 
@@ -231,6 +239,14 @@ function warsawTodayKeys() {
   const s = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Warsaw', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const [y, m, d] = s.split('-');
   return { iso: `${y}-${m}-${d}`, pl: `${d}.${m}.${y}` };
+}
+function toPlDate(iso) {
+  if (!iso) return '';
+  try {
+    const s = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Warsaw', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+    const [y, m, d] = s.split('-');
+    return `${d}.${m}.${y}`;
+  } catch { return ''; }
 }
 function parseDoc(v) {
   if (!v) return null;
@@ -247,12 +263,37 @@ function maxLp(json) {
 
 app.post('/api/doradca/akcja', auth.requireAdmin, async (req, res) => {
   try {
-    const { tytul, szczegol, owner } = req.body || {};
-    const tytulClean = String(tytul || '').trim();
-    if (!tytulClean) return res.status(400).json({ error: 'Brak tytułu zadania' });
-    const ownerClean = (String(owner || '').trim() || process.env.DEFAULT_HANDLOWIEC || 'Lorenzo');
+    const b = req.body || {};
+    const ownerClean = (String(b.owner || '').trim() || process.env.DEFAULT_HANDLOWIEC || 'Lorenzo');
+    const opis = String(b.opis != null ? b.opis : (b.szczegol || '')).trim();
+    const caseType = (b.case_type === 'wycena' || b.case_type === 'lead') ? b.case_type : null;
+    const caseId = b.case_id != null ? String(b.case_id).trim() : '';
 
     const db = getClient();
+
+    // Bąbelek zadania. Z konkretnego case'a bierzemy PRAWDZIWE imię/telefon/kwotę
+    // — renderuje się na backlogu jak zwykły lead: klikalny telefon (zadzwoń),
+    // kwota, rozwijalny opis, i wpina się w istniejącą maszynerię "wynik telefonu"
+    // (log rozmowy per numer). Bez case'a = goły tekst (prompt tego pilnuje).
+    let base = null;
+    if (caseType && caseId) {
+      const cd = await resolveCase(db, caseType, caseId).catch(() => null);
+      if (cd) {
+        base = { imie: cd.imie || cd.tytul, telefon: cd.telefon || '', opis, status: 'Do domknięcia' };
+        if (caseType === 'wycena') {
+          base.ma_wycene = true;
+          base.kwota = cd.kwota != null ? cd.kwota : '';
+          base.id_wyceny = cd.id;
+          base.data_wyceny = toPlDate(cd.created_at);
+        }
+      }
+    }
+    if (!base) {
+      const tytul = String(b.tytul || '').trim();
+      if (!tytul && !opis) return res.status(400).json({ error: 'Podaj case (wycena/lead) albo przynajmniej tytuł zadania.' });
+      base = { imie: tytul || opis, telefon: '', opis: tytul ? opis : '', status: 'Nowy' };
+    }
+
     const { iso, pl } = warsawTodayKeys();
     let row = null; let dataValue = iso;
     for (const key of [iso, pl]) {
@@ -272,10 +313,16 @@ app.post('/api/doradca/akcja', auth.requireAdmin, async (req, res) => {
       const lp = maxLp(json) + 1;
       if (lpAssigned == null) lpAssigned = lp;
       const task = {
-        lp, imie: tytulClean, opis: String(szczegol || '').trim(), telefon: '',
-        status: 'Nowy', owner: ownerClean, zrodlo: 'doradca',
+        lp, imie: base.imie, telefon: base.telefon || '', opis: base.opis || '',
+        status: base.status || 'Nowy', owner: ownerClean, zrodlo: 'doradca',
         zamkniete: 0, zadzwonil_dzis: false, dodany_o: nowIso,
       };
+      if (base.ma_wycene) {
+        task.ma_wycene = true;
+        task.kwota = base.kwota;
+        task.id_wyceny = base.id_wyceny;
+        if (base.data_wyceny) task.data_wyceny = base.data_wyceny;
+      }
       if (!Array.isArray(json.priorytet_dzis)) json.priorytet_dzis = [];
       json.priorytet_dzis.unshift(task);
       patch[col] = wasString ? JSON.stringify(json) : json;
@@ -291,9 +338,10 @@ app.post('/api/doradca/akcja', auth.requireAdmin, async (req, res) => {
       const { data: users } = await db.from('app_users').select('id,name').eq('active', true);
       const target = (users || []).find((u) => String(u.name || '').trim().toLowerCase() === ownerClean.toLowerCase());
       if (target) {
+        const bodyTxt = base.imie + (base.telefon ? ' · ' + base.telefon : '') + (opis ? ' — ' + opis : '');
         await notifyUser(getClient, target.id, {
           title: 'Nowe zadanie od doradcy',
-          body: tytulClean + (String(szczegol || '').trim() ? ' — ' + String(szczegol).trim() : ''),
+          body: bodyTxt,
           url: '/backlog-b2c/',
           tag: `doradca-akcja-${dataValue}-${lpAssigned}`,
         });
@@ -301,7 +349,7 @@ app.post('/api/doradca/akcja', auth.requireAdmin, async (req, res) => {
       }
     } catch (e) { console.warn('doradca akcja push:', e.message); }
 
-    res.json({ ok: true, lp: lpAssigned, owner: ownerClean, data: dataValue, powiadomiono });
+    res.json({ ok: true, lp: lpAssigned, owner: ownerClean, imie: base.imie, telefon: base.telefon || null, data: dataValue, powiadomiono });
   } catch (err) { res.status(502).json({ error: err.message }); }
 });
 

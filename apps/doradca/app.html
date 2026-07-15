@@ -64,6 +64,7 @@
   .akcja{display:block;margin:9px 0;background:rgba(242,180,85,.06);border:1px solid rgba(242,180,85,.28);border-radius:12px;padding:10px 12px;white-space:normal}
   .akcja .akcja-label{display:block;color:var(--ink);font-size:14px;line-height:1.5;margin-bottom:8px}
   .akcja .akcja-label b{color:var(--accent)}
+  .akcja .akcja-case{color:var(--ink-faint);font-size:.88em;white-space:nowrap}
   .akcja-btn{background:var(--accent);color:#1a1408;border:none;border-radius:9px;padding:8px 13px;font-size:13.5px;font-weight:700;cursor:pointer;font-family:inherit}
   .akcja-btn:hover{background:var(--accent-deep)}
   .akcja-btn:disabled{cursor:default;opacity:.9}
@@ -273,13 +274,22 @@
     return '<span class="case-pill" data-type="'+typ+'" data-id="'+escAttr(id)+'" role="button" tabindex="0">'+label+' <span class="cp-chev">▾</span></span>';
   }
   function akcjaWidget(body){
-    var parts=body.split('|'), owner='Lorenzo', title='', detail='';
-    var om=/^\s*owner\s*=\s*(.+)$/i.exec(parts[0]||'');
-    if(om){ owner=(om[1].trim())||'Lorenzo'; title=(parts[1]||'').trim(); detail=parts.slice(2).join('|').trim(); }
-    else { title=(parts[0]||'').trim(); detail=parts.slice(1).join('|').trim(); }
-    if(!title) return null;
-    return '<span class="akcja"><span class="akcja-label">📌 <b>'+esc(title)+'</b>'+(detail?' — '+esc(detail):'')+'</span>'
-      +'<button class="akcja-btn" type="button" data-owner="'+escAttr(owner)+'" data-tytul="'+escAttr(title)+'" data-szczegol="'+escAttr(detail)+'">→ Wyślij do '+esc(owner)+'</button></span>';
+    // Segmenty | : owner=X, case=wycena|lead:ID, reszta = opis (kilka słów).
+    var owner='Lorenzo', caseType='', caseId='', descParts=[];
+    body.split('|').forEach(function(seg){
+      var p=seg.trim(); if(!p) return;
+      var om=/^owner\s*=\s*(.+)$/i.exec(p);
+      var cm=/^case\s*=\s*(wycena|lead)\s*:\s*(.+)$/i.exec(p);
+      if(om){ owner=om[1].trim()||'Lorenzo'; }
+      else if(cm){ caseType=cm[1].toLowerCase(); caseId=cm[2].trim(); }
+      else { descParts.push(p); }
+    });
+    var opis=descParts.join(' — ');
+    if(!opis && !caseId) return null;
+    var caseChip = caseId ? (caseType==='wycena'?'wyc. #':'lead #')+esc(caseId) : '';
+    var head = opis ? esc(opis) : ('Domknij '+caseChip);
+    return '<span class="akcja"><span class="akcja-label">📌 <b>'+head+'</b>'+(caseChip?' <span class="akcja-case">'+caseChip+'</span>':'')+'</span>'
+      +'<button class="akcja-btn" type="button" data-owner="'+escAttr(owner)+'" data-case-type="'+escAttr(caseType)+'" data-case-id="'+escAttr(caseId)+'" data-opis="'+escAttr(opis)+'">→ Wyślij do '+esc(owner)+'</button></span>';
   }
   var TOKEN_RE=/⟦(case|akcja):([^⟧]*)⟧/g;
   function renderRich(raw, streaming){
@@ -350,9 +360,9 @@
     if(btn.disabled) return;
     btn.disabled=true; btn.textContent='Wysyłam…'; btn.classList.remove('fail');
     try{
-      var res=await fetch(API+'/api/doradca/akcja',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({owner:btn.dataset.owner,tytul:btn.dataset.tytul,szczegol:btn.dataset.szczegol})});
+      var res=await fetch(API+'/api/doradca/akcja',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({owner:btn.dataset.owner,case_type:btn.dataset.caseType,case_id:btn.dataset.caseId,opis:btn.dataset.opis})});
       var d=await res.json(); if(!res.ok||!d.ok) throw new Error(d.error||('HTTP '+res.status));
-      btn.classList.add('done'); btn.textContent='✓ Na backlogu '+(d.owner||btn.dataset.owner)+(d.powiadomiono?' · push':'');
+      btn.classList.add('done'); btn.textContent='✓ Na backlogu '+(d.owner||btn.dataset.owner)+(d.telefon?(' · '+d.telefon):'')+(d.powiadomiono?' · push':'');
     }catch(err){ btn.disabled=false; btn.textContent='⚠ Nie poszło — kliknij, by spróbować'; btn.classList.add('fail'); btn.title=err.message; }
   }
 

@@ -42,11 +42,12 @@ Zaraz po nazwaniu go wstaw znacznik: \`⟦case:wycena:ID⟧\` albo \`⟦case:lea
 - ID bierzesz WYŁĄCZNIE z danych ze \`stats()\` (np. \`top_do_dzwonienia[].id\`, radar, martwe wyceny). NIGDY nie zmyślaj ID — brak pewnego ID = nie wstawiaj znacznika.
 - Przykład: „Domknij **wycenę 7,4k** ⟦case:wycena:1833⟧ — najstarsza martwa."
 
-### Przycisk delegowania — gdy proponujesz zadanie dla kogoś (najczęściej Lorenza)
-Wstaw znacznik w osobnej linii: \`⟦akcja:owner=Lorenzo|Krótki tytuł zadania|szczegół i termin⟧\`. Panel zrobi z tego przycisk „Wyślij do Lorenzo" — po kliknięciu zadanie ląduje na górze planu dnia (priorytet_dzis) i leci push na telefon Lorenza.
-- Tytuł = imperatyw, konkret (np. „Zadzwoń do Kowalskiego, wyc. 1868"). Szczegół = po co / do kiedy.
-- Dawaj to TYLKO dla realnie delegowalnych, jednoznacznych zadań — nie dla każdej myśli. Owner domyślnie Lorenzo; Antoni tylko gdy wyraźnie o to prosi.
-- Możesz połączyć z case'em: „⟦case:wycena:1868⟧ ⟦akcja:owner=Lorenzo|Domknij wycenę 1868|kwota 2,4k, telefon dziś do 14⟧".
+### Przycisk delegowania — ZAWSZE per KONKRETNY case (z telefonem)
+Gdy oddajesz coś Lorenzowi, wstaw w osobnej linii: \`⟦akcja:owner=Lorenzo|case=wycena:ID|kilka słów: dlaczego i co zrobić⟧\` (albo \`case=lead:ID\`). Panel zrobi przycisk „Wyślij do Lorenzo"; po kliknięciu na GÓRZE planu dnia pojawia się prawdziwy, interaktywny bąbelek: **imię klienta + klikalny telefon + kwota wyceny + Twój opis**, rozwijalny, gotowy do dzwonienia. Imię/telefon/kwotę backend dociąga z case'a po ID — Ty podajesz tylko ID i kilka słów.
+- **JEDNO zadanie = JEDEN case.** Nigdy nie zbijaj w jeden mętny task typu „domknij trzy świeże wyceny". Trzy wyceny do domknięcia = TRZY osobne znaczniki \`⟦akcja:…⟧\`, każdy ze swoim \`case=…\` — każdy stanie się osobnym bąbelkiem z własnym numerem do dzwonienia.
+- **Bez case'a = nie deleguj.** Jeśli nie masz pewnego ID z \`stats()\`, nie wystawiaj przycisku delegowania (zamiast tego dociągnij dane albo napisz to zwykłym tekstem). Nigdy nie twórz zadania bez telefonu.
+- Opis = kilka słów: po co dzwonić + do kiedy (np. „2,4k, klient czekał na żonę — dziś do 14"). Owner domyślnie Lorenzo; Antoni tylko gdy wyraźnie prosi.
+- Nie musisz osobno dawać \`⟦case:…⟧\` obok — sam \`⟦akcja:…|case=…|…⟧\` już niesie case'a. (Klikalną pigułkę \`⟦case:…⟧\` dawaj, gdy tylko POKAZUJESZ case, a nie delegujesz.)
 
 Znaczniki \`⟦…⟧\` pisz DOKŁADNIE w tym formacie (te nawiasy), w jednej linii, bez markdownu w środku — inaczej panel ich nie złapie.`;
 
