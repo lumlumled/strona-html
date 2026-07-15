@@ -42,6 +42,7 @@ const PANELS = [
   { key: 'wiedza', label: 'Baza Wiedzy', desc: 'Mózg biznesu: zapytaj o wszystko, zatwierdzaj nową wiedzę, uzupełniaj luki', status: 'live' },
   { key: 'statystyki', label: 'Statystyki', desc: 'Kokpit sprzedaży i pipeline', status: 'live' },
   { key: 'doradca', label: 'Doradca', desc: 'AI-doradca Fable: pyta o firmę, kopie w dane na żywo, uczy się z rozmów', status: 'live', adminOnly: true },
+  { key: 'kampanie', label: 'Kampanie', desc: 'Kampanie SMS/mail: AI personalizuje wiadomości do starych wycen, Ty akceptujesz próbkę', status: 'live' },
   { key: 'pozwolenia', label: 'Pozwolenia', desc: 'Użytkownicy i dostępy do paneli oraz arkuszy', status: 'live', adminOnly: true },
 ];
 
@@ -154,6 +155,7 @@ function panelLinks() {
       wiedza: '/wiedza/',
       statystyki: '/statystyki',
       doradca: '/doradca/',
+      kampanie: '/kampanie/',
       pozwolenia: '/pozwolenia',
     };
   }
@@ -169,6 +171,7 @@ function panelLinks() {
     wiedza: 'http://localhost:3005/',
     statystyki: `${hub}/statystyki`,
     doradca: 'http://localhost:3011/',
+    kampanie: 'http://localhost:3012/',
     pozwolenia: `${hub}/pozwolenia`,
   };
 }

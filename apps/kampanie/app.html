@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Kampanie — LumLum</title>
+  <link rel="stylesheet" href="shared/topbar.css">
+  <style>
+    /* Paleta 1:1 z apps/wyceny/szybka.html — jasny/ciemny wg systemu. */
+    :root {
+      color-scheme: light dark;
+      --surface-1: #ffffff;
+      --surface-2: #f0f0ee;
+      --page: #f5f5f4;
+      --text-primary: #111111;
+      --text-secondary: #52514e;
+      --text-muted: #8a8984;
+      --border: rgba(17, 17, 17, 0.12);
+      --accent: #111111;
+      --accent-contrast: #ffffff;
+      --accent-soft: #ececea;
+      --good: #0ca30c;
+      --bad: #b5433f;
+      --warn: #b57f2a;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-1: #161616;
+        --surface-2: #202020;
+        --page: #0a0a0a;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted: #8a8984;
+        --border: rgba(255, 255, 255, 0.14);
+        --accent: #ffffff;
+        --accent-contrast: #0a0a0a;
+        --accent-soft: #262626;
+        --good: #16c116;
+        --bad: #e08585;
+        --warn: #d8a856;
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--page);
+      color: var(--text-primary);
+      min-height: 100dvh;
+    }
+    .km-wrap {
+      width: 100%; max-width: 860px; margin: 0 auto;
+      padding: 1.2rem 1.2rem calc(3rem + env(safe-area-inset-bottom));
+      display: flex; flex-direction: column; gap: 1rem;
+    }
+    h1 { font-size: 1.3rem; font-weight: 700; }
+    h2 { font-size: 1.02rem; font-weight: 700; }
+    .muted { color: var(--text-muted); font-size: 0.85rem; }
+    .km-card {
+      background: var(--surface-1); border: 1px solid var(--border);
+      border-radius: 14px; padding: 1rem 1.1rem;
+      display: flex; flex-direction: column; gap: 0.7rem;
+    }
+    button {
+      font: inherit; border: 1px solid var(--border); border-radius: 10px;
+      background: var(--surface-2); color: var(--text-primary);
+      padding: 0.5rem 0.9rem; cursor: pointer; font-weight: 600; font-size: 0.9rem;
+    }
+    button.primary { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+    button:disabled { opacity: 0.5; cursor: default; }
+    button.small { padding: 0.28rem 0.6rem; font-size: 0.8rem; border-radius: 8px; }
+    textarea, input[type="text"], input[type="number"], select {
+      font: inherit; width: 100%;
+      background: var(--surface-2); color: var(--text-primary);
+      border: 1px solid var(--border); border-radius: 10px; padding: 0.55rem 0.7rem;
+    }
+    textarea { resize: vertical; min-height: 90px; line-height: 1.45; }
+    label.km-lbl { font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); display: block; margin-bottom: 0.25rem; }
+    .km-row { display: flex; gap: 0.7rem; flex-wrap: wrap; align-items: flex-end; }
+    .km-row > div { flex: 1 1 120px; min-width: 110px; }
+    .km-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+    .km-top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+
+    /* statusy */
+    .badge {
+      display: inline-block; font-size: 0.72rem; font-weight: 700;
+      padding: 0.14rem 0.55rem; border-radius: 999px;
+      background: var(--accent-soft); color: var(--text-secondary);
+      border: 1px solid var(--border); white-space: nowrap;
+    }
+    .badge.active { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, transparent); }
+    .badge.review { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+    .badge.paused, .badge.failed { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+
+    /* lista kampanii */
+    .km-kamp { cursor: pointer; transition: border-color 0.15s; }
+    .km-kamp:hover { border-color: var(--text-muted); }
+    .km-kamp .nums { display: flex; gap: 0.9rem; flex-wrap: wrap; font-size: 0.82rem; color: var(--text-secondary); }
+    .km-kamp .nums b { color: var(--text-primary); }
+    .progress { height: 6px; border-radius: 4px; background: var(--accent-soft); overflow: hidden; }
+    .progress > div { height: 100%; background: var(--good); border-radius: 4px; }
+
+    /* dyktowanie */
+    .mic {
+      width: 40px; height: 40px; border-radius: 50%; flex: 0 0 auto;
+      display: inline-flex; align-items: center; justify-content: center; font-size: 1.05rem;
+    }
+    .mic.rec { background: var(--bad); color: #fff; border-color: var(--bad); animation: puls 1.2s infinite; }
+    @keyframes puls { 50% { opacity: 0.6; } }
+
+    /* próbka */
+    .pr-card { border: 1px solid var(--border); border-radius: 12px; padding: 0.7rem 0.8rem; display: flex; flex-direction: column; gap: 0.45rem; background: var(--surface-2); }
+    .pr-head { display: flex; justify-content: space-between; gap: 0.6rem; font-size: 0.82rem; color: var(--text-secondary); flex-wrap: wrap; }
+    .pr-card textarea { background: var(--surface-1); min-height: 74px; font-size: 0.92rem; }
+    .pr-meta { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; font-size: 0.78rem; color: var(--text-muted); }
+    .pr-meta .over { color: var(--bad); font-weight: 700; }
+    .kor-list { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.84rem; color: var(--text-secondary); }
+    .kor-list li { margin-left: 1.1rem; }
+
+    /* tabela odbiorców */
+    .odb-filters { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+    .odb-filters button.on { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+    .odb-row { border-top: 1px solid var(--border); padding: 0.5rem 0.1rem; font-size: 0.87rem; }
+    .odb-line { display: flex; gap: 0.6rem; align-items: center; cursor: pointer; flex-wrap: wrap; }
+    .odb-line .tel { font-variant-numeric: tabular-nums; }
+    .odb-line .im { color: var(--text-secondary); flex: 1; min-width: 100px; }
+    .odb-body { display: none; padding: 0.5rem 0 0.2rem; }
+    .odb-row.open .odb-body { display: block; }
+    .odb-tresc { white-space: pre-wrap; background: var(--surface-2); border-radius: 10px; padding: 0.55rem 0.7rem; font-size: 0.88rem; }
+    .odb-err { color: var(--bad); font-size: 0.8rem; margin-top: 0.3rem; }
+    .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--text-primary); border-radius: 50%; animation: kreci 0.8s linear infinite; vertical-align: -2px; }
+    @keyframes kreci { to { transform: rotate(360deg); } }
+    .toast {
+      position: fixed; left: 50%; bottom: 1.4rem; transform: translateX(-50%);
+      background: var(--accent); color: var(--accent-contrast);
+      border-radius: 10px; padding: 0.55rem 1rem; font-size: 0.88rem; font-weight: 600;
+      opacity: 0; pointer-events: none; transition: opacity 0.25s; z-index: 60; max-width: 90vw;
+    }
+    .toast.show { opacity: 1; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="site-header"></div>
+  <main class="km-wrap">
+
+    <!-- ── LISTA ─────────────────────────────────────────────────────────── -->
+    <section id="view-lista">
+      <div class="km-top">
+        <h1>Kampanie</h1>
+        <button class="primary" id="btnNowa">+ Nowa kampania</button>
+      </div>
+      <p class="muted" style="margin:0.4rem 0 0.9rem">Spersonalizowane SMS-y i maile do starych wycen - AI pisze, Ty poprawiasz próbkę, reszta wychodzi sama paczkami dziennymi.</p>
+      <div id="listaKamp" style="display:flex;flex-direction:column;gap:0.7rem"><p class="muted">Wczytywanie…</p></div>
+    </section>
+
+    <!-- ── KREATOR ───────────────────────────────────────────────────────── -->
+    <section id="view-kreator" class="hidden">
+      <div class="km-top">
+        <h1>Nowa kampania</h1>
+        <button id="btnKreatorWroc">← Wróć</button>
+      </div>
+      <div class="km-card" style="margin-top:0.8rem">
+        <label class="km-lbl" for="opis">Opisz kampanię własnymi słowami (możesz dyktować)</label>
+        <div style="display:flex;gap:0.6rem;align-items:flex-start">
+          <textarea id="opis" placeholder="Np. Wyślij SMS-a do wycen starszych niż 60 dni. Przypomnij, że rozmawialiśmy o wycenie oświetlenia, napisz co było wyceniane i za ile, zapytaj czy temat aktualny. Jak nieaktualny, to zamkniemy wycenę i nie będziemy zawracać głowy."></textarea>
+          <button class="mic" id="micOpis" title="Dyktuj">🎙</button>
+        </div>
+        <details>
+          <summary class="muted" style="cursor:pointer">Mam przykładową wiadomość / szablon (opcjonalnie)</summary>
+          <textarea id="szablon" style="margin-top:0.5rem" placeholder="Wklej przykładowego SMS-a - AI zachowa jego strukturę i ton, tylko spersonalizuje pod każdego klienta."></textarea>
+        </details>
+        <div class="km-actions">
+          <button class="primary" id="btnInterpretuj">Zinterpretuj opis</button>
+          <span id="interSpin" class="hidden"><span class="spin"></span> AI czyta opis…</span>
+        </div>
+      </div>
+
+      <div class="km-card hidden" id="interBox" style="margin-top:0.8rem">
+        <h2>Zrozumiałem tak - popraw, jeśli trzeba</h2>
+        <p class="muted hidden" id="interUwagi"></p>
+        <div class="km-row">
+          <div style="flex:2 1 200px"><label class="km-lbl">Nazwa kampanii</label><input type="text" id="fNazwa"></div>
+          <div><label class="km-lbl">Kanał</label>
+            <select id="fKanal"><option value="sms">SMS</option><option value="email">E-mail</option></select></div>
+          <div><label class="km-lbl">Wyceny starsze niż (dni)</label><input type="number" id="fWiek" min="1" value="30"></div>
+        </div>
+        <div class="km-row">
+          <div><label class="km-lbl">Limit dziennie</label><input type="number" id="fLimit" min="1" max="200" value="25"></div>
+          <div><label class="km-lbl">Wysyłka od (godz.)</label><input type="number" id="fOd" min="6" max="20" value="9"></div>
+          <div><label class="km-lbl">do (godz.)</label><input type="number" id="fDo" min="7" max="21" value="17"></div>
+          <div><label class="km-lbl">Nadawca</label>
+            <select id="fNadawca"><option value="lorenzo">Lorenzo</option><option value="antoni">Antoni</option></select></div>
+        </div>
+        <div class="km-row">
+          <div><label class="km-lbl">Maks. segmentów SMS</label><input type="number" id="fSeg" min="1" max="4" value="2"></div>
+          <div style="flex:2 1 220px;display:flex;align-items:center;gap:0.5rem;padding-top:1.1rem">
+            <input type="checkbox" id="fBezPl" checked style="width:auto">
+            <label for="fBezPl" style="font-size:0.84rem">bez polskich znaków (SMS 160 znaków zamiast 70)</label>
+          </div>
+        </div>
+        <div><label class="km-lbl">Wytyczne treści (dla AI)</label><textarea id="fInstrukcje" style="min-height:64px"></textarea></div>
+        <div id="popBox" class="muted">Liczenie populacji…</div>
+        <div class="km-actions">
+          <button class="primary" id="btnUtworz">Utwórz i wygeneruj próbkę</button>
+          <span id="utworzSpin" class="hidden"><span class="spin"></span> <span id="utworzKrok">Tworzenie…</span></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── KAMPANIA ──────────────────────────────────────────────────────── -->
+    <section id="view-kampania" class="hidden">
+      <div class="km-top">
+        <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+          <h1 id="kNazwa"></h1><span class="badge" id="kStatus"></span>
+        </div>
+        <button id="btnKampWroc">← Kampanie</button>
+      </div>
+      <p class="muted" id="kBrief" style="margin:0.3rem 0 0"></p>
+      <div class="km-actions" id="kAkcje" style="margin-top:0.7rem"></div>
+
+      <div class="km-card hidden" id="korBox" style="margin-top:0.8rem">
+        <h2>Czego się nauczyłem z Twoich poprawek</h2>
+        <ul class="kor-list" id="korList"></ul>
+      </div>
+
+      <div class="km-card hidden" id="probkaBox" style="margin-top:0.8rem">
+        <div class="km-top">
+          <h2>Próbka do przeglądu</h2>
+          <span class="muted" id="probkaInfo"></span>
+        </div>
+        <p class="muted" style="margin-top:-0.3rem">Popraw treści śmiało - z każdej poprawki system uczy się na resztę wysyłki. Potem „Przegeneruj" (sprawdzisz, czy zrozumiał) albo od razu „Akceptuj i wystartuj".</p>
+        <div id="probkaList" style="display:flex;flex-direction:column;gap:0.7rem"></div>
+      </div>
+
+      <div class="km-card" style="margin-top:0.8rem">
+        <div class="km-top"><h2>Odbiorcy</h2><span class="muted" id="odbInfo"></span></div>
+        <div class="odb-filters" id="odbFilters"></div>
+        <div id="odbList"></div>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="shared/topbar.js"></script>
+  <script>
+    const API = window.API_BASE || '';
+    LumTopbar.mount({ active: 'kampanie', into: document.getElementById('site-header') });
+
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const money = (n) => `${Number(n || 0).toLocaleString('pl-PL', { maximumFractionDigits: 0 })} zł`;
+
+    let toastTimer = null;
+    function toast(msg) {
+      const t = $('toast');
+      t.textContent = msg; t.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => t.classList.remove('show'), 3200);
+    }
+
+    async function api(path, opts = {}) {
+      const res = await fetch(API + path, {
+        headers: { 'Content-Type': 'application/json' },
+        ...opts,
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+      return body;
+    }
+
+    // segmenty SMS liczone też na froncie (licznik na żywo przy edycji);
+    // ta sama logika co server/ai.js — GSM-7 vs UCS-2 (polskie znaki!).
+    const GSM7 = /^[@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&'()*+,\-.\/0-9:;<=>?¡A-ZÄÖÑÜ§¿a-zäöñüà^{}\\\[\]~|€]*$/;
+    const GSM7_EXT = /[\^{}\\\[\]~|€]/g;
+    function segInfo(t) {
+      const s = String(t || '');
+      if (!s) return { znaki: 0, segmenty: 0, kod: 'GSM-7' };
+      if (GSM7.test(s)) {
+        const len = s.length + (s.match(GSM7_EXT) || []).length;
+        return { znaki: len, segmenty: len <= 160 ? 1 : Math.ceil(len / 153), kod: 'GSM-7' };
+      }
+      const len = [...s].length;
+      return { znaki: len, segmenty: len <= 70 ? 1 : Math.ceil(len / 67), kod: 'UCS-2 (polskie znaki!)' };
+    }
+
+    const K_STATUS = {
+      draft: 'Szkic', sampling: 'Populacja', review: 'Przegląd próbki',
+      active: 'Aktywna', paused: 'Wstrzymana', done: 'Zakończona', archived: 'Archiwum',
+    };
+    const O_STATUS = {
+      pending: 'czeka na treść', generated: 'próbka', approved: 'zatwierdzona',
+      sent: 'wysłana', failed: 'błąd', replied: 'odpowiedź', closed: 'zamknięta',
+      optout: 'wypisany', skipped: 'pominięta',
+    };
+
+    const state = { kampania: null, odbiorcy: [], filtr: '', interpretacja: null };
+
+    function show(view) {
+      ['view-lista', 'view-kreator', 'view-kampania'].forEach((v) => $(v).classList.toggle('hidden', v !== view));
+      window.scrollTo(0, 0);
+    }
+
+    // ── Lista ────────────────────────────────────────────────────────────────
+    async function loadLista() {
+      show('view-lista');
+      try {
+        const { kampanie } = await api('/api/kampanie');
+        const box = $('listaKamp');
+        if (!kampanie.length) {
+          box.innerHTML = '<p class="muted">Jeszcze nie ma żadnej kampanii - zacznij od „+ Nowa kampania".</p>';
+          return;
+        }
+        box.innerHTML = '';
+        kampanie.forEach((k) => {
+          const l = k.liczniki || {};
+          const total = l.razem || 0;
+          const sent = (l.sent || 0) + (l.replied || 0) + (l.closed || 0);
+          const el = document.createElement('div');
+          el.className = 'km-card km-kamp';
+          el.innerHTML = `
+            <div class="km-top">
+              <div style="display:flex;align-items:center;gap:0.55rem;flex-wrap:wrap">
+                <b>${esc(k.nazwa)}</b>
+                <span class="badge ${esc(k.status)}">${esc(K_STATUS[k.status] || k.status)}</span>
+                <span class="muted">${k.kanal === 'email' ? 'E-mail' : 'SMS'} · ${esc(k.nadawca)}</span>
+              </div>
+              <span class="muted">${sent}/${total}</span>
+            </div>
+            <div class="progress"><div style="width:${total ? Math.round(100 * sent / total) : 0}%"></div></div>
+            <div class="nums">
+              <span>czeka: <b>${(l.pending || 0) + (l.generated || 0) + (l.approved || 0)}</b></span>
+              <span>wysłane: <b>${l.sent || 0}</b></span>
+              <span>odpowiedzi: <b>${l.replied || 0}</b></span>
+              ${l.failed ? `<span style="color:var(--bad)">błędy: <b>${l.failed}</b></span>` : ''}
+              <span>limit: <b>${k.limit_dzienny}/dzień</b> (${k.godzina_od}-${k.godzina_do})</span>
+            </div>`;
+          el.addEventListener('click', () => openKampania(k.id));
+          box.appendChild(el);
+        });
+      } catch (err) { $('listaKamp').innerHTML = `<p class="muted">Nie udało się wczytać: ${esc(err.message)}</p>`; }
+    }
+
+    // ── Kreator ──────────────────────────────────────────────────────────────
+    $('btnNowa').addEventListener('click', () => { show('view-kreator'); });
+    $('btnKreatorWroc').addEventListener('click', loadLista);
+
+    $('btnInterpretuj').addEventListener('click', async () => {
+      const opis = $('opis').value.trim();
+      if (opis.length < 10) return toast('Opisz kampanię choć kilkoma zdaniami');
+      $('btnInterpretuj').disabled = true; $('interSpin').classList.remove('hidden');
+      try {
+        const out = await api('/api/kampanie/interpretuj', { method: 'POST', body: { opis, szablon: $('szablon').value.trim() } });
+        state.interpretacja = out.interpretacja;
+        $('interBox').classList.remove('hidden');
+        $('fNazwa').value = out.interpretacja.nazwa || '';
+        $('fKanal').value = out.interpretacja.kanal || 'sms';
+        $('fWiek').value = out.interpretacja.min_wiek_dni || 30;
+        if (out.interpretacja.limit_dzienny) $('fLimit').value = out.interpretacja.limit_dzienny;
+        $('fInstrukcje').value = out.interpretacja.instrukcje || '';
+        const uw = $('interUwagi');
+        if (out.interpretacja.uwagi) { uw.textContent = `⚠ ${out.interpretacja.uwagi}`; uw.classList.remove('hidden'); }
+        else uw.classList.add('hidden');
+        renderPopulacja(out.populacja);
+        $('interBox').scrollIntoView({ behavior: 'smooth' });
+      } catch (err) { toast(err.message); }
+      $('btnInterpretuj').disabled = false; $('interSpin').classList.add('hidden');
+    });
+
+    function renderPopulacja(pop) {
+      const w = pop.wykluczeni || {};
+      $('popBox').innerHTML = `Populacja: <b>${pop.liczba} osób</b> na łącznie <b>${money(pop.suma_kwot)}</b> otwartych wycen`
+        + ` <span class="muted">(pominięci: ${w.bez_kontaktu || 0} bez kontaktu, ${w.optout || 0} wypisanych, ${w.w_kampanii || 0} w innej kampanii)</span>`;
+    }
+
+    let popTimer = null;
+    ['fWiek', 'fKanal'].forEach((id) => $(id).addEventListener('change', () => {
+      clearTimeout(popTimer);
+      popTimer = setTimeout(async () => {
+        try {
+          const pop = await api(`/api/kampanie/populacja?min_wiek_dni=${encodeURIComponent($('fWiek').value)}&kanal=${encodeURIComponent($('fKanal').value)}`);
+          renderPopulacja(pop);
+        } catch (err) { $('popBox').textContent = err.message; }
+      }, 300);
+    }));
+
+    $('btnUtworz').addEventListener('click', async () => {
+      const krok = (t) => { $('utworzKrok').textContent = t; };
+      $('btnUtworz').disabled = true; $('utworzSpin').classList.remove('hidden');
+      try {
+        krok('Tworzenie kampanii…');
+        const { kampania } = await api('/api/kampanie', {
+          method: 'POST',
+          body: {
+            nazwa: $('fNazwa').value, kanal: $('fKanal').value,
+            brief: $('opis').value.trim(), szablon: $('szablon').value.trim() || null,
+            interpretacja: { ...(state.interpretacja || {}), instrukcje: $('fInstrukcje').value.trim() },
+            nadawca: $('fNadawca').value,
+            filtr: { min_wiek_dni: Number($('fWiek').value) || 30 },
+            limit_dzienny: Number($('fLimit').value) || 25,
+            godzina_od: Number($('fOd').value) || 9,
+            godzina_do: Number($('fDo').value) || 17,
+            bez_polskich_znakow: $('fBezPl').checked,
+            max_segmenty: Number($('fSeg').value) || 2,
+          },
+        });
+        krok('Zamrażanie populacji…');
+        await api(`/api/kampanie/${kampania.id}/populacja`, { method: 'POST' });
+        krok('AI pisze próbkę (to chwilę trwa)…');
+        await api(`/api/kampanie/${kampania.id}/probka`, { method: 'POST' });
+        toast('Próbka gotowa - przejrzyj i popraw');
+        await openKampania(kampania.id);
+      } catch (err) { toast(err.message); }
+      $('btnUtworz').disabled = false; $('utworzSpin').classList.add('hidden');
+    });
+
+    // dyktowanie briefu (pl-PL) — wzorzec z doradcy
+    (function initMic() {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const micBtn = $('micOpis');
+      const inputEl = $('opis');
+      if (!SR) { micBtn.style.display = 'none'; return; }
+      const rec = new SR(); rec.lang = 'pl-PL'; rec.interimResults = true; rec.continuous = true;
+      let recing = false, baseText = '';
+      rec.onresult = (e) => {
+        let t = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) t += e.results[i][0].transcript;
+        inputEl.value = (baseText ? baseText + ' ' : '') + t;
+      };
+      rec.onend = () => { recing = false; micBtn.classList.remove('rec'); };
+      rec.onerror = () => { recing = false; micBtn.classList.remove('rec'); };
+      micBtn.addEventListener('click', () => {
+        if (recing) { rec.stop(); return; }
+        baseText = inputEl.value.trim(); recing = true; micBtn.classList.add('rec');
+        try { rec.start(); } catch (_) { recing = false; micBtn.classList.remove('rec'); }
+      });
+    })();
+
+    // ── Widok kampanii ───────────────────────────────────────────────────────
+    $('btnKampWroc').addEventListener('click', loadLista);
+
+    async function openKampania(id, filtr) {
+      try {
+        const out = await api(`/api/kampanie/${id}${filtr ? `?status=${encodeURIComponent(filtr)}` : ''}`);
+        state.kampania = out.kampania;
+        state.odbiorcy = out.odbiorcy;
+        state.filtr = filtr || '';
+        renderKampania(out.liczniki);
+        show('view-kampania');
+      } catch (err) { toast(err.message); }
+    }
+
+    function renderKampania(liczniki) {
+      const k = state.kampania;
+      $('kNazwa').textContent = k.nazwa;
+      const st = $('kStatus');
+      st.textContent = K_STATUS[k.status] || k.status;
+      st.className = `badge ${k.status}`;
+      $('kBrief').textContent = `${k.kanal === 'email' ? 'E-mail' : 'SMS'} od ${k.nadawca} · ${k.limit_dzienny}/dzień w godz. ${k.godzina_od}-${k.godzina_do} · ${k.brief.slice(0, 180)}`;
+
+      // akcje wg statusu
+      const akcje = $('kAkcje');
+      akcje.innerHTML = '';
+      const btn = (label, cls, fn) => {
+        const b = document.createElement('button');
+        if (cls) b.className = cls;
+        b.textContent = label;
+        b.addEventListener('click', fn);
+        akcje.appendChild(b);
+        return b;
+      };
+      if (k.status === 'review') {
+        btn('Akceptuj i wystartuj', 'primary', akceptuj);
+        btn('Przegeneruj próbkę z poprawkami', '', przegeneruj);
+      }
+      if (k.status === 'active') btn('Wstrzymaj', '', () => prostaAkcja(`/api/kampanie/${k.id}/pauza`));
+      if (k.status === 'paused') btn('Wznów', 'primary', () => prostaAkcja(`/api/kampanie/${k.id}/wznow`));
+      if (k.status === 'sampling') btn('Wygeneruj próbkę', 'primary', async () => {
+        toast('AI pisze próbkę…');
+        try { await api(`/api/kampanie/${k.id}/probka`, { method: 'POST' }); openKampania(k.id); }
+        catch (err) { toast(err.message); }
+      });
+
+      // korekty ("czego się nauczyłem")
+      const kor = (k.korekty && k.korekty.reguly) || [];
+      $('korBox').classList.toggle('hidden', !kor.length);
+      $('korList').innerHTML = kor.map((r) => `<li>${esc(r)}</li>`).join('');
+
+      // próbka (tylko w review)
+      const probka = state.odbiorcy.filter((o) => o.sample && ['generated', 'approved'].includes(o.status));
+      const wReview = k.status === 'review';
+      $('probkaBox').classList.toggle('hidden', !wReview || !probka.length);
+      if (wReview && probka.length) {
+        $('probkaInfo').textContent = `${probka.length} z ${liczniki.razem} odbiorców`;
+        const box = $('probkaList');
+        box.innerHTML = '';
+        probka.forEach((o) => box.appendChild(probkaCard(o)));
+      }
+
+      // liczniki → filtry odbiorców
+      const filters = $('odbFilters');
+      filters.innerHTML = '';
+      const mk = (label, val, n) => {
+        const b = document.createElement('button');
+        b.className = `small${state.filtr === val ? ' on' : ''}`;
+        b.textContent = n === undefined ? label : `${label} (${n})`;
+        b.addEventListener('click', () => openKampania(k.id, val));
+        filters.appendChild(b);
+      };
+      mk('Wszyscy', '', liczniki.razem);
+      Object.entries(O_STATUS).forEach(([kod, label]) => {
+        if (liczniki[kod]) mk(label, kod, liczniki[kod]);
+      });
+      $('odbInfo').textContent = `${state.odbiorcy.length} pokazanych`;
+
+      // lista odbiorców
+      const list = $('odbList');
+      list.innerHTML = '';
+      state.odbiorcy.forEach((o) => list.appendChild(odbRow(o)));
+      if (!state.odbiorcy.length) list.innerHTML = '<p class="muted">Brak odbiorców w tym widoku.</p>';
+    }
+
+    function probkaCard(o) {
+      const el = document.createElement('div');
+      el.className = 'pr-card';
+      const kw = o.kontekst && o.kontekst.kwota ? ` · ${money(o.kontekst.kwota)}` : '';
+      const wiek = o.kontekst && o.kontekst.wiek_dni ? ` · ${o.kontekst.wiek_dni} dni` : '';
+      el.innerHTML = `
+        <div class="pr-head">
+          <span><b>${esc(o.imie || 'bez imienia')}</b> · ${esc(o.telefon)}${kw}${wiek}</span>
+          <span>wycena #${esc(o.wycena_id)}${(o.wyceny_ids || []).length > 1 ? ` (+${o.wyceny_ids.length - 1})` : ''}</span>
+        </div>
+        ${state.kampania.kanal === 'email' ? `<input type="text" class="pr-temat" value="${esc(o.temat || '')}" placeholder="Temat maila">` : ''}
+        <textarea class="pr-txt">${esc(o.tresc || '')}</textarea>
+        <div class="pr-meta">
+          <span class="pr-seg"></span>
+          <button class="small pr-save">Zapisz poprawkę</button>
+        </div>`;
+      const txt = el.querySelector('.pr-txt');
+      const seg = el.querySelector('.pr-seg');
+      const upd = () => {
+        const i = segInfo(txt.value);
+        const limit = state.kampania.max_segmenty || 2;
+        seg.innerHTML = `${i.znaki} znaków · ${i.segmenty} segm. (${i.kod})`
+          + (i.segmenty > limit ? ` <span class="over">ponad limit ${limit}!</span>` : '');
+      };
+      upd();
+      txt.addEventListener('input', upd);
+      el.querySelector('.pr-save').addEventListener('click', async () => {
+        const body = { tresc: txt.value };
+        const tematEl = el.querySelector('.pr-temat');
+        if (tematEl) body.temat = tematEl.value;
+        try {
+          const out = await api(`/api/kampanie/${state.kampania.id}/odbiorcy/${o.id}`, { method: 'PATCH', body });
+          if (out.korekty) {
+            state.kampania.korekty = out.korekty;
+            const kor = out.korekty.reguly || [];
+            $('korBox').classList.toggle('hidden', !kor.length);
+            $('korList').innerHTML = kor.map((r) => `<li>${esc(r)}</li>`).join('');
+            toast('Zapisane - nauczyłem się z tej poprawki');
+          } else toast('Zapisane');
+          o.tresc = out.odbiorca.tresc;
+        } catch (err) { toast(err.message); }
+      });
+      return el;
+    }
+
+    function odbRow(o) {
+      const el = document.createElement('div');
+      el.className = 'odb-row';
+      const badgeCls = o.status === 'failed' ? 'failed' : (o.status === 'sent' ? 'active' : '');
+      el.innerHTML = `
+        <div class="odb-line">
+          <span class="tel">${esc(o.telefon)}</span>
+          <span class="im">${esc(o.imie || '')}</span>
+          ${o.kontekst && o.kontekst.kwota ? `<span class="muted">${money(o.kontekst.kwota)}</span>` : ''}
+          <span class="badge ${badgeCls}">${esc(O_STATUS[o.status] || o.status)}</span>
+        </div>
+        <div class="odb-body">
+          ${o.tresc ? `<div class="odb-tresc">${esc(o.tresc)}</div>` : '<p class="muted">Treść jeszcze nie wygenerowana.</p>'}
+          ${o.blad ? `<div class="odb-err">${esc(o.blad)}</div>` : ''}
+          ${o.wyslano_at ? `<p class="muted" style="margin-top:0.3rem">Wysłano: ${new Date(o.wyslano_at).toLocaleString('pl-PL')}</p>` : ''}
+          <div class="km-actions" style="margin-top:0.5rem">
+            ${o.status === 'failed' ? '<button class="small odb-ponow">Ponów</button>' : ''}
+            ${['pending', 'generated', 'approved'].includes(o.status) ? '<button class="small odb-optout">Nie kontaktować</button>' : ''}
+            ${o.wycena_id ? `<a class="muted" style="font-size:0.8rem" href="${esc((window.LUMLUM_LINKS || {}).wyceny || '/wyceny/')}" target="_blank">wycena #${esc(o.wycena_id)}</a>` : ''}
+          </div>
+        </div>`;
+      el.querySelector('.odb-line').addEventListener('click', () => el.classList.toggle('open'));
+      const ponow = el.querySelector('.odb-ponow');
+      if (ponow) ponow.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try { await api(`/api/kampanie/${state.kampania.id}/odbiorcy/${o.id}/ponow`, { method: 'POST' }); toast('Wraca do kolejki'); openKampania(state.kampania.id, state.filtr); }
+        catch (err) { toast(err.message); }
+      });
+      const opt = el.querySelector('.odb-optout');
+      if (opt) opt.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!confirm(`Wypisać ${o.telefon} ze WSZYSTKICH kampanii (na stałe)?`)) return;
+        try { await api('/api/kampanie/optout', { method: 'POST', body: { telefon: o.telefon, powod: 'recznie z panelu' } }); toast('Wypisany'); openKampania(state.kampania.id, state.filtr); }
+        catch (err) { toast(err.message); }
+      });
+      return el;
+    }
+
+    async function prostaAkcja(path) {
+      try { await api(path, { method: 'POST' }); openKampania(state.kampania.id, state.filtr); }
+      catch (err) { toast(err.message); }
+    }
+
+    async function przegeneruj() {
+      toast('Przegenerowuję próbkę z poprawkami…');
+      try {
+        await api(`/api/kampanie/${state.kampania.id}/probka/przegeneruj`, { method: 'POST' });
+        toast('Nowa próbka gotowa');
+        openKampania(state.kampania.id);
+      } catch (err) { toast(err.message); }
+    }
+
+    async function akceptuj() {
+      const k = state.kampania;
+      let pyt = `Wystartować kampanię "${k.nazwa}"?`;
+      try {
+        const koszt = await api(`/api/kampanie/${k.id}/koszt`);
+        pyt = `Wystartować kampanię "${k.nazwa}"?\n\nDo wysłania: ${koszt.do_wyslania} wiadomości`
+          + `\nSzacowany koszt: ~${koszt.koszt_szacowany_pln} zł (śr. ${koszt.srednie_segmenty} segm.)`
+          + (koszt.saldo ? `\nSaldo Zadarmy: ${koszt.saldo.kwota} ${koszt.saldo.waluta}` : '')
+          + `\n\nWysyłka: ${k.limit_dzienny}/dzień w godz. ${k.godzina_od}-${k.godzina_do}.`;
+      } catch (_) { /* szacunek opcjonalny */ }
+      if (!confirm(pyt)) return;
+      try {
+        await api(`/api/kampanie/${k.id}/akceptuj`, { method: 'POST' });
+        toast('Kampania wystartowała - reszta pisze się i wysyła sama');
+        openKampania(k.id);
+      } catch (err) { toast(err.message); }
+    }
+
+    loadLista();
+  </script>
+</body>
+</html>
