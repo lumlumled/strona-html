@@ -182,7 +182,14 @@ async function fetchLeadyRows() {
 // te dociąga się leniwie przez /api/leady/:telefon/wycena przy rozwinięciu).
 app.get('/api/leady', requireLeadyView, async (req, res) => {
   try {
-    const data = await fetchLeadyRows();
+    const rows = await fetchLeadyRows();
+    // Lista i karta NIE renderują kolumny "Treść rozmowy" (pełny transkrypt
+    // Zadarmy) — sekcja "Pełne rozmowy" na dole karty dociąga transkrypcje
+    // leniwie z Log zmian.transkrypcja (patrz lead-card.js loadPelneRozmowy).
+    // To pole to ~29% payloadu i puchnie z każdą rozmową per lead, więc nie
+    // wysyłamy go do przeglądarki (ani do pollingu co 30 s). Po stronie serwera
+    // zostaje w fetchLeadyRows dla /api/ai/query i watchdoga.
+    const data = rows.map(({ ['Treść rozmowy']: _pomijamy, ...rest }) => rest);
     res.json({ data, editableFields: EDITABLE_LEAD_FIELDS, readonlyFields: READONLY_LEAD_FIELDS });
   } catch (err) {
     handleError(res, err, 502);
