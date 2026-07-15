@@ -360,8 +360,19 @@ function registerKontaktEndpoints(app, { getClient, requireView, requireEdit }) 
       if (!digits || digits.length < 9) return res.status(400).json({ error: 'Brak poprawnego numeru telefonu' });
       const komPhone = identity.normalize('phone', digits);
 
+      // Nadawca SMS-a: numer HANDLOWCA (Lorenzo → jego numer Zadarmy),
+      // fallback = jawny override ZADARMA_SMS_CALLER_ID albo numer firmowy.
+      // Bez caller_id Zadarma podpisuje SMS-y "zadarma.com" — stąd zawsze
+      // próbujemy z numerem; musi to być numer potwierdzony w koncie Zadarmy
+      // (gdy odrzuci, błąd wraca do panelu wprost).
+      const perUser = { lorenzo: process.env.LORENZO_ZADARMA_NUMBER };
+      const rawCaller = perUser[String((req.user && req.user.name) || '').trim().toLowerCase()]
+        || process.env.ZADARMA_SMS_CALLER_ID
+        || process.env.ZADARMA_OWN_NUMBER;
+      const callerDigits = String(rawCaller || '').replace(/\D/g, '');
+
       const params = { number: komPhone, message: tresc };
-      if (process.env.ZADARMA_SMS_CALLER_ID) params.caller_id = process.env.ZADARMA_SMS_CALLER_ID;
+      if (callerDigits) params.caller_id = `+${callerDigits}`;
       const wynik = await callZadarma('/v1/sms/send/', params, 'POST');
       if (!wynik || wynik.status !== 'success') {
         throw new Error(`Zadarma SMS: ${wynik && (wynik.message || wynik.status) || 'brak odpowiedzi'}`);
@@ -377,7 +388,7 @@ function registerKontaktEndpoints(app, { getClient, requireView, requireEdit }) 
         direction: 'out',
         body: tresc,
         sent_by: (req.user && req.user.name) || 'antoni',
-        meta: { sms: { messages: wynik.messages ?? null, cost: wynik.cost ?? null }, zrodlo: 'karta_leada' },
+        meta: { sms: { messages: wynik.messages ?? null, cost: wynik.cost ?? null, nadawca: callerDigits ? `+${callerDigits}` : null }, zrodlo: 'karta_leada' },
       });
       if (msgErr) console.warn('kontakt: zapis kom_messages (sms):', msgErr.message);
       await db.from('kom_threads').update({ last_message_at: new Date().toISOString() }).eq('id', thread.id);
