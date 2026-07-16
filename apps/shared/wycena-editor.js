@@ -48,8 +48,8 @@ window.WycenaEditor = (() => {
   // Kategorie "Dodaj produkt". Taśmy są parametryczne (barwa + IP); reszta to
   // proste listy dopasowane po prefiksie SKU.
   // Kolejność wg Antoniego. Kafelki mają ZDJĘCIA (reprezentatywny produkt), nie
-  // emoji. Panele biurkowy/ścienny to PILOTY (LL-PANEL → remote). Profile i
-  // Pozostałe to placeholdery ("wkrótce") — na przyszłość.
+  // emoji. Panele biurkowy/ścienny to PILOTY (LL-PANEL → remote). Profile to
+  // placeholder ("wkrótce"); "Spoza oferty" = produkt z ceną indywidualną.
   const CATEGORIES = [
     { key: 'dig', label: 'Cyfrowa taśma', tape: 'DIG' },
     { key: 'ana', label: 'Analogowa taśma', tape: 'ANA' },
@@ -59,7 +59,9 @@ window.WycenaEditor = (() => {
     { key: 'acc', label: 'Akcesoria', prefixes: ['LL-ACC'] },
     { key: 'psu', label: 'Zasilacze', prefixes: ['LL-PSU'] },
     { key: 'profile', label: 'Profile', placeholder: true },
-    { key: 'pozostale', label: 'Pozostałe', placeholder: true },
+    // "Spoza oferty" — produkt z ceną indywidualną (nie ma go w cenniku).
+    // Ręczna nazwa + cena za sztukę; jednostka zawsze szt., VAT zawsze 23%.
+    { key: 'custom', label: 'Spoza oferty', custom: true },
   ];
 
   // Reprezentatywne zdjęcie kategorii (pierwszy produkt ze zdjęciem).
@@ -77,7 +79,9 @@ window.WycenaEditor = (() => {
   function buildCatalogModel(cennik) {
     const tapes = { DIG: [], ANA: [] };
     const simple = {};
+    const skus = new Set(); // wszystkie SKU z cennika — do wykrycia pozycji spoza oferty
     (cennik || []).forEach((s) => {
+      if (s.sku) skus.add(String(s.sku).trim());
       const t = parseTapeSku(s.sku);
       if (t && tapes[t.family]) {
         tapes[t.family].push({ ...t, sku: s.sku, price: s.price_brutto, image: s.image_url || '', nazwa: s.nazwa, unit: s.unit || 'm' });
@@ -87,7 +91,16 @@ window.WycenaEditor = (() => {
         (simple[key] = simple[key] || []).push(s);
       }
     });
-    return { tapes, simple };
+    return { tapes, simple, skus };
+  }
+
+  // Pozycja "spoza oferty" (cena indywidualna): brak SKU albo SKU spoza cennika.
+  // Takie pozycje dostają edytowalną nazwę + cenę za sztukę.
+  function isCustomItem(catalog, p) {
+    const sku = String((p && (p.SKU || p.sku)) || '').trim();
+    if (!sku) return true;
+    if (parseTapeSku(sku) && (catalog.tapes[parseTapeSku(sku).family] || []).length) return false;
+    return !catalog.skus.has(sku);
   }
 
   // Konfigurator taśmy: selektor barwa + IP + metry; zdjęcie/cena/nazwa wg
@@ -205,6 +218,15 @@ window.WycenaEditor = (() => {
           grid.appendChild(card);
           return;
         }
+        if (c.custom) {
+          const btn = h('button', 'wk-cat-btn');
+          btn.type = 'button';
+          const th = h('span', 'wk-cat-thumb'); th.appendChild(h('span', 'wk-cat-custom-ico', '✎'));
+          btn.append(th, h('span', 'wk-cat-lbl', c.label));
+          btn.addEventListener('click', () => openCategory(c));
+          grid.appendChild(btn);
+          return;
+        }
         const has = c.tape ? (catalog.tapes[c.tape] || []).length : (catalog.simple[c.key] || []).length;
         if (!has) return;
         const btn = h('button', 'wk-cat-btn');
@@ -227,7 +249,34 @@ window.WycenaEditor = (() => {
       back.style.visibility = 'visible';
       body.innerHTML = '';
       body.appendChild(h('div', 'wk-section-title', c.label));
-      if (c.tape) {
+      if (c.custom) {
+        // Formularz produktu spoza oferty: nazwa + cena za sztukę + ilość.
+        // Jednostka szt., VAT 23% — na sztywno (tak jak chce Antoni).
+        const form = h('div', 'wk-custom-form');
+        const nameEl = input('', 'np. Klosz aluminiowy, montaż, projekt…');
+        const priceEl = input('', '0,00'); priceEl.inputMode = 'decimal';
+        const qtyEl = input('1', 'ilość'); qtyEl.inputMode = 'decimal';
+        form.append(
+          field('Nazwa produktu', nameEl),
+          field('Cena za sztukę (zł, brutto)', priceEl),
+          field('Ilość (szt.)', qtyEl),
+        );
+        body.appendChild(form);
+        body.appendChild(h('div', 'wk-quick-hint', 'Cena indywidualna — produkt spoza cennika. Jednostka: szt., VAT 23%.'));
+        const add = h('button', 'wk-btn primary', '+ Dodaj pozycję');
+        add.type = 'button';
+        add.style.marginTop = '0.6rem';
+        add.addEventListener('click', () => {
+          const name = nameEl.value.trim();
+          if (!name) { nameEl.focus(); return; }
+          onPick({ name, SKU: '', quantity: money(qtyEl.value) || 1, unit: 'szt', price: String(money(priceEl.value)), VAT: '23', image_url: '' });
+          nameEl.value = ''; priceEl.value = ''; qtyEl.value = '1';
+          add.textContent = '✓ Dodano — dodaj kolejną';
+          setTimeout(() => { add.textContent = '+ Dodaj pozycję'; }, 1300);
+          nameEl.focus();
+        });
+        body.appendChild(add);
+      } else if (c.tape) {
         const cfg = buildTapeConfigurator(c.tape, catalog, {}, () => {});
         body.appendChild(cfg.el);
         const add = h('button', 'wk-btn primary', '+ Dodaj taśmę');
@@ -335,8 +384,39 @@ window.WycenaEditor = (() => {
           if (it0) Object.assign(p, it0);
           cfg.el.appendChild(remove);
           box.appendChild(cfg.el);
+        } else if (isCustomItem(catalog, p)) {
+          // Pozycja spoza oferty — cena indywidualna: edytowalna nazwa + cena
+          // za sztukę + ilość. Jednostka szt., VAT 23% (na sztywno).
+          p.unit = 'szt'; p.VAT = '23';
+          const wrapc = h('div', 'wk-custom-item');
+          const headRow = h('div', 'wk-custom-head');
+          const thumbSlot = h('div', 'wk-edit-thumb-slot');
+          thumbSlot.appendChild(h('div', 'wk-thumb-placeholder', '✎'));
+          const nameEl = input(p.name || '', 'Nazwa produktu (spoza oferty)');
+          nameEl.className = 'wk-custom-name';
+          nameEl.addEventListener('input', () => { p.name = nameEl.value; if (ready) onChange(); });
+          headRow.append(thumbSlot, nameEl, remove);
+
+          const paramsRow = h('div', 'wk-custom-params');
+          paramsRow.appendChild(h('span', 'wk-custom-tag', 'Cena indywidualna'));
+          const priceEl = input(money(p.price) ? String(p.price) : '', '0,00');
+          priceEl.inputMode = 'decimal';
+          priceEl.className = 'wk-custom-price';
+          priceEl.addEventListener('input', () => { p.price = priceEl.value; if (ready) onChange(); });
+          const priceWrap = h('span', 'wk-custom-inline');
+          priceWrap.append(priceEl, h('span', 'wk-edit-item-unit', 'zł/szt'));
+          const qty = input(p.quantity ?? 1, 'ilość');
+          qty.inputMode = 'decimal';
+          qty.className = 'wk-edit-qty';
+          qty.addEventListener('input', () => { p.quantity = qty.value; if (ready) onChange(); });
+          const qtyWrap = h('span', 'wk-custom-inline');
+          qtyWrap.append(qty, h('span', 'wk-edit-item-unit', 'szt'));
+          paramsRow.append(priceWrap, h('span', 'wk-custom-x', '×'), qtyWrap);
+
+          wrapc.append(headRow, paramsRow);
+          box.appendChild(wrapc);
         } else {
-          // Prosta pozycja — zdjęcie + nazwa (read-only) + ilość.
+          // Prosta pozycja z cennika — zdjęcie + nazwa (read-only) + ilość.
           const row = h('div', 'wk-edit-item');
           const thumbSlot = h('div', 'wk-edit-thumb-slot');
           if (p.image_url) {

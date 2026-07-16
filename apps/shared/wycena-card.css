@@ -388,6 +388,63 @@
 .wk-edit-item-unit { font-size: 0.8rem; color: var(--text-muted); }
 .wk-edit-item input.wk-edit-qty { text-align: center; }
 
+/* ── Pozycja spoza oferty (cena indywidualna) ── */
+.wk-custom-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-1);
+}
+.wk-custom-head {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 2rem;
+  gap: 0.5rem;
+  align-items: center;
+}
+.wk-custom-item input.wk-custom-name,
+.wk-custom-item input.wk-custom-price,
+.wk-custom-item input.wk-edit-qty {
+  font: inherit;
+  font-size: 0.84rem;
+  padding: 0.36rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  width: 100%;
+  min-width: 0;
+}
+.wk-custom-item input.wk-custom-name { font-weight: 600; }
+.wk-custom-params {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+  padding-left: calc(42px + 0.5rem);
+}
+.wk-custom-tag {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 0.14rem 0.44rem;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.wk-custom-inline { display: inline-flex; align-items: center; gap: 0.3rem; }
+.wk-custom-item input.wk-custom-price { width: 5rem; text-align: right; }
+.wk-custom-item input.wk-edit-qty { width: 3.4rem; text-align: center; }
+.wk-custom-x { color: var(--text-muted); font-size: 0.85rem; }
+
+/* Formularz "Spoza oferty" w pickerze */
+.wk-custom-form { display: flex; flex-direction: column; gap: 0.6rem; }
+.wk-cat-custom-ico { font-size: 1.5rem; color: var(--text-muted); }
+
 /* Nagłówek pozycji-taśmy (tytuł + usuń) */
 .wk-edit-item-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .wk-edit-item-title { font-size: 0.82rem; font-weight: 700; }
