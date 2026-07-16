@@ -51,6 +51,7 @@ const PANELS = [
 const CRM_SHEETS = [
   { key: 'leady-b2c', label: 'Leady B2C' },
   { key: 'wyceny', label: 'Wyceny' },
+  { key: 'organic', label: 'Organic' },
 ];
 
 // ── Hasła: scrypt z solą (crypto wbudowane, bez zależności) ─────────────────

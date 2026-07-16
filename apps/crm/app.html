@@ -481,9 +481,14 @@
 
     .status-menu.open { display: block; }
 
-    /* Tryb podglądu: status to zwykła pigułka bez strzałki i menu. */
-    .crm-readonly .status-tag { padding-right: 0.65rem; cursor: default; }
-    .crm-readonly .status-tag::after { display: none; }
+    /* Tryb podglądu: status to zwykła pigułka bez strzałki i menu.
+       .crm-readonly (body) niesie poziom arkusza Leady B2C — zawężone do #list,
+       żeby nie gasić pigułek w Organic; tam o read-only decyduje klasa
+       .readonly nakładana per pigułka (poziom arkusza organic). */
+    .crm-readonly #list .status-tag,
+    .status-tag.readonly { padding-right: 0.65rem; cursor: default; }
+    .crm-readonly #list .status-tag::after,
+    .status-tag.readonly::after { display: none; }
 
     .status-option {
       display: block;
@@ -503,6 +508,55 @@
 
     /* Style rozwiniętej karty leada żyją w apps/shared/lead-card.css
        (wspólne z Backlogiem — patrz <link> w <head>). */
+
+    /* ── Organic: chip źródła w wierszu + prosta rozwijana karta ─────────────
+       (karta leada z apps/shared nie pasuje — inne pola, inna tabela). */
+    #organic-list { display: flex; flex-direction: column; gap: 0.4rem; }
+
+    .org-chip {
+      flex: 0 0 auto;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.16rem 0.6rem;
+      white-space: nowrap;
+    }
+
+    .org-body {
+      border-top: 1px solid var(--border);
+      padding: 0.75rem 0.9rem 0.9rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+      font-size: 0.86rem;
+    }
+
+    .org-label {
+      font-size: 0.68rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 0.15rem;
+    }
+
+    .org-text { white-space: pre-wrap; line-height: 1.5; }
+    .org-meta { font-size: 0.78rem; color: var(--text-muted); }
+
+    .org-link {
+      align-self: flex-start;
+      font-weight: 600;
+      font-size: 0.84rem;
+      color: var(--text-primary);
+      text-decoration: none;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.4rem 0.8rem;
+    }
+
+    .org-link:hover { background: var(--accent-soft); }
 
     .empty-note { color: var(--text-muted); font-style: italic; font-size: 0.85rem; }
 
@@ -559,7 +613,17 @@
           <button id="refresh">Odśwież</button>
           <span class="count-badge" id="count"></span>
         </div>
-        <div class="ai-bar" data-sec="leady-b2c">
+        <div class="toolbar" data-sec="organic">
+          <input type="text" id="organic-search" placeholder="Szukaj po imieniu, telefonie lub e-mailu…">
+          <select id="organic-typ">
+            <option value="">Telefony i wiadomości</option>
+            <option value="telefon">Tylko telefony</option>
+            <option value="wiadomosci">Tylko wiadomości</option>
+          </select>
+          <button id="organic-refresh">Odśwież</button>
+          <span class="count-badge" id="organic-count"></span>
+        </div>
+        <div class="ai-bar" data-sec="leady-b2c organic">
           <div class="ai-input-wrap">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M12 2l1.8 5.6L19.5 9l-5.7 1.4L12 16l-1.8-5.6L4.5 9l5.7-1.4L12 2z"/><path d="M19 14l.9 2.6 2.6.9-2.6.9L19 21l-.9-2.6-2.6-.9 2.6-.9L19 14z"/></svg>
             <input type="text" id="ai-input" placeholder="Zapytaj AI o leady — np. „kto ma zaległy feedback?”, „do kogo najlepiej dziś zadzwonić?”">
@@ -573,6 +637,7 @@
         </div>
     </header>
     <div id="list" data-sec="leady-b2c"></div>
+    <div id="organic-list" data-sec="organic"></div>
   </main>
 
   <div class="ai-card" id="ai-card" hidden>
@@ -607,18 +672,29 @@
     }
 
     // Wyceny B2C wyprowadzone do własnego panelu (apps/wyceny/, 2026-07-12) —
-    // CRM zostaje do leadów. Kolejne sekcje CRM (np. B2B) dochodzą tu jako
+    // CRM zostaje do leadów. Organic (2026-07-16) = druga lista: kontakty
+    // i wiadomości spoza Leady B2C. Kolejne sekcje (np. B2B) dochodzą tu jako
     // kolejne wpisy.
     const NAV_SECTIONS = [
       { key: 'leady-b2c', label: 'Leady B2C' },
+      { key: 'organic', label: 'Organic' },
     ].filter((s) => CRM_SHEET_LEVELS[s.key]);
+
+    // Pasek AI jest wspólny dla sekcji (data-sec="leady-b2c organic") —
+    // placeholder podpowiada pytania pasujące do aktywnej listy.
+    const AI_PLACEHOLDERS = {
+      'leady-b2c': 'Zapytaj AI o leady — np. „kto ma zaległy feedback?”, „do kogo najlepiej dziś zadzwonić?”',
+      organic: 'Zapytaj AI o kontakty — np. „kto napisał i czeka na odpowiedź?”, „do kogo mam oddzwonić?”',
+    };
 
     // ── Przełączanie sekcji (arkuszy) ────────────────────────────────────────
     let currentSection = NAV_SECTIONS.length ? NAV_SECTIONS[0].key : 'leady-b2c';
 
     function applySectionVisibility() {
+      // data-sec może wskazywać kilka sekcji naraz (rozdzielone spacją) —
+      // tak pasek AI żyje i w Leadach, i w Organic.
       document.querySelectorAll('[data-sec]').forEach((elx) => {
-        elx.hidden = elx.dataset.sec !== currentSection;
+        elx.hidden = !elx.dataset.sec.split(' ').includes(currentSection);
       });
       const section = NAV_SECTIONS.find((s) => s.key === currentSection);
       const title = document.getElementById('section-title');
@@ -632,12 +708,16 @@
       document.querySelectorAll('.nav-section').forEach((btn) => {
         btn.classList.toggle('active', btn.dataset.navSec === currentSection);
       });
+      const aiInputEl = document.getElementById('ai-input');
+      if (aiInputEl && AI_PLACEHOLDERS[currentSection]) aiInputEl.placeholder = AI_PLACEHOLDERS[currentSection];
+      refreshAiChip();
     }
 
     function setSection(key) {
       if (!NAV_SECTIONS.some((s) => s.key === key)) return;
       currentSection = key;
       applySectionVisibility();
+      if (key === 'organic') ensureOrganicLoaded();
     }
 
     const STATUS_OPTIONS = [
@@ -697,9 +777,28 @@
 
     let allLeady = [];
 
-    // Aktywny filtr z AI: Set stringów "ID Leada" albo null (brak filtra).
-    // Nakłada się NA istniejące filtry (szukajka + status), patrz matchesFilters.
-    let aiFilterIds = null;
+    // Aktywne filtry z AI per sekcja: klucz sekcji → Set identyfikatorów
+    // (dla leadów "ID Leada", dla Organic pole _id) albo brak wpisu.
+    // Nakładają się NA istniejące filtry (szukajka + selecty), patrz
+    // matchesFilters / matchesOrganicFilters.
+    const aiFilters = {};
+
+    function refreshAiChip() {
+      const btn = document.getElementById('ai-clear');
+      if (!btn) return;
+      const filter = aiFilters[currentSection];
+      btn.hidden = !filter;
+      if (filter) {
+        btn.textContent = `✕ Filtr AI: ${filter.size}`;
+        btn.title = 'Wyczyść filtr AI (pokaż całą listę)';
+      }
+    }
+
+    // Re-render listy aktywnej sekcji (po odpowiedzi AI / zdjęciu filtra).
+    function renderCurrentSection() {
+      if (currentSection === 'organic') renderOrganicList();
+      else renderList();
+    }
 
     // Sortowanie po "ID Leada" malejąco, NIE po kolumnie "Date" — "Date" ma
     // niespójne formaty (ISO / DD.MM.YYYY / co najmniej jeden surowy numer
@@ -868,7 +967,8 @@
     }
 
     function matchesFilters(lead, query, statusFilter) {
-      if (aiFilterIds && !aiFilterIds.has(leadKey(lead))) return false;
+      const aiFilter = aiFilters['leady-b2c'];
+      if (aiFilter && !aiFilter.has(leadKey(lead))) return false;
       if (statusFilter && lead['Deal stage'] !== statusFilter) return false;
       if (!query) return true;
       const haystack = `${lead['Name'] || ''} ${lead._telefon_formatted || ''}`.toLowerCase();
@@ -938,6 +1038,258 @@
     document.getElementById('status-filter').addEventListener('change', renderList);
     document.getElementById('refresh').addEventListener('click', loadLeady);
 
+    // ── Organic: kontakty i wiadomości spoza Leady B2C ──────────────────────
+    // Dwa typy wierszy z GET /api/organic: _typ 'telefon' = kontakty_organic
+    // (status edytowalny pigułką jak u leadów), _typ 'wiadomosci' = klienci
+    // komunikatora bez leada (podgląd ostatniej wiadomości + link do panelu).
+    let allOrganic = [];
+    let organicLoaded = false;
+    const ORGANIC_READ_ONLY = CRM_SHEET_LEVELS['organic'] !== 'edit';
+
+    const KANAL_LABELS = {
+      telefon: 'Telefon', phone: 'Telefon', messenger: 'Messenger', instagram: 'Instagram',
+      tiktok: 'TikTok', email: 'Mail', sms: 'SMS', whatsapp: 'WhatsApp',
+    };
+    const ORGANIC_ZRODLO_LABELS = { organic: 'Telefon', wycena: 'Wycena' };
+
+    function organicChipLabel(row) {
+      if (row._typ === 'telefon') return ORGANIC_ZRODLO_LABELS[row.zrodlo] || row.zrodlo || 'Telefon';
+      return KANAL_LABELS[row.zrodlo] || row.zrodlo || 'Wiadomość';
+    }
+
+    // Kontakty telefoniczne trzymają daty jako tekst "DD.MM.YYYY HH:mm",
+    // komunikator jako ISO — ISO formatujemy do tego samego kształtu.
+    function formatKiedy(v) {
+      if (!v) return '';
+      const s = String(v);
+      if (!/^\d{4}-/.test(s)) return s;
+      const d = new Date(s);
+      if (Number.isNaN(d.getTime())) return s;
+      return d.toLocaleString('pl-PL', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Warsaw',
+      }).replace(',', '');
+    }
+
+    function buildOrganicStatusPill(row) {
+      const wrap = document.createElement('div');
+      wrap.className = 'status-wrap';
+      const tag = document.createElement('span');
+      // .readonly per pigułka (poziom arkusza organic) — patrz CSS wyżej
+      tag.className = 'status-tag' + (ORGANIC_READ_ONLY ? ' readonly' : '');
+      tag.textContent = row.status || '—';
+      applyStatusColor(tag, row.status);
+
+      if (ORGANIC_READ_ONLY) {
+        wrap.append(tag);
+        return wrap;
+      }
+
+      const menu = document.createElement('div');
+      menu.className = 'status-menu';
+      STATUS_OPTIONS.forEach((status) => {
+        const option = document.createElement('button');
+        option.type = 'button';
+        option.className = 'status-option';
+        option.textContent = status;
+        option.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          menu.classList.remove('open');
+          wrap.closest('.lead').classList.remove('status-menu-open');
+          const prev = row.status;
+          row.status = status;
+          tag.textContent = status;
+          applyStatusColor(tag, status);
+          try {
+            const res = await fetch(`${API_BASE}/api/organic/${row.kontakt_id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status }),
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+          } catch (err) {
+            row.status = prev;
+            tag.textContent = prev || '—';
+            applyStatusColor(tag, prev);
+            alert(`Błąd zapisu statusu: ${err.message}`);
+          }
+        });
+        menu.appendChild(option);
+      });
+
+      tag.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const isOpen = menu.classList.toggle('open');
+        wrap.closest('.lead').classList.toggle('status-menu-open', isOpen);
+      });
+
+      wrap.append(tag, menu);
+      return wrap;
+    }
+
+    function orgField(label, text) {
+      const wrap = document.createElement('div');
+      const l = document.createElement('div');
+      l.className = 'org-label';
+      l.textContent = label;
+      const t = document.createElement('div');
+      t.className = 'org-text';
+      t.textContent = text;
+      wrap.append(l, t);
+      return wrap;
+    }
+
+    function organicRow(row) {
+      const details = document.createElement('details');
+      details.className = 'lead';
+      details.dataset.organicId = row._id;
+
+      const summary = document.createElement('summary');
+      const chevron = document.createElement('span');
+      chevron.className = 'chevron';
+
+      const name = document.createElement('span');
+      name.className = 'summary-name';
+      name.textContent = row.imie || '(bez imienia)';
+
+      const dash = document.createElement('span');
+      dash.className = 'summary-dash';
+      dash.textContent = '—';
+
+      const ident = row._telefon_formatted || row.email || '';
+      const identEl = document.createElement('span');
+      identEl.className = 'summary-phone';
+      identEl.textContent = ident || '—';
+
+      const identRow = document.createElement('div');
+      identRow.className = 'summary-phone-row';
+      identRow.append(dash, identEl);
+      if (ident) identRow.append(buildCopyButton(() => ident));
+
+      const summaryMain = document.createElement('div');
+      summaryMain.className = 'summary-main';
+      summaryMain.append(name, identRow);
+
+      const rightAnchor = document.createElement('div');
+      rightAnchor.className = 'right-anchor';
+
+      const kiedy = document.createElement('span');
+      kiedy.className = 'summary-feedback';
+      kiedy.textContent = formatKiedy(row.ostatni_kontakt);
+
+      const chip = document.createElement('span');
+      chip.className = 'org-chip';
+      chip.textContent = organicChipLabel(row);
+
+      rightAnchor.append(kiedy, chip);
+      if (row._typ === 'telefon') rightAnchor.append(buildOrganicStatusPill(row));
+
+      summary.append(chevron, summaryMain, rightAnchor);
+
+      const body = document.createElement('div');
+      body.className = 'org-body';
+
+      if (row._typ === 'telefon') {
+        if (row.ocena_ai) body.append(orgField('Ocena AI', row.ocena_ai));
+        if (row.najblizsza_akcja) {
+          const extra = [row.najblizsza_akcja_termin, row.najblizsza_akcja_owner].filter(Boolean).join(' · ');
+          body.append(orgField('Najbliższa akcja', extra ? `${row.najblizsza_akcja} (${extra})` : row.najblizsza_akcja));
+        }
+        if (row.historia_rozmow) body.append(orgField('Historia rozmów', row.historia_rozmow));
+        const meta = document.createElement('div');
+        meta.className = 'org-meta';
+        meta.textContent = [
+          `Źródło: ${organicChipLabel(row)}`,
+          `Rozmów: ${row.ilosc_rozmow || 0}`,
+          row.owner ? `Owner: ${row.owner}` : null,
+        ].filter(Boolean).join(' · ');
+        body.append(meta);
+      } else {
+        if (row.ostatnia_wiadomosc) {
+          const kier = row.ostatnia_wiadomosc.kierunek === 'in' ? 'od klienta' : 'nasza';
+          body.append(orgField(
+            `Ostatnia wiadomość (${kier}, ${formatKiedy(row.ostatnia_wiadomosc.kiedy)})`,
+            row.ostatnia_wiadomosc.tresc || ''
+          ));
+        }
+        const meta = document.createElement('div');
+        meta.className = 'org-meta';
+        meta.textContent = [
+          `Kanały: ${(row.kanaly || []).map((k) => KANAL_LABELS[k] || k).join(', ')}`,
+          row.email && row._telefon_formatted ? `E-mail: ${row.email}` : null,
+        ].filter(Boolean).join(' · ');
+        body.append(meta);
+        if (row.kom_klient) {
+          const a = document.createElement('a');
+          a.className = 'org-link';
+          const base = (window.LUMLUM_LINKS && window.LUMLUM_LINKS['wiadomosci']) || '/wiadomosci/';
+          a.href = `${base}?klient=${encodeURIComponent(row.kom_klient)}`;
+          a.textContent = 'Otwórz w Wiadomościach →';
+          body.append(a);
+        }
+      }
+
+      details.append(summary, body);
+      return details;
+    }
+
+    function matchesOrganicFilters(row) {
+      const aiFilter = aiFilters['organic'];
+      if (aiFilter && !aiFilter.has(String(row._id))) return false;
+      const typ = document.getElementById('organic-typ').value;
+      if (typ && row._typ !== typ) return false;
+      const query = document.getElementById('organic-search').value.trim().toLowerCase();
+      if (!query) return true;
+      const haystack = [
+        row.imie,
+        row._telefon_formatted,
+        row.email,
+        (row.ostatnia_wiadomosc && row.ostatnia_wiadomosc.tresc) || '',
+      ].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(query);
+    }
+
+    function renderOrganicList() {
+      const list = document.getElementById('organic-list');
+      const filtered = allOrganic.filter(matchesOrganicFilters);
+      list.innerHTML = '';
+      if (!filtered.length) {
+        list.innerHTML = '<p class="empty-note">Brak kontaktów.</p>';
+      } else {
+        filtered.forEach((row) => list.appendChild(organicRow(row)));
+      }
+      document.getElementById('organic-count').textContent = `${filtered.length} / ${allOrganic.length} kontaktów`;
+    }
+
+    async function loadOrganic() {
+      const list = document.getElementById('organic-list');
+      list.innerHTML = '<p class="empty-note">Wczytywanie…</p>';
+      try {
+        const res = await fetch(`${API_BASE}/api/organic`);
+        if (res.status === 401) {
+          window.location.href = `${API_BASE}/login`;
+          return;
+        }
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || 'Błąd wczytywania');
+        allOrganic = body.data || [];
+        organicLoaded = true;
+        renderOrganicList();
+      } catch (err) {
+        list.innerHTML = `<p class="empty-note">Błąd wczytywania: ${err.message}</p>`;
+      }
+    }
+
+    function ensureOrganicLoaded() {
+      if (!organicLoaded) loadOrganic();
+    }
+
+    document.getElementById('organic-search').addEventListener('input', renderOrganicList);
+    document.getElementById('organic-typ').addEventListener('change', renderOrganicList);
+    document.getElementById('organic-refresh').addEventListener('click', loadOrganic);
+
     // ── AI: pytanie → filtr listy + karta z odpowiedzią ─────────────────────
     const aiInput = document.getElementById('ai-input');
     const aiAskBtn = document.getElementById('ai-ask');
@@ -956,36 +1308,36 @@
     }
 
     function clearAiFilter() {
-      aiFilterIds = null;
-      aiClearBtn.hidden = true;
-      renderList();
+      delete aiFilters[currentSection];
+      refreshAiChip();
+      renderCurrentSection();
     }
 
     async function runAiQuery(question) {
       const q = String(question || '').trim();
       if (!q) return;
+      // sekcja zapamiętana na starcie — odpowiedź trafia do listy, o którą
+      // pytano, nawet gdyby ktoś przełączył zakładkę w trakcie
+      const section = currentSection;
       setAiBusy(true);
-      setAiStatus('AI analizuje leady…');
+      setAiStatus(section === 'organic' ? 'AI analizuje kontakty…' : 'AI analizuje leady…');
       try {
         const res = await fetch(`${API_BASE}/api/ai/query`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ section: 'leady-b2c', question: q }),
+          body: JSON.stringify({ section, question: q }),
         });
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
 
         if (Array.isArray(body.ids) && body.ids.length) {
-          aiFilterIds = new Set(body.ids.map(String));
-          aiClearBtn.textContent = `✕ Filtr AI: ${aiFilterIds.size}`;
-          aiClearBtn.title = 'Wyczyść filtr AI (pokaż wszystkie leady)';
-          aiClearBtn.hidden = false;
+          aiFilters[section] = new Set(body.ids.map(String));
         } else {
           // pytanie ogólne/statystyczne — AI świadomie nie filtruje widoku
-          aiFilterIds = null;
-          aiClearBtn.hidden = true;
+          delete aiFilters[section];
         }
-        renderList();
+        refreshAiChip();
+        renderCurrentSection();
 
         if (body.answer) {
           document.getElementById('ai-card-q').textContent = q;
@@ -1141,13 +1493,17 @@
       }
     }
 
-    setInterval(pollRemote, POLL_INTERVAL_MS);
+    // Bez prawa do arkusza Leady B2C (np. konto z samym Organic) nie
+    // odpytujemy /api/leady — ani na starcie, ani pollingiem (same 403).
+    const HAS_LEADY = Boolean(CRM_SHEET_LEVELS['leady-b2c']);
+    if (HAS_LEADY) setInterval(pollRemote, POLL_INTERVAL_MS);
 
     renderNav();
     renderStatusFilterOptions();
-    loadLeady();
+    if (HAS_LEADY) loadLeady();
 
     applySectionVisibility();
+    if (currentSection === 'organic') ensureOrganicLoaded();
   </script>
 </body>
 </html>

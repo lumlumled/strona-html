@@ -7,7 +7,7 @@ const { getClient } = require('./supabase');
 const { registerLeadyEndpoints, EDITABLE_LEAD_FIELDS, NIE_TELEFON_ZRODLA } = require('../../shared/server/leady-endpoints');
 const { registerWycenyEndpoints } = require('../../shared/server/wyceny-endpoints');
 const { registerKontaktEndpoints } = require('../../shared/server/kontakt-endpoints');
-const { createAuth, clientPayload, panelLinks, isAdmin } = require('../../shared/server/auth');
+const { createAuth, clientPayload, panelLinks, isAdmin, userCanSheet } = require('../../shared/server/auth');
 const { servePushWorker, registerPushEndpoints } = require('../../shared/server/push');
 
 const app = express();
@@ -53,6 +53,12 @@ const SHEET_LEADY = 'leady-b2c';
 const requireLeadyView = auth.requireSheet(SHEET_LEADY, 'view');
 const requireLeadyEdit = auth.requireSheet(SHEET_LEADY, 'edit');
 
+// Druga lista CRM: Organic — kontakty i wiadomości spoza Leady B2C
+// (decyzja Antoniego 2026-07-16). Własny arkusz w Pozwoleniach.
+const SHEET_ORGANIC = 'organic';
+const requireOrganicView = auth.requireSheet(SHEET_ORGANIC, 'view');
+const requireOrganicEdit = auth.requireSheet(SHEET_ORGANIC, 'edit');
+
 // Zakładka Wyceny — osobny arkusz z własnymi uprawnieniami (na start widzi
 // go tylko Antoni/admin; Lorenzo dostanie per owner w panelu Pozwolenia).
 // Endpointy wspólne z panelem Sprzedaże: apps/shared/server/wyceny-endpoints.js.
@@ -87,6 +93,7 @@ function handleError(res, err, fallbackStatus = 400) {
 const LEADY_B2C_TABLE = 'Leady B2C';
 const WYCENY_B2C_TABLE = 'Wyceny B2C';
 const LOG_ZMIAN_TABLE = 'Log zmian';
+const KONTAKTY_ORGANIC_TABLE = 'kontakty_organic';
 
 function normalizePhoneDigits(v) {
   return String(v || '').replace(/\D/g, '');
@@ -208,6 +215,205 @@ registerLeadyEndpoints(app, { getClient, requireView: requireLeadyView, requireE
 // wysyłka maila/SMS-a = prawo edycji arkusza.
 registerKontaktEndpoints(app, { getClient, requireView: requireLeadyView, requireEdit: requireLeadyEdit });
 
+// ── Arkusz Organic: nieprzypisane kontakty i wiadomości ─────────────────────
+// Wszystko, co NIE jest leadem B2C, w jednej liście — dwa istniejące źródła
+// sklejane read-time (bez nowej tabeli, wzorzec jak GET /api/kontakt/dla-leada):
+//   • kontakty_organic — telefony "z ulicy" zasilane przez /backlog-b2c/rozmowa
+//     i webhook Zadarmy (mają status/ocenę AI/historię jak lead);
+//   • kom_customers bez crm_lead_id — klienci komunikatora niepowiązani
+//     z żadnym leadem; liczą się tylko wątki triage='inbox' (spam i szumowe
+//     komentarze odsiewa triage AI), kanał 'note' to notatki własne, nie kontakt.
+
+// Klucz telefonu do dopasowań między źródłami: cyfry BEZ prefiksu 48 —
+// kontakty_organic.telefon bywa w obu wariantach (695…, 48577…), tożsamości
+// komunikatora mają zawsze 48.
+function phoneKey(v) {
+  const d = normalizePhoneDigits(v);
+  return d.length === 11 && d.startsWith('48') ? d.slice(2) : d;
+}
+
+async function fetchOrganicRows() {
+  const supabase = getClient();
+  const [kontaktyRes, leadyRes, customersRes] = await Promise.all([
+    supabase.from(KONTAKTY_ORGANIC_TABLE).select('*'),
+    supabase.from(LEADY_B2C_TABLE).select('"Phone number",Email'),
+    supabase.from('kom_customers').select('id, public_id, display_name')
+      .is('crm_lead_id', null)
+      .is('merged_into', null),
+  ]);
+  for (const r of [kontaktyRes, leadyRes, customersRes]) if (r.error) throw r.error;
+
+  // Telefony/e-maile leadów: klient komunikatora może być leadem, którego
+  // nikt jeszcze nie otworzył (most crm_lead_id zapisuje się dopiero przy
+  // wejściu na kartę) — takich nie pokazujemy w Organic.
+  const leadPhones = new Set();
+  const leadEmails = new Set();
+  (leadyRes.data || []).forEach((row) => {
+    const p = phoneKey(row['Phone number']);
+    if (p) leadPhones.add(p);
+    const e = String(row['Email'] || '').trim().toLowerCase();
+    if (e) leadEmails.add(e);
+  });
+
+  const customers = customersRes.data || [];
+  const custIds = customers.map((c) => c.id);
+  let threads = [];
+  let identities = [];
+  if (custIds.length) {
+    const [thRes, idRes] = await Promise.all([
+      supabase.from('kom_threads')
+        .select('id, customer_id, channel, last_message_at')
+        .in('customer_id', custIds)
+        .eq('triage', 'inbox')
+        .neq('channel', 'note'),
+      supabase.from('kom_customer_identities')
+        .select('customer_id, type, value')
+        .in('customer_id', custIds)
+        .in('type', ['phone', 'email']),
+    ]);
+    if (thRes.error) throw thRes.error;
+    if (idRes.error) throw idRes.error;
+    threads = thRes.data || [];
+    identities = idRes.data || [];
+  }
+
+  const threadsByCustomer = new Map();
+  threads.forEach((t) => {
+    const list = threadsByCustomer.get(t.customer_id) || [];
+    list.push(t);
+    threadsByCustomer.set(t.customer_id, list);
+  });
+  const identByCustomer = new Map();
+  identities.forEach((i) => {
+    const entry = identByCustomer.get(i.customer_id) || {};
+    if (i.type === 'phone' && !entry.telefon) entry.telefon = phoneKey(i.value);
+    if (i.type === 'email' && !entry.email) entry.email = String(i.value || '').trim().toLowerCase();
+    identByCustomer.set(i.customer_id, entry);
+  });
+
+  const komClients = customers
+    .map((c) => ({
+      ...c,
+      ...(identByCustomer.get(c.id) || {}),
+      // najświeższy wątek pierwszy — z niego kanał wiodący i podgląd
+      threads: (threadsByCustomer.get(c.id) || [])
+        .sort((a, b) => String(b.last_message_at || '').localeCompare(String(a.last_message_at || ''))),
+    }))
+    .filter((c) => c.threads.length)
+    .filter((c) => !(c.telefon && leadPhones.has(c.telefon)) && !(c.email && leadEmails.has(c.email)));
+
+  // Podgląd ostatniej wiadomości: jedno zapytanie za wszystkie wątki wiodące
+  // (skala: dziesiątki), pierwszy wiersz per wątek po sortowaniu malejąco.
+  const previewByThread = new Map();
+  const topThreadIds = komClients.map((c) => c.threads[0].id);
+  if (topThreadIds.length) {
+    const { data: msgs, error: msgErr } = await supabase
+      .from('kom_messages')
+      .select('thread_id, direction, body, created_at')
+      .in('thread_id', topThreadIds)
+      .order('created_at', { ascending: false })
+      .limit(500);
+    if (msgErr) throw msgErr;
+    (msgs || []).forEach((m) => {
+      if (!previewByThread.has(m.thread_id)) previewByThread.set(m.thread_id, m);
+    });
+  }
+
+  // Wspólny kształt wiersza dla obu typów; _id jest stabilne (klucz filtra AI
+  // i podmian w DOM). Bez tresc_rozmowy — pełny transkrypt nie jest potrzebny
+  // w liście (ten sam powód co pominięcie "Treść rozmowy" w /api/leady).
+  const rows = [];
+  const telefonKeys = new Set();
+  (kontaktyRes.data || []).forEach((k) => {
+    const key = phoneKey(k.telefon);
+    if (key) telefonKeys.add(key);
+    rows.push({
+      _id: `tel-${k.id}`,
+      _typ: 'telefon',
+      kontakt_id: k.id,
+      imie: k.imie || null,
+      _telefon_formatted: formatPhonePlus(k.telefon),
+      email: null,
+      zrodlo: k.zrodlo,
+      status: k.status || null,
+      ocena_ai: k.ocena_ai || null,
+      historia_rozmow: k.historia_rozmow || null,
+      najblizsza_akcja: k.najblizsza_akcja || null,
+      najblizsza_akcja_termin: k.najblizsza_akcja_termin || null,
+      najblizsza_akcja_owner: k.najblizsza_akcja_owner || null,
+      ilosc_rozmow: Number(k.ilosc_rozmow) || 0,
+      ostatni_kontakt: k.ostatni_kontakt || null,
+      owner: k.owner || null,
+      kanaly: ['telefon'],
+      _sort: k.updated_at || '',
+    });
+  });
+
+  komClients.forEach((c) => {
+    // Numer obecny już w kontakty_organic nie robi duplikatu — wiersz
+    // telefoniczny jest bogatszy (status/ocena AI/historia).
+    if (c.telefon && telefonKeys.has(c.telefon)) return;
+    const top = c.threads[0];
+    const preview = previewByThread.get(top.id) || null;
+    rows.push({
+      _id: `kom-${c.public_id}`,
+      _typ: 'wiadomosci',
+      kontakt_id: null,
+      imie: c.display_name || null,
+      _telefon_formatted: c.telefon ? formatPhonePlus(c.telefon) : '',
+      email: c.email || null,
+      zrodlo: top.channel,
+      status: null,
+      ostatnia_wiadomosc: preview
+        ? { kierunek: preview.direction, tresc: String(preview.body || '').slice(0, 300), kiedy: preview.created_at }
+        : null,
+      ostatni_kontakt: top.last_message_at || null,
+      kanaly: [...new Set(c.threads.map((t) => t.channel))],
+      // Deep-link jak z karty leada — front skleja adres z LUMLUM_LINKS
+      // (lokalnie inny port, na Vercelu /wiadomosci/) + ?klient=public_id.
+      kom_klient: c.public_id,
+      _sort: top.last_message_at || '',
+    });
+  });
+
+  // Oba _sort to ISO timestamptz (updated_at / last_message_at) — porównywalne
+  // leksykograficznie, najświeższa aktywność na górze.
+  rows.sort((a, b) => String(b._sort).localeCompare(String(a._sort)));
+  return rows;
+}
+
+// GET /api/organic — pełna lista (skala: dziesiątki wierszy, bez paginacji).
+app.get('/api/organic', requireOrganicView, async (req, res) => {
+  try {
+    res.json({ data: await fetchOrganicRows() });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// PUT /api/organic/:id — zmiana statusu kontaktu telefonicznego z pigułki
+// (jak w Leady B2C). Tylko wiersze z kontakty_organic; wiersze z komunikatora
+// nie mają statusu — nimi zarządza panel Wiadomości.
+app.put('/api/organic/:id', requireOrganicEdit, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Złe ID kontaktu' });
+    const status = String(req.body?.status || '').trim();
+    if (!status || status.length > 60) return res.status(400).json({ error: 'Podaj poprawny status' });
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from(KONTAKTY_ORGANIC_TABLE)
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select('id');
+    if (error) throw error;
+    if (!data || !data.length) return res.status(404).json({ error: 'Nie ma takiego kontaktu' });
+    res.json({ ok: true });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
 // ── AI: dyktowanie + uniwersalny filtr/odpowiedzi ───────────────────────────
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -282,6 +488,7 @@ app.post('/api/transcribe', express.raw({ type: 'audio/*', limit: '8mb' }), asyn
 const AI_SECTIONS = {
   'leady-b2c': {
     label: 'Leady B2C',
+    sheet: SHEET_LEADY,
     idField: 'ID Leada',
     fetchRows: fetchLeadyRows,
     // szum, który tylko pali tokeny: długie identyfikatory/linki bez wartości
@@ -290,6 +497,16 @@ const AI_SECTIONS = {
     // długie pola tekstowe przycinamy — AI ma dostać sedno każdego leada,
     // a nie pełne transkrypcje wszystkich rozmów naraz
     truncate: { 'Treść rozmowy': 400, 'Ocena AI kontaktu': 400, Notes: 400, 'Produkty z wyceny': 200, 'Historia rozmów': 600 },
+    fieldsHint: 'Pola zaczynające się od "_" są wyliczane systemowo: _ilosc_polaczen = liczba połączeń z klientem, _kontakt_dzisiaj = czy był kontakt dziś, _ma_wycene = czy istnieje wygenerowana wycena.',
+  },
+  organic: {
+    label: 'Organic',
+    sheet: SHEET_ORGANIC,
+    idField: '_id',
+    fetchRows: fetchOrganicRows,
+    omit: ['kom_klient', 'kontakt_id', '_sort'],
+    truncate: { historia_rozmow: 600, ocena_ai: 400 },
+    fieldsHint: 'To kontakty SPOZA bazy leadów: _typ "telefon" = rozmowy telefoniczne z obcych numerów (mają status, ocenę AI i historię rozmów), _typ "wiadomosci" = nieprzypisane wiadomości z komunikatora (Messenger/Instagram/TikTok/mail/SMS; pole ostatnia_wiadomosc, kierunek "in" = klient napisał i może czekać na odpowiedź).',
   },
 };
 
@@ -311,7 +528,7 @@ function buildAiQuerySystemPrompt(cfg, columns) {
 
 Dzisiejsza data: ${warsawDateStr()}.
 
-Pola rekordów (nazwy dokładnie jak w danych): ${columns.join(', ')}. Pola zaczynające się od "_" są wyliczane systemowo: _ilosc_polaczen = liczba połączeń z klientem, _kontakt_dzisiaj = czy był kontakt dziś, _ma_wycene = czy istnieje wygenerowana wycena.
+Pola rekordów (nazwy dokładnie jak w danych): ${columns.join(', ')}. ${cfg.fieldsHint || ''}
 
 Odpowiedz WYŁĄCZNIE jednym obiektem JSON, bez markdownu i bez tekstu wokół:
 {"ids": [wartości pola "${cfg.idField}" rekordów pasujących do pytania], "answer": "zwięzła odpowiedź po polsku"}
@@ -327,12 +544,17 @@ Zasady:
 // Jedno wywołanie robi obie rzeczy naraz (decyzja Antoniego): zawęża listę
 // (ids) ORAZ odpowiada tekstowo (answer) — front filtruje widok po ids
 // i pokazuje answer w karcie.
-app.post('/api/ai/query', requireLeadyView, async (req, res) => {
+app.post('/api/ai/query', async (req, res) => {
   try {
     requireOpenAiKey();
     const { section, question } = req.body || {};
     const cfg = AI_SECTIONS[section];
     if (!cfg) return res.status(400).json({ error: `Nieznana sekcja "${section}"` });
+    // Bramka per arkusz sekcji (nie sztywno leady-b2c) — użytkownik z samym
+    // Organic też może pytać AI o swoją listę.
+    if (!userCanSheet(req.user, cfg.sheet, 'view')) {
+      return res.status(403).json({ error: 'Brak dostępu do tego arkusza' });
+    }
     if (!question || !String(question).trim()) return res.status(400).json({ error: 'Brak pytania' });
 
     const rows = await cfg.fetchRows();
@@ -383,3 +605,5 @@ if (require.main === module) {
 }
 
 module.exports = app;
+// do testów na atrapie/skryptem (serwer Vercela używa samego `app`)
+module.exports.fetchOrganicRows = fetchOrganicRows;
