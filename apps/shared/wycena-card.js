@@ -100,21 +100,30 @@ window.WycenaKarta = (() => {
     return node;
   }
 
-  // Kopiowanie do schowka odporne na iOS/Safari: musi się wydarzyć
-  // SYNCHRONICZNIE w geście kliknięcia (żaden await przed). navigator.clipboard
-  // bywa blokowany po await i na nie-HTTPS, więc najpierw execCommand na
-  // ukrytym textarea (działa też na iPhonie), potem API jako fallback.
-  function copyToClipboard(text) {
+  // Kopiowanie do schowka odporne na iOS/Safari. Zwraca Promise<bool> z REALNYM
+  // wynikiem — wcześniej fallback odpalał clipboard.writeText "w tło" i zwracał
+  // true nawet gdy kopiowanie się nie udało (przycisk mówił "Skopiowano", a w
+  // schowku pusto). Nowoczesne API najpierw (iOS 13.4+ i desktop, w geście,
+  // https), execCommand jako zapas dla starszych przeglądarek.
+  async function copyToClipboard(text) {
     const str = String(text || '');
     if (!str) return false;
     try {
+      if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext) {
+        await navigator.clipboard.writeText(str);
+        return true;
+      }
+    } catch (_) { /* zapas niżej */ }
+    try {
       const ta = document.createElement('textarea');
       ta.value = str;
-      ta.contentEditable = 'true';
-      ta.readOnly = false;
+      ta.setAttribute('readonly', '');
       ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
       ta.style.top = '0';
+      ta.style.left = '0';
+      ta.style.width = '1px';
+      ta.style.height = '1px';
+      ta.style.opacity = '0';
       document.body.appendChild(ta);
       if (/ipad|iphone|ipod/i.test(navigator.userAgent)) {
         const range = document.createRange();
@@ -129,15 +138,8 @@ window.WycenaKarta = (() => {
       let ok = false;
       try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
       document.body.removeChild(ta);
-      if (ok) return true;
-    } catch (_) { /* przejdź do API */ }
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(str);
-        return true;
-      }
-    } catch (_) { /* nic */ }
-    return false;
+      return ok;
+    } catch (_) { return false; }
   }
 
   function copyBtn(getValue, label = 'Kopiuj') {
@@ -336,9 +338,10 @@ window.WycenaKarta = (() => {
       send.type = 'button';
       send.title = 'Kopiuje link i oznacza wycenę jako "Link wysłany"';
       send.addEventListener('click', async () => {
-        // Kopiuj NAJPIERW (synchronicznie w geście — inaczej iOS odmawia),
-        // dopiero potem oznacz "link wysłany" w tle.
-        const copied = copyToClipboard(wycena._link || input.value);
+        // Kopiuj NAJPIERW (writeText synchronicznie w geście — inaczej iOS
+        // odmawia), dopiero potem oznacz "link wysłany" w tle.
+        const copied = await copyToClipboard(wycena._link || input.value);
+        if (!copied) { input.focus(); input.select(); }
         send.textContent = copied ? 'Skopiowano ✓' : 'Zaznacz i skopiuj';
         setTimeout(() => { send.textContent = 'Kopiuj link'; }, 1500);
         try {

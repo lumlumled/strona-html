@@ -445,6 +445,16 @@
 .wk-custom-form { display: flex; flex-direction: column; gap: 0.6rem; }
 .wk-cat-custom-ico { font-size: 1.5rem; color: var(--text-muted); }
 
+/* Pole wyboru zdjęcia (formularz spoza oferty) */
+.wk-img-field { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.wk-img-field .wk-thumb-placeholder,
+.wk-custom-head .wk-thumb-placeholder { width: 42px; height: 42px; font-size: 1rem; }
+
+/* Klikalna miniatura pozycji spoza oferty (wybór zdjęcia) */
+.wk-img-clickable { cursor: pointer; border-radius: 10px; }
+.wk-img-clickable:hover .wk-thumb-placeholder,
+.wk-img-clickable:hover .wk-thumb { border-color: var(--accent); }
+
 /* Nagłówek pozycji-taśmy (tytuł + usuń) */
 .wk-edit-item-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .wk-edit-item-title { font-size: 0.82rem; font-weight: 700; }

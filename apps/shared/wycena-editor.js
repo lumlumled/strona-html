@@ -103,6 +103,84 @@ window.WycenaEditor = (() => {
     return !catalog.skus.has(sku);
   }
 
+  // Wszystkie zdjęcia produktów z cennika (taśmy + proste), odsiane po URL —
+  // do wyboru zdjęcia dla pozycji spoza oferty.
+  function collectCatalogImages(catalog) {
+    const out = [];
+    const seen = new Set();
+    const push = (image, nazwa) => {
+      if (!image || seen.has(image)) return;
+      seen.add(image);
+      out.push({ image, nazwa: nazwa || '' });
+    };
+    ['DIG', 'ANA'].forEach((fam) => (catalog.tapes[fam] || []).forEach((t) => push(t.image, t.nazwa)));
+    Object.keys(catalog.simple || {}).forEach((k) => (catalog.simple[k] || []).forEach((s) => push(s.image_url, s.nazwa)));
+    return out;
+  }
+
+  // Modal z siatką zdjęć istniejących produktów; klik = przypisz zdjęcie.
+  function openImagePicker({ catalog, onPick }) {
+    const { modal, destroy } = openModal('Wybierz zdjęcie produktu');
+    const body = h('div', 'wk-catalog-body');
+    const images = collectCatalogImages(catalog);
+    if (!images.length) {
+      body.appendChild(h('div', 'wk-quick-hint', 'Brak zdjęć w cenniku do wyboru.'));
+    } else {
+      const grid = h('div', 'wk-catalog-grid');
+      images.forEach(({ image, nazwa }) => {
+        const card = h('button', 'wk-catalog-card');
+        card.type = 'button';
+        const thumbSlot = h('div', 'wk-catalog-thumb');
+        const img = document.createElement('img'); img.loading = 'lazy'; img.src = image; img.alt = '';
+        img.addEventListener('error', () => { thumbSlot.innerHTML = ''; thumbSlot.appendChild(h('div', 'wk-thumb-placeholder', '💡')); });
+        thumbSlot.appendChild(img);
+        card.appendChild(thumbSlot);
+        card.appendChild(h('div', 'wk-catalog-name', nazwa));
+        card.addEventListener('click', () => { onPick(image); destroy(); });
+        grid.appendChild(card);
+      });
+      body.appendChild(grid);
+    }
+    modal.appendChild(body);
+    const actions = h('div', 'wk-modal-actions');
+    const cancel = h('button', 'wk-btn', 'Anuluj');
+    cancel.type = 'button';
+    cancel.addEventListener('click', destroy);
+    actions.append(cancel);
+    modal.appendChild(actions);
+  }
+
+  // Pole "zdjęcie" (miniatura + Wybierz/Zmień/Usuń) używane w formularzu "spoza
+  // oferty". Trzyma URL w domknięciu; onChange dostaje aktualny URL.
+  function buildImageField(catalog, initialUrl, onChange) {
+    let url = initialUrl || '';
+    const wrap = h('div', 'wk-img-field');
+    const thumb = h('div', 'wk-edit-thumb-slot');
+    const btn = h('button', 'wk-btn wk-btn--slim', '');
+    btn.type = 'button';
+    const clearBtn = h('button', 'wk-btn wk-btn--slim', 'Usuń');
+    clearBtn.type = 'button';
+    function renderThumb() {
+      thumb.innerHTML = '';
+      if (url) {
+        const img = document.createElement('img');
+        img.className = 'wk-thumb'; img.style.width = '42px'; img.style.height = '42px';
+        img.src = url; img.alt = '';
+        img.addEventListener('error', () => { thumb.innerHTML = ''; thumb.appendChild(h('div', 'wk-thumb-placeholder', '✎')); });
+        thumb.appendChild(img);
+      } else {
+        thumb.appendChild(h('div', 'wk-thumb-placeholder', '✎'));
+      }
+      btn.textContent = url ? 'Zmień zdjęcie' : 'Wybierz zdjęcie';
+      clearBtn.style.display = url ? '' : 'none';
+    }
+    btn.addEventListener('click', () => openImagePicker({ catalog, onPick: (u) => { url = u; renderThumb(); onChange(url); } }));
+    clearBtn.addEventListener('click', () => { url = ''; renderThumb(); onChange(url); });
+    renderThumb();
+    wrap.append(thumb, btn, clearBtn);
+    return { el: wrap, get: () => url, set: (u) => { url = u || ''; renderThumb(); } };
+  }
+
   // Konfigurator taśmy: selektor barwa + IP + metry; zdjęcie/cena/nazwa wg
   // wybranego wariantu. Domyślnie 4000K / IP20. Używany przy dodawaniu i edycji.
   function buildTapeConfigurator(family, catalog, initial, onChange) {
@@ -256,10 +334,12 @@ window.WycenaEditor = (() => {
         const nameEl = input('', 'np. Klosz aluminiowy, montaż, projekt…');
         const priceEl = input('', '0,00'); priceEl.inputMode = 'decimal';
         const qtyEl = input('1', 'ilość'); qtyEl.inputMode = 'decimal';
+        const imgField = buildImageField(catalog, '', () => {});
         form.append(
           field('Nazwa produktu', nameEl),
           field('Cena za sztukę (zł, brutto)', priceEl),
           field('Ilość (szt.)', qtyEl),
+          field('Zdjęcie (z istniejących produktów)', imgField.el),
         );
         body.appendChild(form);
         body.appendChild(h('div', 'wk-quick-hint', 'Cena indywidualna — produkt spoza cennika. Jednostka: szt., VAT 23%.'));
@@ -269,8 +349,8 @@ window.WycenaEditor = (() => {
         add.addEventListener('click', () => {
           const name = nameEl.value.trim();
           if (!name) { nameEl.focus(); return; }
-          onPick({ name, SKU: '', quantity: money(qtyEl.value) || 1, unit: 'szt', price: String(money(priceEl.value)), VAT: '23', image_url: '' });
-          nameEl.value = ''; priceEl.value = ''; qtyEl.value = '1';
+          onPick({ name, SKU: '', quantity: money(qtyEl.value) || 1, unit: 'szt', price: String(money(priceEl.value)), VAT: '23', image_url: imgField.get() });
+          nameEl.value = ''; priceEl.value = ''; qtyEl.value = '1'; imgField.set('');
           add.textContent = '✓ Dodano — dodaj kolejną';
           setTimeout(() => { add.textContent = '+ Dodaj pozycję'; }, 1300);
           nameEl.focus();
@@ -390,8 +470,23 @@ window.WycenaEditor = (() => {
           p.unit = 'szt'; p.VAT = '23';
           const wrapc = h('div', 'wk-custom-item');
           const headRow = h('div', 'wk-custom-head');
-          const thumbSlot = h('div', 'wk-edit-thumb-slot');
-          thumbSlot.appendChild(h('div', 'wk-thumb-placeholder', '✎'));
+          // Miniatura klikalna: wybór zdjęcia z istniejących produktów cennika.
+          const thumbSlot = h('div', 'wk-edit-thumb-slot wk-img-clickable');
+          thumbSlot.title = 'Kliknij, aby wybrać zdjęcie z produktów';
+          const renderCustomThumb = () => {
+            thumbSlot.innerHTML = '';
+            if (p.image_url) {
+              const img = document.createElement('img');
+              img.className = 'wk-thumb'; img.style.width = '42px'; img.style.height = '42px';
+              img.src = p.image_url; img.alt = '';
+              img.addEventListener('error', () => { thumbSlot.innerHTML = ''; thumbSlot.appendChild(h('div', 'wk-thumb-placeholder', '✎')); });
+              thumbSlot.appendChild(img);
+            } else {
+              thumbSlot.appendChild(h('div', 'wk-thumb-placeholder', '✎'));
+            }
+          };
+          renderCustomThumb();
+          thumbSlot.addEventListener('click', () => openImagePicker({ catalog, onPick: (u) => { p.image_url = u; renderCustomThumb(); if (ready) onChange(); } }));
           const nameEl = input(p.name || '', 'Nazwa produktu (spoza oferty)');
           nameEl.className = 'wk-custom-name';
           nameEl.addEventListener('input', () => { p.name = nameEl.value; if (ready) onChange(); });
@@ -915,19 +1010,30 @@ window.WycenaEditor = (() => {
   function closeSavedBar() {
     if (savedBarEl) { savedBarEl.remove(); savedBarEl = null; }
   }
-  // Kopiowanie odporne na iOS/Safari — synchronicznie w geście (patrz
-  // wycena-card.js copyToClipboard). execCommand na ukrytym textarea, API fallback.
-  function copyToClipboard(text) {
+  // Kopiowanie do schowka odporne na iOS/Safari. Zwraca Promise<bool> z REALNYM
+  // wynikiem — wcześniej fallback odpalał clipboard.writeText "w tło" i zwracał
+  // true nawet gdy kopiowanie się nie udało (przycisk mówił "Skopiowano", a w
+  // schowku pusto). Nowoczesne API najpierw (iOS 13.4+ i desktop, w geście,
+  // https), execCommand jako zapas dla starszych przeglądarek.
+  async function copyToClipboard(text) {
     const str = String(text || '');
     if (!str) return false;
     try {
+      if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext) {
+        await navigator.clipboard.writeText(str);
+        return true;
+      }
+    } catch (_) { /* zapas niżej */ }
+    try {
       const ta = document.createElement('textarea');
       ta.value = str;
-      ta.contentEditable = 'true';
-      ta.readOnly = false;
+      ta.setAttribute('readonly', '');
       ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
       ta.style.top = '0';
+      ta.style.left = '0';
+      ta.style.width = '1px';
+      ta.style.height = '1px';
+      ta.style.opacity = '0';
       document.body.appendChild(ta);
       if (/ipad|iphone|ipod/i.test(navigator.userAgent)) {
         const range = document.createRange();
@@ -942,15 +1048,8 @@ window.WycenaEditor = (() => {
       let ok = false;
       try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
       document.body.removeChild(ta);
-      if (ok) return true;
-    } catch (_) { /* przejdź do API */ }
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(str);
-        return true;
-      }
-    } catch (_) { /* nic */ }
-    return false;
+      return ok;
+    } catch (_) { return false; }
   }
 
   function showSavedBar(saved, { apiBase, onSaved }) {
@@ -973,10 +1072,11 @@ window.WycenaEditor = (() => {
     const copy = h('button', 'wk-btn primary', '📋 Kopiuj link');
     copy.type = 'button';
     copy.addEventListener('click', async () => {
-      // Kopiuj NAJPIERW (synchronicznie w geście — iOS), potem oznacz
-      // "link wysłany" w tle. Link jest deterministyczny (?id=), więc lokalny
-      // = serwerowy; nie czekamy na POST przed kopiowaniem.
-      const copied = copyToClipboard(link);
+      // Kopiuj NAJPIERW (writeText wołane synchronicznie w geście — iOS), potem
+      // oznacz "link wysłany" w tle. Link jest deterministyczny (?id=), więc
+      // lokalny = serwerowy; nie czekamy na POST przed kopiowaniem.
+      const copied = await copyToClipboard(link);
+      if (!copied) { input.focus(); input.select(); }
       copy.textContent = copied ? 'Skopiowano ✓' : 'Zaznacz i skopiuj';
       setTimeout(() => { copy.textContent = '📋 Kopiuj link'; }, 1500);
       try {
