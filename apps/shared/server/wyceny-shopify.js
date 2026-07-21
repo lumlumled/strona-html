@@ -270,9 +270,12 @@ async function upsertOrder(db, row, order) {
     // sklep_nr w odpowiedzi zawsze — Make dokleja z niego tag w Shopify.
     if (!ETAPY_SYNCA.has(String(w.process_stage))) return { id: w.id, created: false, skipped: 'realized', sklep_nr: w.sklep_nr };
     const { error: upErr } = await db.from('wyceny').update({
-      status: row.status,
-      // SHIPPED (sklep sam zrealizował) wygrywa; inaczej nie cofamy etapu.
-      process_stage: row.process_stage === 'SHIPPED' ? 'SHIPPED' : w.process_stage,
+      // Status/etap NIGDY z synca dla istniejących wierszy: FULFILLED w
+      // Shopify ustawiamy sami (Make, notifyCustomer:false) zaraz po
+      // imporcie — "zaopiekowane" na liście sklepu — więc nie jest już
+      // sygnałem "sklep sam zrealizował" i nie może wyrzucać wiersza z
+      // SHOP_CONFIRM ani przestawiać naszych statusów.
+      process_stage: w.process_stage,
       // paid nigdy nie wraca na false (PENDING w Shopify po naszym pobraniu).
       paid: w.paid || row.paid,
       paid_at: w.paid_at || row.paid_at,
