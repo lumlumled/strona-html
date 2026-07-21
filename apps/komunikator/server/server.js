@@ -328,15 +328,18 @@ function computeSendState(thread, messagesAsc) {
 
 // ── API wątków ───────────────────────────────────────────────────────────────
 
-// Widoki listy: main = otwarte przefiltrowane (triage inbox) — selekcja
-// Antoniego; notifications = automaty do ogarnięcia; closed; all = wszystko
-// łącznie z odfiltrowanym syfem (celowo "bardziej ukryty" dostęp do całości).
+// Widoki listy: reply = TYLKO czekające na odpowiedź (attention+inbox) — karty
+// „Do odpisania" z pełną ostatnią wiadomością klienta i jej załącznikami;
+// main = otwarte przefiltrowane (triage inbox) — selekcja Antoniego;
+// notifications = automaty do ogarnięcia; closed; all = wszystko łącznie
+// z odfiltrowanym syfem (celowo "bardziej ukryty" dostęp do całości).
 app.get('/api/threads', async (req, res) => {
   try {
     const db = getClient();
     const view = String(req.query.view || req.query.status || 'main');
     let query = db.from('kom_threads').select('*').order('last_message_at', { ascending: false, nullsFirst: false });
-    if (view === 'main' || view === 'open') query = query.in('status', ['attention', 'waiting']).eq('triage', 'inbox');
+    if (view === 'reply') query = query.eq('status', 'attention').eq('triage', 'inbox');
+    else if (view === 'main' || view === 'open') query = query.in('status', ['attention', 'waiting']).eq('triage', 'inbox');
     else if (view === 'notifications') query = query.in('status', ['attention', 'waiting']).eq('triage', 'notification');
     else if (view !== 'all') query = query.eq('status', view);
     const { data: threads, error } = await query.limit(200);
@@ -350,7 +353,7 @@ app.get('/api/threads', async (req, res) => {
         ? db.from('kom_customers').select('*').in('id', customerIds)
         : { data: [] },
       threadIds.length
-        ? db.from('kom_messages').select('thread_id,direction,body,created_at,meta')
+        ? db.from('kom_messages').select('id,thread_id,direction,body,created_at,meta')
             .in('thread_id', threadIds).order('created_at', { ascending: false }).limit(600)
         : { data: [] },
       threadIds.length
@@ -362,17 +365,36 @@ app.get('/api/threads', async (req, res) => {
 
     const customers = new Map((customersRes.data || []).map((c) => [c.id, c]));
     const lastMsg = new Map();
+    const lastIn = new Map();
     const lastInbound = new Map();
     (messagesRes.data || []).forEach((m) => {
       if (!lastMsg.has(m.thread_id)) lastMsg.set(m.thread_id, m);
+      if (m.direction === 'in' && !lastIn.has(m.thread_id)) lastIn.set(m.thread_id, m);
       if (opensWindow(m) && !lastInbound.has(m.thread_id)) lastInbound.set(m.thread_id, m.created_at);
     });
     const pendingMerge = new Set((proposalsRes.data || []).map((p) => p.thread_id));
+
+    // Karty „Do odpisania": załączniki ostatniej wiadomości klienta (miniatura
+    // + zwinięty opis AI prosto na karcie).
+    const attsByMsg = new Map();
+    if (view === 'reply' && lastIn.size) {
+      const inIds = [...lastIn.values()].map((m) => m.id);
+      const { data: atts, error: attErr } = await db.from('kom_attachments')
+        .select('id,message_id,type,status,ai_status,ai_summary,ai_corrected,filename,title,original_url')
+        .in('message_id', inIds)
+        .order('position', { ascending: true });
+      if (attErr) throw attErr;
+      (atts || []).forEach((a) => {
+        if (!attsByMsg.has(a.message_id)) attsByMsg.set(a.message_id, []);
+        attsByMsg.get(a.message_id).push(a);
+      });
+    }
 
     res.json({
       data: (threads || []).map((t) => {
         const customer = customers.get(t.customer_id) || {};
         const last = lastMsg.get(t.id);
+        const lastInMsg = lastIn.get(t.id);
         return {
           id: t.id,
           channel: t.channel,
@@ -386,6 +408,15 @@ app.get('/api/threads', async (req, res) => {
             display_name: customer.display_name,
           },
           last_message: last ? { direction: last.direction, body: String(last.body).slice(0, 140) } : null,
+          ...(view === 'reply' ? {
+            last_inbound: lastInMsg ? {
+              id: lastInMsg.id,
+              body: String(lastInMsg.body || '').slice(0, 1200),
+              created_at: lastInMsg.created_at,
+              kind: lastInMsg.meta?.kind || null,
+              attachments: attsByMsg.get(lastInMsg.id) || [],
+            } : null,
+          } : {}),
           window_expires_at: windowExpiresAt(t, lastInbound.get(t.id)),
           has_pending_merge: pendingMerge.has(t.id),
         };

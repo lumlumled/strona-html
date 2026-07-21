@@ -94,6 +94,34 @@
     .badge.merge { color: var(--warn); border-color: var(--warn); }
     .empty { padding: 1.2rem 1rem; color: var(--text-muted); font-size: .85rem; }
 
+    /* ── Karty „Do odpisania" ── */
+    .layout.cards-mode { grid-template-columns: 1fr; max-width: 720px; }
+    .layout.cards-mode .thread-list { display: none; }
+    .layout.cards-mode .main { display: none; }
+    .layout.cards-mode .sidebar { background: transparent; border: none; border-radius: 0; }
+    .cards { display: grid; gap: .9rem; align-content: start; }
+    .card {
+      background: var(--surface-1); border: 1px solid var(--border); border-radius: 16px;
+      padding: 1rem 1.1rem; display: grid; gap: .6rem;
+    }
+    .card-head { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+    .card-name { font-weight: 700; font-size: .95rem; }
+    .card-time { margin-left: auto; font-size: .72rem; color: var(--text-muted); }
+    .card-msg {
+      justify-self: start; max-width: 100%; background: var(--accent-soft); border-radius: 12px;
+      border-bottom-left-radius: 4px; padding: .55rem .8rem; font-size: .9rem; line-height: 1.45;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .card textarea {
+      width: 100%; min-height: 60px; resize: vertical; font: inherit; font-size: .9rem;
+      background: var(--page); color: inherit; border: 1px solid var(--border); border-radius: 12px;
+      padding: .6rem .75rem; overflow: hidden;
+    }
+    .card-note { font-size: .74rem; color: var(--text-muted); }
+    .card-actions { display: flex; gap: .5rem; flex-wrap: wrap; justify-content: flex-end; }
+    .card-actions .btn.left { margin-right: auto; }
+    .card-empty { text-align: center; padding: 2.2rem 1rem; color: var(--text-muted); font-size: .95rem; }
+
     /* ── Rozmowa ── */
     .main { background: var(--surface-1); border: 1px solid var(--border); border-radius: 16px; display: flex; flex-direction: column; min-height: 60vh; }
     /* display:flex wygrywa z atrybutem hidden (reguła UA) — bez tego #placeholder
@@ -206,7 +234,8 @@
         <button class="btn" id="note-btn" title="Notatka z rozmowy telefonicznej">+ Notatka</button>
       </div>
       <div class="tabs" id="tabs">
-        <button class="tab active" data-status="main">Do ogarnięcia</button>
+        <button class="tab active" data-status="reply" id="tab-reply">Do odpisania</button>
+        <button class="tab" data-status="main">Rozmowy</button>
         <button class="tab" data-status="notifications">Powiadomienia</button>
         <button class="tab" data-status="closed">Zamknięte</button>
         <button class="tab" data-status="all">Wszystkie</button>
@@ -251,6 +280,10 @@
     <section class="main" id="placeholder">
       <div class="empty" style="padding:2rem;">Wybierz wątek z listy.</div>
     </section>
+
+    <!-- Karty „Do odpisania": tylko wątki czekające na reakcję, z propozycją
+         AI i akcjami na miejscu. Domyślny widok panelu. -->
+    <section class="cards" id="cards" hidden></section>
   </div>
 
   <dialog id="note-dialog">
@@ -281,7 +314,7 @@
     };
 
     const state = {
-      statusFilter: 'main', threads: [], selectedId: null, detail: null,
+      statusFilter: 'reply', threads: [], selectedId: null, detail: null,
       suggestion: null, // { id, forThread } — sugestia AI załadowana do composera
     };
 
@@ -317,13 +350,37 @@
 
     // ── Lista wątków ──
     async function loadThreads() {
+      setMode();
       try {
         const { data } = await api(`/threads?view=${state.statusFilter}`);
         state.threads = data;
-        renderThreads();
+        if (state.statusFilter === 'reply') renderCardsDiff();
+        else renderThreads();
       } catch (err) {
-        $('thread-list').innerHTML = `<li class="empty">Błąd: ${err.message}</li>`;
+        if (state.statusFilter === 'reply') toast(`Błąd wczytywania: ${err.message}`);
+        else $('thread-list').innerHTML = `<li class="empty">Błąd: ${err.message}</li>`;
       }
+    }
+
+    // Widok kart vs klasyczna lista+rozmowa. Karty = domyślny ekran:
+    // pokazuje WYŁĄCZNIE to, co czeka na odpowiedź.
+    function setMode() {
+      const cardsMode = state.statusFilter === 'reply';
+      $('layout').classList.toggle('cards-mode', cardsMode);
+      $('cards').hidden = !cardsMode;
+      if (cardsMode) {
+        $('main').hidden = true;
+        $('placeholder').hidden = true;
+        $('layout').classList.remove('thread-open');
+        state.selectedId = null;
+      } else if ($('main').hidden) {
+        $('placeholder').hidden = false;
+      }
+    }
+
+    function selectTab(status) {
+      state.statusFilter = status;
+      document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.status === status));
     }
 
     function renderThreads() {
@@ -361,6 +418,202 @@
       return String(s ?? '').replace(/[&<>"']/g, (c) => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
       }[c]));
+    }
+
+    // ── Karty „Do odpisania" ──
+    // Jedna karta = jeden wątek czekający na reakcję (status attention, triage
+    // inbox): ostatnia wiadomość klienta + załączniki + propozycja AI + akcje.
+    const cardSuggestions = new Map(); // threadId → suggestion_id (pętla uczenia korekt)
+
+    function growTa(ta, min = 60) {
+      ta.style.height = 'auto';
+      ta.style.height = Math.max(min, ta.scrollHeight + 2) + 'px';
+    }
+
+    function updateReplyTabCount(n) {
+      $('tab-reply').textContent = n ? `Do odpisania (${n})` : 'Do odpisania';
+    }
+
+    function buildCard(t) {
+      const el = document.createElement('div');
+      el.className = 'card';
+      el.dataset.card = t.id;
+      el.dataset.inbound = t.last_inbound?.id || '';
+
+      const head = document.createElement('div');
+      head.className = 'card-head';
+      const name = document.createElement('span');
+      name.className = 'card-name';
+      name.textContent = t.customer.display_name || t.customer.public_id || '(bez nazwy)';
+      const chan = document.createElement('span');
+      chan.className = 'badge';
+      chan.textContent = CHANNEL_LABELS[t.channel] || t.channel;
+      head.append(name, chan);
+      if (t.last_inbound?.kind === 'comment') {
+        const c = document.createElement('span');
+        c.className = 'badge';
+        c.textContent = 'komentarz pod postem';
+        head.append(c);
+      }
+      const time = document.createElement('span');
+      time.className = 'card-time';
+      time.textContent = fmtTime(t.last_inbound?.created_at || t.last_message_at);
+      head.append(time);
+      el.append(head);
+
+      const msg = document.createElement('div');
+      msg.className = 'card-msg';
+      msg.textContent = t.last_inbound?.body || '(brak treści)';
+      (t.last_inbound?.attachments || []).forEach((a) => msg.appendChild(renderAttachment(a)));
+      el.append(msg);
+
+      const ta = document.createElement('textarea');
+      ta.placeholder = 'Odpowiedź…';
+      ta.addEventListener('input', () => growTa(ta));
+      el.append(ta);
+
+      const note = document.createElement('div');
+      note.className = 'card-note';
+      el.append(note);
+
+      const actions = document.createElement('div');
+      actions.className = 'card-actions';
+
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button'; openBtn.className = 'btn left'; openBtn.textContent = 'Otwórz rozmowę';
+      openBtn.addEventListener('click', () => {
+        selectTab('main');
+        loadThreads();
+        openThread(t.id);
+      });
+
+      const skipBtn = document.createElement('button');
+      skipBtn.type = 'button'; skipBtn.className = 'btn'; skipBtn.textContent = 'Pomiń';
+      skipBtn.title = 'Nie wymaga odpowiedzi - karta znika, wróci gdy klient znów napisze';
+      skipBtn.addEventListener('click', async () => {
+        skipBtn.disabled = true;
+        try {
+          await api(`/threads/${t.id}/status`, { method: 'POST', body: JSON.stringify({ status: 'waiting' }) });
+          el.remove();
+          refreshEmptyCard();
+          toast('Pominięte - wróci, jeśli klient znów napisze');
+        } catch (err) { toast(err.message); skipBtn.disabled = false; }
+      });
+
+      const sendBtn = document.createElement('button');
+      sendBtn.type = 'button'; sendBtn.className = 'btn primary'; sendBtn.textContent = 'Wyślij';
+      sendBtn.addEventListener('click', async () => {
+        const text = ta.value.trim();
+        if (!text) return toast('Wpisz odpowiedź');
+        sendBtn.disabled = true; skipBtn.disabled = true;
+        try {
+          const result = await api(`/threads/${t.id}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({ body: text, suggestion_id: cardSuggestions.get(t.id) || null }),
+          });
+          el.remove();
+          refreshEmptyCard();
+          toast(result.saved === false
+            ? 'Wysłano do klienta, ale zapis w historii się nie udał - NIE wysyłaj ponownie'
+            : 'Wysłano');
+        } catch (err) {
+          sendBtn.disabled = false; skipBtn.disabled = false;
+          if (err.body?.window_closed) note.textContent = `⚠️ ${err.message} Kliknij „Otwórz rozmowę”, tam jest tryb ręczny.`;
+          else toast(err.message);
+        }
+      });
+
+      actions.append(openBtn, skipBtn, sendBtn);
+      el.append(actions);
+      return el;
+    }
+
+    function refreshEmptyCard() {
+      const wrap = $('cards');
+      const n = wrap.querySelectorAll('[data-card]').length;
+      updateReplyTabCount(n);
+      let empty = wrap.querySelector('.card-empty');
+      if (!n) {
+        if (!empty) {
+          empty = document.createElement('div');
+          empty.className = 'card card-empty';
+          empty.textContent = '🎉 Nic do odpisania. Nowe karty pojawią się tu same.';
+          wrap.append(empty);
+        }
+      } else if (empty) {
+        empty.remove();
+      }
+    }
+
+    // Odświeżanie bez kasowania pracy: nowe wątki dochodzą na górę; znikają
+    // (albo przebudowują się po nowej wiadomości klienta) tylko karty
+    // NIETKNIĘTE — auto-refresh nie może zjeść pisanej odpowiedzi.
+    function cardPristine(node) {
+      const ta = node.querySelector('textarea');
+      return !ta || !ta.value.trim() || ta.value === node.dataset.suggestion;
+    }
+
+    function renderCardsDiff() {
+      const wrap = $('cards');
+      const have = new Map([...wrap.querySelectorAll('[data-card]')].map((n) => [n.dataset.card, n]));
+      const ids = new Set(state.threads.map((t) => String(t.id)));
+
+      have.forEach((node, id) => {
+        if (!ids.has(id) && cardPristine(node)) node.remove();
+      });
+
+      const fresh = [];
+      state.threads.forEach((t) => {
+        const node = have.get(String(t.id));
+        if (!node) return;
+        const inboundId = t.last_inbound?.id || '';
+        if (node.dataset.inbound !== inboundId && cardPristine(node)) {
+          const rebuilt = buildCard(t);
+          node.replaceWith(rebuilt);
+          fresh.push(t);
+        }
+      });
+
+      state.threads.slice().reverse().forEach((t) => {
+        if (have.has(String(t.id))) return;
+        wrap.prepend(buildCard(t));
+        fresh.unshift(t);
+      });
+
+      refreshEmptyCard();
+      if (fresh.length) loadCardSuggestions(fresh);
+    }
+
+    // Propozycje AI po kolei, nie równolegle — każda to wywołanie modelu,
+    // a przy załącznikach endpoint sugestii najpierw dociąga ich analizę.
+    const suggestQueue = [];
+    let suggestQueueRunning = false;
+    function loadCardSuggestions(items) {
+      suggestQueue.push(...items);
+      if (suggestQueueRunning) return;
+      suggestQueueRunning = true;
+      (async () => {
+        while (suggestQueue.length) {
+          const t = suggestQueue.shift();
+          const node = document.querySelector(`[data-card="${t.id}"]`);
+          if (!node) continue;
+          const ta = node.querySelector('textarea');
+          const note = node.querySelector('.card-note');
+          if (ta.value.trim()) continue;
+          note.textContent = '✨ AI pisze propozycję…';
+          try {
+            const s = await api(`/threads/${t.id}/suggestion`, { method: 'POST' });
+            if (!node.isConnected) continue;
+            cardSuggestions.set(t.id, s.id);
+            node.dataset.suggestion = s.text;
+            if (!ta.value.trim()) { ta.value = s.text; growTa(ta); }
+            note.textContent = '✨ Propozycja AI - popraw śmiało, każda poprawka uczy system.';
+          } catch (err) {
+            if (node.isConnected) note.textContent = `Sugestia niedostępna: ${err.message}`;
+          }
+        }
+        suggestQueueRunning = false;
+      })();
     }
 
     // ── Rozmowa ──
@@ -924,9 +1177,7 @@
     $('tabs').addEventListener('click', (e) => {
       const btn = e.target.closest('.tab');
       if (!btn) return;
-      document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
-      btn.classList.add('active');
-      state.statusFilter = btn.dataset.status;
+      selectTab(btn.dataset.status);
       loadThreads();
     });
 
@@ -942,8 +1193,7 @@
       } catch (_) { /* brak URL API — zwykłe wczytanie */ }
 
       if ((klient || (watek && /^\d+$/.test(watek)))) {
-        state.statusFilter = 'all';
-        document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.status === 'all'));
+        selectTab('all');
         await loadThreads();
         if (watek && /^\d+$/.test(watek)) { openThread(Number(watek)); return; }
         const t = state.threads.find((x) => x.customer && x.customer.public_id === klient);
