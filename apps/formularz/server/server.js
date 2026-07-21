@@ -384,14 +384,26 @@ app.post('/api/webhooks/sklep', async (req, res) => {
       return res.status(401).json({ error: 'Zły token' });
     }
     const { upsertOrder, orderToRow, buildSkuIndex, normalizeOrderNode } = require('../../shared/server/wyceny-shopify');
-    const orders = wyluskajZamowienia(req.body);
-    if (!orders.length) return res.status(400).json({ error: 'Brak zamówienia w body' });
+    const znalezione = wyluskajZamowienia(req.body);
+    if (!znalezione.length) return res.status(400).json({ error: 'Brak zamówienia w body' });
+    // Scal po id: Make wysyła [duże zamówienie, enrich z drugiego query
+    // (paymentGatewayNames itd.)] — sklejamy w jeden obiekt, pierwszy wygrywa,
+    // enrich uzupełnia tylko brakujące pola.
+    const wgId = new Map();
+    for (const o of znalezione) {
+      const prev = wgId.get(String(o.id));
+      if (!prev) { wgId.set(String(o.id), { ...o }); continue; }
+      for (const [k, v] of Object.entries(o)) {
+        if (v !== null && v !== undefined && prev[k] == null) prev[k] = v;
+      }
+    }
+    const orders = [...wgId.values()];
     const db = getClient();
     const skuIndex = await buildSkuIndex(db);
     const wyniki = [];
     for (const raw of orders) {
-      // Bezpiecznik: query z samą płatnością (order{id name paymentGatewayNames})
-      // to enrich, nie zamówienie — bez pozycji/kwoty nie tworzymy pustego wiersza.
+      // Bezpiecznik: sam enrich (order{id name paymentGatewayNames}) bez
+      // pozycji/kwoty to nie zamówienie — nie tworzymy pustego wiersza.
       if (!raw.lineItems && !raw.totalPriceSet) {
         wyniki.push({ order: raw.name, skipped: 'niekompletne (brak lineItems/totalPriceSet)' });
         continue;
