@@ -217,6 +217,57 @@ app.get('/api/dane', async (req, res) => {
   }
 });
 
+// GET /formularz/api/firma?id=..&t=..&nip=..&country=BE — „Wyszukaj dane
+// firmy" w formularzu: PL → Biała Lista MF (nazwa + adres + status VAT),
+// UE → VIES (walidacja VAT UE + nazwa/adres tam, gdzie kraj je udostępnia;
+// DE/ES nie zwracają). Wymaga ważnego id+tokenu wyceny — endpoint nie jest
+// otwartym proxy do VIES/MF. Wynik lookupu to podgląd dla klienta; wiążąca
+// weryfikacja VAT UE dzieje się ponownie serwerowo przy POST /api/zapis.
+app.get('/api/firma', async (req, res) => {
+  try {
+    const id = Number(String(req.query.id || '').replace(/\D/g, ''));
+    if (!id) return res.status(400).json({ error: 'Brak ID zamówienia' });
+    const wycena = await findWycena(id);
+    if (!wycena || !tokenOk(wycena, req.query.t)) {
+      return res.status(404).json({ error: 'Nie znaleziono zamówienia' });
+    }
+    const vat = require('../../shared/server/wyceny-vat');
+    const { country: nipCc, digits } = vat.rozbierzNip(req.query.nip);
+    const country = String(nipCc || req.query.country || 'PL').trim().toUpperCase();
+    let wynik;
+    if (country === 'PL') {
+      const mf = await vat.mfLookup(digits);
+      wynik = {
+        ok: true, mode: 'pl', found: Boolean(mf.found),
+        vat_active: Boolean(mf.vat_active), vat0: false,
+        status: mf.found ? (mf.vat_active ? 'valid' : 'invalid') : 'not_found',
+        name: mf.name || '', country, ...vat.parseAdres(mf.address),
+      };
+    } else if (vat.VIES_CC.has(vat.viesCountry(country))) {
+      const vies = await vat.viesCheck(country, digits);
+      wynik = {
+        ok: true, mode: 'vies', found: vies.status === 'valid',
+        vat_active: vies.status === 'valid', vat0: vies.status === 'valid',
+        status: vies.status, consultation: vies.consultation || '',
+        name: vies.name || '', country, ...vat.parseAdres(vies.address),
+      };
+    } else {
+      wynik = {
+        ok: true, mode: 'none', found: false, vat_active: false, vat0: false,
+        status: 'not_eu', name: '', country,
+        street: '', house_no: '', flat_no: '', postcode: '', city: '',
+      };
+    }
+    await logEvent(id, 'firma.lookup', {
+      nip: `${country}${digits}`.slice(0, 20), mode: wynik.mode, status: wynik.status,
+    });
+    res.json(wynik);
+  } catch (err) {
+    console.error('Lookup firmy:', err.message);
+    res.status(502).json({ error: 'Błąd serwera' });
+  }
+});
+
 // Pola z formularza zapisywane wprost do kolumn wyceny.
 const FORM_FIELDS = [
   'first_name', 'last_name', 'ship_street', 'ship_house_no', 'ship_flat_no',
@@ -241,6 +292,21 @@ app.post('/api/zapis', async (req, res) => {
       return res.status(409).json({ error: 'Zamówienie zostało już złożone' });
     }
 
+    // Weryfikacja VAT UE (WDT): firma z NIP-em UE poza PL + wysyłka do UE poza
+    // PL → sprawdzamy numer w VIES TUTAJ, serwerowo (chip w przeglądarce to
+    // tylko podgląd UX). Wynik (+ numer konsultacji VIES jako dowód) idzie do
+    // invoice_dane.vat_ue: status 'valid' = pipeline wystawia FV 0% (WDT),
+    // wszystko inne NIE blokuje zamówienia — pipeline wstrzyma fakturę do
+    // ręcznej decyzji (VIES miewa przerwy i opóźnienia danych).
+    let vatUe = null;
+    try {
+      const vatMod = require('../../shared/server/wyceny-vat');
+      vatUe = await vatMod.vatUeDlaZamowienia(body);
+    } catch (err) {
+      console.warn(`VIES przy zapisie ${id}:`, err.message);
+    }
+    const wdt0 = Boolean(vatUe && vatUe.status === 'valid');
+
     const patch = {
       form_status: 'SUBMITTED',
       form_submitted_at: body.form_submitted_at || new Date().toISOString(),
@@ -256,9 +322,16 @@ app.post('/api/zapis', async (req, res) => {
     // tę samą liczbę, niezależnie od tego, czy licznik rabatu później minie.
     if (wycena.kwota_sprzedazy_brutto == null && wycena.kwota_proponowana_brutto != null) {
       const proponowana = num(wycena.kwota_proponowana_brutto);
-      patch.kwota_sprzedazy_brutto = rabat24hAktywny(wycena)
+      let sprzedaz = rabat24hAktywny(wycena)
         ? Math.round((proponowana - num(wycena.rabat24h_kwota)) * 100) / 100
         : proponowana;
+      // WDT: klient płaci NETTO (decyzja Antoniego 2026-07-21) — mrozimy kwotę
+      // już po zdjęciu 23% i flagujemy, żeby pipeline nie przeliczał drugi raz.
+      if (wdt0) {
+        sprzedaz = Math.round((sprzedaz / 1.23) * 100) / 100;
+        vatUe.netto_zamrozone = true;
+      }
+      patch.kwota_sprzedazy_brutto = sprzedaz;
     }
     FORM_FIELDS.forEach((f) => { if (body[f] !== undefined) patch[f] = String(body[f] || '') || null; });
     if (body.email) patch.email = String(body.email).toLowerCase().trim();
@@ -272,6 +345,9 @@ app.post('/api/zapis', async (req, res) => {
     Object.keys(body).forEach((k) => {
       if (k.startsWith('invoice_')) invoiceDane[k] = body[k];
     });
+    // Wynik weryfikacji VIES spoza payloadu klienta (klucz bez prefiksu
+    // invoice_, więc formularz nie może go podstawić).
+    if (vatUe) invoiceDane.vat_ue = vatUe;
     if (Object.keys(invoiceDane).length) patch.invoice_dane = invoiceDane;
 
     const { error } = await getClient().from('wyceny').update(patch).eq('id', id);
@@ -281,6 +357,7 @@ app.post('/api/zapis', async (req, res) => {
       delivery_method: patch.delivery_method,
       punkt_odbioru: patch.punkt_odbioru || '',
       ship_country: patch.ship_country || '',
+      vat_ue: vatUe ? vatUe.status : null,
     });
 
     // Powiadomienie "klient wypełnił formularz" — do ownera + Antoniego.

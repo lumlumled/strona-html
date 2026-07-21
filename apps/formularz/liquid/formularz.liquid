@@ -282,7 +282,40 @@
   <div class="lumlum-orderfill__row lumlum-orderfill__row--2">
     <div class="lumlum-orderfill__field">
       <label class="lumlum-orderfill__label" for="lumlum-inv-nip">NIP <span class="lumlum-orderfill__req" aria-hidden="true">*</span></label>
-      <input class="lumlum-orderfill__input" id="lumlum-inv-nip" name="invoice_company_nip" inputmode="numeric" />
+      <div class="lumlum-orderfill__nip-row">
+        <select class="lumlum-orderfill__input lumlum-orderfill__select lumlum-orderfill__nip-cc" id="lumlum-inv-nip-cc" aria-label="Kraj numeru NIP / VAT UE">
+          <option value="PL" selected>PL</option>
+          <option value="AT">AT</option>
+          <option value="BE">BE</option>
+          <option value="BG">BG</option>
+          <option value="HR">HR</option>
+          <option value="CY">CY</option>
+          <option value="CZ">CZ</option>
+          <option value="DK">DK</option>
+          <option value="EE">EE</option>
+          <option value="FI">FI</option>
+          <option value="FR">FR</option>
+          <option value="DE">DE</option>
+          <option value="GR">GR</option>
+          <option value="HU">HU</option>
+          <option value="IE">IE</option>
+          <option value="IT">IT</option>
+          <option value="LV">LV</option>
+          <option value="LT">LT</option>
+          <option value="LU">LU</option>
+          <option value="MT">MT</option>
+          <option value="NL">NL</option>
+          <option value="PT">PT</option>
+          <option value="RO">RO</option>
+          <option value="SK">SK</option>
+          <option value="SI">SI</option>
+          <option value="ES">ES</option>
+          <option value="SE">SE</option>
+          <option value="XI">XI</option>
+          <option value="OTHER">Inny</option>
+        </select>
+        <input class="lumlum-orderfill__input" id="lumlum-inv-nip" name="invoice_company_nip" inputmode="numeric" />
+      </div>
       <div class="lumlum-orderfill__field-error" data-err-for="invoice_company_nip"></div>
     </div>
 
@@ -292,6 +325,12 @@
       <div class="lumlum-orderfill__field-error" data-err-for="invoice_company_name"></div>
     </div>
   </div>
+
+  <!-- Wyszukiwarka firmy: PL = Biała Lista MF, UE = VIES (walidacja VAT 0%) -->
+  <button type="button" class="lumlum-locker-change" style="margin-top:10px;" data-firma-lookup>
+    Wyszukaj dane firmy
+  </button>
+  <div class="lumlum-orderfill__firma-status is-hidden" data-firma-status role="status" style="margin-top:10px;"></div>
 
   <!-- Przycisk: wklej adres dostawy -->
   <button
@@ -596,6 +635,11 @@
           <div class="lumlum-orderfill__sum-row is-hidden" data-discount-row>
             <div class="lumlum-orderfill__sum-label">Rabat</div>
             <div class="lumlum-orderfill__sum-val lumlum-orderfill__sum-val--neg" data-discount>—</div>
+          </div>
+
+          <div class="lumlum-orderfill__sum-row is-hidden" data-vat0-row>
+            <div class="lumlum-orderfill__sum-label">VAT 0% (firma UE)</div>
+            <div class="lumlum-orderfill__sum-val lumlum-orderfill__sum-val--neg" data-vat0-amount>—</div>
           </div>
 
           <div class="lumlum-orderfill__sum-row" data-shipping-row>
@@ -1239,6 +1283,27 @@
   line-height: 1.45;
 }
 
+/* NIP z prefiksem kraju + status wyszukiwarki firmy (Biała Lista / VIES) */
+.lumlum-orderfill__nip-row{ display: flex; gap: 6px; }
+.lumlum-orderfill__nip-cc{ flex: 0 0 84px; width: 84px; }
+.lumlum-orderfill__firma-status{
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.06);
+  color: rgba(255,255,255,.90);
+  border-radius: 14px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.lumlum-orderfill__firma-status.is-ok{
+  background: rgba(90,200,120,.12);
+  border-color: rgba(90,200,120,.35);
+}
+.lumlum-orderfill__firma-status.is-warn{
+  background: rgba(255,180,80,.10);
+  border-color: rgba(255,180,80,.35);
+}
+
   </style>
 
 <script>
@@ -1249,6 +1314,7 @@
   /* === KONFIG: WEBHOOKI MAKE === */
   var ORDER_GET  = 'https://lumlum.dev/formularz/api/dane';
   var ORDER_POST = 'https://lumlum.dev/formularz/api/zapis';
+  var FIRMA_GET  = 'https://lumlum.dev/formularz/api/firma';
 
   /* === KONFIG: DANE DO PRZELEWU (UI) === */
   var BANK = {
@@ -1298,7 +1364,11 @@
 
     // NEW: to activate warning only if user used copy button
     invCompanyAddressCopiedOnce: false,
-    invCompanyShipSnapshot: null
+    invCompanyShipSnapshot: null,
+
+    // VAT 0% (WDT): VIES potwierdził numer VAT UE w tej sesji (podgląd;
+    // wiążąca weryfikacja ponownie na serwerze przy zapisie)
+    vat0Active: false
   };
 
   /* =========================================================
@@ -1762,18 +1832,152 @@
     return EUROPA_CC.indexOf(cc) !== -1 ? 50 : 100;
   }
 
+  /* VAT 0% (WDT): NIP UE potwierdzony w VIES + faktura na firmę + wysyłka do
+     UE poza PL → klient płaci netto (kwota / 1.23). Chip i przeliczenie to
+     PODGLĄD — wiążącą weryfikację robi ponownie serwer przy zapisie. Dopłata
+     za wysyłkę (50/100) zostaje bez zmian (kwota flat, przy 0% brutto=netto). */
+  var UE_VIES = ['AT','BE','BG','HR','CY','CZ','DK','EE','FI','FR','DE','GR','HU',
+    'IE','IT','LV','LT','LU','MT','NL','PT','RO','SK','SI','ES','SE','XI'];
+
+  function vat0Aktywny(){
+    if (!state.vat0Active) return false;
+    var inv = els.form && els.form.querySelector('[name="invoice_enabled"]');
+    if (!inv || !inv.checked) return false;
+    var shipEl = document.getElementById('lumlum-ship-country');
+    var cc = shipEl ? String(shipEl.value || 'PL').trim().toUpperCase() : 'PL';
+    return cc !== 'PL' && UE_VIES.indexOf(cc) !== -1;
+  }
+
+  // Kwota, którą klient realnie zapłaci: finalna (po rabacie czasowym),
+  // minus VAT przy WDT, plus dopłata za wysyłkę zagraniczną.
+  function kwotaDoZaplaty(){
+    var base = finalnaBrutto(state.payload);
+    if (!isFinite(base)) return NaN;
+    if (vat0Aktywny()) base = Math.round(base / 1.23 * 100) / 100;
+    return base + shippingCostPLN();
+  }
+
   function updateShippingCost(){
     if (!state.payload) return; // przed pobraniem zamówienia nie ruszamy „—"
     var cost = shippingCostPLN();
     var costText = cost > 0 ? moneyPLN(cost) : 'Przesyłka darmowa';
     var base = finalnaBrutto(state.payload);
+    var vat0 = vat0Aktywny();
+    var vatCut = 0;
+    if (vat0 && isFinite(base)){
+      var netto = Math.round(base / 1.23 * 100) / 100;
+      vatCut = Math.round((base - netto) * 100) / 100;
+      base = netto;
+    }
     var totalText = isFinite(base) ? moneyPLN(base + cost) : '—';
     var i;
     var ships = document.querySelectorAll('[data-shipping]');
     for (i = 0; i < ships.length; i += 1) ships[i].textContent = costText;
+    var vrows = document.querySelectorAll('[data-vat0-row]');
+    for (i = 0; i < vrows.length; i += 1) vrows[i].classList.toggle('is-hidden', !vat0);
+    var vamts = document.querySelectorAll('[data-vat0-amount]');
+    for (i = 0; i < vamts.length; i += 1) vamts[i].textContent = moneyPLN(-vatCut);
     var totals = document.querySelectorAll('[data-total]');
     for (i = 0; i < totals.length; i += 1) totals[i].textContent = totalText;
     if (els.totalInline) els.totalInline.textContent = totalText;
+  }
+
+  /* =========================================================
+     Wyszukiwarka firmy: NIP → Biała Lista MF (PL) / VIES (UE).
+     Wypełnia nazwę i adres, pokazuje status, włącza podgląd 0%.
+     ========================================================= */
+  function setFirmaStatus(kind, text){
+    var el = els.form && els.form.querySelector('[data-firma-status]');
+    if (!el) return;
+    el.classList.remove('is-hidden','is-ok','is-warn');
+    if (!kind){ el.classList.add('is-hidden'); el.textContent = ''; return; }
+    if (kind === 'ok') el.classList.add('is-ok');
+    if (kind === 'warn') el.classList.add('is-warn');
+    el.textContent = text;
+  }
+
+  function resetVat0(){
+    if (!state.vat0Active) return;
+    state.vat0Active = false;
+    updateShippingCost();
+  }
+
+  function wypelnijFirme(d){
+    function setIf(id, v){
+      var el = document.getElementById(id);
+      if (el && v) el.value = v;
+    }
+    setIf('lumlum-inv-name', d.name);
+    setIf('lumlum-inv-c-street', d.street);
+    setIf('lumlum-inv-c-house', d.house_no);
+    setIf('lumlum-inv-c-flat', d.flat_no);
+    setIf('lumlum-inv-c-postcode', d.postcode);
+    setIf('lumlum-inv-c-city', d.city);
+    var ctry = document.getElementById('lumlum-inv-c-country');
+    if (ctry && d.country){
+      var cc = d.country === 'XI' ? 'GB' : (d.country === 'EL' ? 'GR' : d.country);
+      var has = false, i;
+      for (i = 0; i < ctry.options.length; i += 1){
+        if (ctry.options[i].value === cc) has = true;
+      }
+      ctry.value = has ? cc : 'OTHER';
+    }
+  }
+
+  async function wyszukajFirme(){
+    var btn = els.form ? els.form.querySelector('[data-firma-lookup]') : null;
+    var ccEl = document.getElementById('lumlum-inv-nip-cc');
+    var nipEl = document.getElementById('lumlum-inv-nip');
+    var cc = ccEl ? String(ccEl.value || 'PL').trim().toUpperCase() : 'PL';
+    var nip = nipEl ? String(nipEl.value || '').replace(/[\s.\-\/]/g, '') : '';
+    // literki na początku numeru (np. BE0417…) same ustawiają kraj
+    var m = nip.match(/^([A-Za-z]{2})(.+)$/);
+    if (m){
+      cc = m[1].toUpperCase() === 'EL' ? 'GR' : m[1].toUpperCase();
+      nip = m[2];
+      if (ccEl) ccEl.value = cc;
+    }
+    if (!nip){
+      setFirmaStatus('warn', 'Wpisz NIP i spróbuj ponownie.');
+      return;
+    }
+    if (btn){ btn.disabled = true; btn.textContent = 'Szukam…'; }
+    state.vat0Active = false;
+    try{
+      var url = FIRMA_GET + '?id=' + encodeURIComponent(state.cleanId)
+        + (state.formToken ? '&t=' + encodeURIComponent(state.formToken) : '')
+        + '&nip=' + encodeURIComponent(nip)
+        + '&country=' + encodeURIComponent(cc);
+      var res = await fetch(url, { cache: 'no-store' });
+      var data = await res.json();
+      if (!res.ok || !data || data.error) throw new Error((data && data.error) || 'lookup');
+      wypelnijFirme(data);
+      if (data.mode === 'pl'){
+        if (!data.found){
+          setFirmaStatus('warn', 'Nie znaleźliśmy firmy o tym NIP w rejestrze. Sprawdź numer albo wpisz dane ręcznie.');
+        } else if (data.vat_active){
+          setFirmaStatus('ok', 'Firma znaleziona - czynny podatnik VAT. Uzupełniliśmy dane, sprawdź je poniżej.');
+        } else {
+          setFirmaStatus('warn', 'Firma znaleziona, ale bez statusu czynnego podatnika VAT. Uzupełniliśmy dane, sprawdź je poniżej.');
+        }
+      } else if (data.mode === 'vies'){
+        if (data.status === 'valid'){
+          state.vat0Active = true;
+          setFirmaStatus('ok', 'Numer VAT UE potwierdzony w VIES - faktura z VAT 0%.'
+            + (data.name ? ' Uzupełniliśmy dane, sprawdź je poniżej.' : ' Ten kraj nie udostępnia danych firmy - uzupełnij je ręcznie.'));
+        } else if (data.status === 'invalid'){
+          setFirmaStatus('warn', 'System VIES nie potwierdza aktywnego numeru VAT UE. Możesz złożyć zamówienie - zweryfikujemy numer ręcznie i ustalimy stawkę VAT przed wystawieniem faktury.');
+        } else {
+          setFirmaStatus('warn', 'System VIES chwilowo nie odpowiada. Złóż zamówienie - zweryfikujemy numer ręcznie przed wystawieniem faktury.');
+        }
+      } else {
+        setFirmaStatus('warn', 'Kraj spoza UE - wpisz dane firmy ręcznie. Fakturę przygotujemy indywidualnie.');
+      }
+    } catch(_e){
+      setFirmaStatus('warn', 'Nie udało się pobrać danych firmy. Wpisz dane ręcznie albo spróbuj ponownie.');
+    }
+    if (btn){ btn.disabled = false; btn.textContent = 'Wyszukaj dane firmy'; }
+    updateShippingCost();
   }
 
   function setLockerAvailability(){
@@ -1998,6 +2202,17 @@
     }
     if (String(o.invoice_company_country || '') === 'PL'){
       o.invoice_company_postcode = formatPLPostcode(o.invoice_company_postcode);
+    }
+
+    // NIP firm spoza PL wysyłamy z prefiksem kraju (np. BE0417497106) —
+    // serwer weryfikuje numer w VIES i przy WDT wystawia fakturę 0%.
+    if (o.invoice_company_nip){
+      var nipCcEl2 = document.getElementById('lumlum-inv-nip-cc');
+      var nipCc2 = nipCcEl2 ? String(nipCcEl2.value || 'PL').trim().toUpperCase() : 'PL';
+      var nipCyfry = String(o.invoice_company_nip).replace(/[\s.\-\/]/g, '').toUpperCase();
+      var nipM = nipCyfry.match(/^([A-Z]{2})(.+)$/);
+      if (nipM){ nipCc2 = nipM[1]; nipCyfry = nipM[2]; }
+      o.invoice_company_nip = (nipCc2 === 'PL' || nipCc2 === 'OTHER') ? nipCyfry : (nipCc2 + nipCyfry);
     }
 
     return o;
@@ -2424,7 +2639,10 @@
     var ty = ensureThankYouOverlay();
 
     var orderLabel = '#' + state.cleanId;
-    var totalValue = state.payload && state.payload.kwota_proponowana_brutto;
+    // Ta sama kwota, którą pokazuje podsumowanie: finalna (po rabacie
+    // czasowym) − VAT przy WDT + dopłata za wysyłkę zagraniczną.
+    var totalValue = kwotaDoZaplaty();
+    if (!isFinite(totalValue)) totalValue = state.payload && state.payload.kwota_proponowana_brutto;
 
     var pm = String(formObj.payment_method || '').toLowerCase().trim();
     if (pm !== 'transfer' && pm !== 'cod') pm = 'transfer';
@@ -2615,6 +2833,7 @@
           toggleInvoicePrivate(false);
         }
         toggleInvoiceCompany(!!t.checked);
+        updateShippingCost(); // odznaczenie firmy wyłącza podgląd VAT 0%
       }
 
       if (t.name === 'invoice_private_different'){
@@ -2643,6 +2862,20 @@
     var invPrivateInit = els.form.querySelector('[name="invoice_private_different"]');
     toggleInvoiceCompany(!!(invCompanyInit && invCompanyInit.checked));
     toggleInvoicePrivate(!!(invPrivateInit && invPrivateInit.checked));
+
+    // Wyszukiwarka firmy: klik = lookup; zmiana NIP-u/kraju kasuje status i
+    // podgląd VAT 0% (trzeba wyszukać ponownie). PL = klawiatura numeryczna,
+    // inne kraje mają litery w numerach (NL…B01, IE…WA).
+    var firmaBtn = els.form.querySelector('[data-firma-lookup]');
+    if (firmaBtn) firmaBtn.addEventListener('click', wyszukajFirme);
+    var nipInput = document.getElementById('lumlum-inv-nip');
+    var nipCcSel = document.getElementById('lumlum-inv-nip-cc');
+    function nipInputMode(){
+      if (nipInput && nipCcSel) nipInput.setAttribute('inputmode', nipCcSel.value === 'PL' ? 'numeric' : 'text');
+    }
+    if (nipInput) nipInput.addEventListener('input', function(){ resetVat0(); setFirmaStatus(null); });
+    if (nipCcSel) nipCcSel.addEventListener('change', function(){ resetVat0(); setFirmaStatus(null); nipInputMode(); });
+    nipInputMode();
   }
 
   /* =========================================================

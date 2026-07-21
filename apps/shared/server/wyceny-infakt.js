@@ -105,19 +105,21 @@ function shippingSurchargePLN(country) {
 // price_brutto × 100). rabatLaczny (ujemny, zł) = (kwota_proponowana − suma
 // pozycji) − aktywny rabat 24h. shippingSurcharge (zł, brutto) doliczany OSOBNO
 // (nie jest reconcilowany rabatem) → podnosi sumę faktury o 50/100.
-function buildServices(items, rabatLaczny, shippingSurcharge = 0) {
+// taxDomyslny: stawka pozycji Wysyłka/Rabat — przy WDT (pipeline przekazuje
+// '0') cała faktura musi być na jednej stawce, żeby rabat reconcilował sumę.
+function buildServices(items, rabatLaczny, shippingSurcharge = 0, taxDomyslny = '23') {
   const services = (items || []).map((p) => ({
     name: p.name,
     unit: 'szt.',
     quantity: Number(p.quantity) || 1,
-    tax_symbol: String(p.VAT || '23'),
+    tax_symbol: String(p.VAT || taxDomyslny),
     gross_price: grosze((Number(String(p.price).replace(',', '.')) || 0) * (Number(p.quantity) || 1)),
   }));
   if (shippingSurcharge && shippingSurcharge > 0) {
-    services.push({ name: 'Wysyłka zagraniczna', unit: 'szt.', quantity: 1, tax_symbol: '23', gross_price: grosze(shippingSurcharge) });
+    services.push({ name: 'Wysyłka zagraniczna', unit: 'szt.', quantity: 1, tax_symbol: taxDomyslny, gross_price: grosze(shippingSurcharge) });
   }
   if (rabatLaczny && rabatLaczny < 0) {
-    services.push({ name: 'Rabat', unit: 'szt.', quantity: 1, tax_symbol: '23', gross_price: grosze(rabatLaczny) });
+    services.push({ name: 'Rabat', unit: 'szt.', quantity: 1, tax_symbol: taxDomyslny, gross_price: grosze(rabatLaczny) });
   }
   return services;
 }
@@ -135,7 +137,9 @@ function buildClient(wycena) {
       client_flat_number: inv.invoice_company_flat_no || '',
       client_city: inv.invoice_company_city || '',
       client_post_code: inv.invoice_company_postcode || '',
-      client_tax_code: wycena.invoice_company_nip || '',
+      // Przy WDT numer z weryfikacji VIES (z prefiksem kraju, np. BE04…) —
+      // stare formularze przysyłały same cyfry, a FV 0% musi mieć pełny VAT UE.
+      client_tax_code: (inv.vat_ue && inv.vat_ue.nip) || wycena.invoice_company_nip || '',
       client_country: inv.invoice_company_country || wycena.ship_country || 'PL',
     };
   }

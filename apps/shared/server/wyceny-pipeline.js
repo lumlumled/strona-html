@@ -109,19 +109,30 @@ async function pushWeekend(db, wycena) {
 //   rabat_laczny   — (kwota_proponowana − suma pozycji) − aktywny rabat 24h
 //                    (ujemna pozycja "Rabat" na fakturze)
 function policzKwoty(wycena) {
-  const suma = (wycena.items || []).reduce((a, p) => a + num(p.price) * (num(p.quantity) || 1), 0);
-  const kwotaBaza = wycena.kwota_proponowana_brutto != null ? num(wycena.kwota_proponowana_brutto) : suma;
+  const wdt0 = jestWdt0(wycena);
+  // Przy WDT pozycje faktury idą w cenach netto ze stawką 0 — suma i rabat
+  // liczone z TYCH pozycji, żeby faktura dalej sumowała się do kwoty finalnej.
+  const items = wdt0 ? itemsNetto(wycena.items) : (wycena.items || []);
+  const sumaBrutto = (wycena.items || []).reduce((a, p) => a + num(p.price) * (num(p.quantity) || 1), 0);
+  const suma = wdt0
+    ? items.reduce((a, p) => a + num(p.price) * (num(p.quantity) || 1), 0)
+    : sumaBrutto;
+  const kwotaBaza = wycena.kwota_proponowana_brutto != null ? num(wycena.kwota_proponowana_brutto) : sumaBrutto;
   // Kwota, którą klient realnie płaci: kwota sprzedaży (zamrożona przy złożeniu
   // zamówienia) albo proponowana − rabat czasowy. Faktura MUSI zgadzać się z tą
   // liczbą (jedno źródło prawdy: wyceny-cena.js).
   const finalna = cenaFinalna(wycena);
-  const kwotaFinalna = Math.round((finalna != null ? num(finalna) : kwotaBaza) * 100) / 100;
+  let kwotaFinalna = Math.round((finalna != null ? num(finalna) : kwotaBaza) * 100) / 100;
+  // WDT: klient płaci netto. Zapis formularza zamraża kwotę już netto
+  // (vat_ue.netto_zamrozone) — w pozostałych przypadkach (kwota ustawiona
+  // przed submitem, stare wznowienia) przeliczamy tutaj z brutto.
+  if (wdt0 && !(vatUeInfo(wycena) || {}).netto_zamrozone) kwotaFinalna = nettoZl(kwotaFinalna);
   // Ujemna pozycja "Rabat" na fakturze tak, by suma pozycji + Rabat = kwota
   // finalna (obejmuje i zniżkę proponowana-vs-pozycje, i rabat czasowy).
   const rabatLaczny = suma
     ? Math.round((kwotaFinalna - suma) * 100) / 100
     : Math.round((kwotaFinalna - kwotaBaza) * 100) / 100;
-  return { suma, kwotaFinalna, rabatLaczny };
+  return { suma, kwotaFinalna, rabatLaczny, wdt0, items };
 }
 
 function jestLocker(wycena) {
@@ -158,6 +169,29 @@ function wymagaCla(wycena) {
 function firmaNaFakturze(wycena) {
   return String(wycena.invoice_company_nip || '').trim().length > 6
     || String(wycena.invoice_company_name || '').trim().length > 1;
+}
+
+// ── WDT 0% (firma z UE z potwierdzonym VAT UE) ──────────────────────────────
+// Zapis formularza (formularz/server) weryfikuje NIP w VIES i odkłada wynik w
+// invoice_dane.vat_ue ({status, nip, consultation, netto_zamrozone…}). Status
+// 'valid' + wysyłka do kraju UE poza PL + firma = faktura WDT ze stawką 0%,
+// klient płaci NETTO (brutto/1.23) — decyzja Antoniego 2026-07-21. Wszystko
+// inne (VIES na nie/niedostępny, poza UE) = HOLD_MANUAL jak dotychczas.
+const nettoZl = (zl) => Math.round((num(zl) / 1.23) * 100) / 100;
+
+function vatUeInfo(wycena) {
+  return (wycena.invoice_dane || {}).vat_ue || null;
+}
+
+function jestWdt0(wycena) {
+  const cc = String(wycena.ship_country || '').toUpperCase();
+  const vat = vatUeInfo(wycena);
+  return Boolean(cc && cc !== 'PL' && UE.has(cc) && firmaNaFakturze(wycena)
+    && vat && vat.status === 'valid');
+}
+
+function itemsNetto(items) {
+  return (items || []).map((p) => ({ ...p, price: nettoZl(p.price), VAT: '0' }));
 }
 
 // Push do adminów (Antoni) — alerty pipeline'u zagranicy (wstrzymania, kurier
@@ -408,11 +442,12 @@ async function startPipeline(db, wycenaId) {
       await releaseLock(db, wycenaId, token);
       return { skipped: 'not-submitted' };
     }
-    const { kwotaFinalna, rabatLaczny } = policzKwoty(wycena);
+    const { kwotaFinalna, rabatLaczny, wdt0, items } = policzKwoty(wycena);
     // Dopłata do wysyłki zagranicznej (PL=0, Europa=50, poza=100) doliczana do
-    // faktury — ta sama reguła, którą klient widzi w formularzu.
+    // faktury — ta sama reguła, którą klient widzi w formularzu. Przy WDT
+    // dopłata zostaje 50/100 (kwota flat; przy stawce 0 brutto == netto).
     const doplataWysylka = infakt.shippingSurchargePLN(wycena.ship_country);
-    const services = infakt.buildServices(wycena.items, rabatLaczny, doplataWysylka);
+    const services = infakt.buildServices(items, rabatLaczny, doplataWysylka, wdt0 ? '0' : '23');
     const isCod = String(wycena.payment_method || '').toLowerCase() !== 'transfer';
     const zagranica = jestZagranica(wycena);
 
@@ -422,17 +457,25 @@ async function startPipeline(db, wycenaId) {
       db.from('wyceny_invoices').select('*').eq('wycena_id', wycenaId).eq('kind', 'proforma'),
     ]);
 
-    // Firma zagraniczna = odwrotne obciążenie, polski 23% VAT byłby błędny —
-    // NIE wystawiamy nic automatycznie (decyzja Antoniego, spec zagranica).
-    // Antoni: FV ręcznie, potem „Oznacz opłacone" (markPaidAndShip bez proformy
-    // zrobi przesyłkę wg routingu). Stan HOLD_MANUAL jest poza retry workera.
-    if (zagranica && firmaNaFakturze(wycena) && !(invoices || []).length) {
+    // Firma zagraniczna BEZ potwierdzonego VAT UE (VIES nie potwierdził / był
+    // niedostępny / kraj poza UE) — polski 23% VAT mógłby być błędny, więc jak
+    // dotąd NIE wystawiamy nic automatycznie: Antoni FV ręcznie, potem „Oznacz
+    // opłacone" (markPaidAndShip bez proformy zrobi przesyłkę wg routingu).
+    // Stan HOLD_MANUAL jest poza retry workera. Z potwierdzeniem VIES (wdt0)
+    // NIE wchodzimy tu — automat jedzie niżej ze stawką 0% (WDT).
+    if (zagranica && firmaNaFakturze(wycena) && !wdt0 && !(invoices || []).length) {
+      const vat = vatUeInfo(wycena);
+      const ccShip = String(wycena.ship_country || '').toUpperCase();
+      const powod = !UE.has(ccShip) ? 'poza UE (cło/eksport)'
+        : !vat ? 'brak weryfikacji VIES'
+          : (vat.status === 'invalid' ? 'VIES nie potwierdził numeru' : 'VIES niedostępny');
       await logEvent(db, wycenaId, 'pipeline.hold_b2b_zagranica', {
         kraj: wycena.ship_country, nip: wycena.invoice_company_nip || null,
+        vies: vat ? vat.status : null, powod,
       });
       await pushDoAdminow(db, {
         title: 'Firma zagraniczna — faktura ręcznie',
-        body: `#${wycena.id} · ${wycena.ship_country} · odwrotne obciążenie — wystaw FV ręcznie, potem „Oznacz opłacone"`,
+        body: `#${wycena.id} · ${wycena.ship_country} · ${powod} — zdecyduj: FV 0% czy 23%, wystaw ręcznie, potem „Oznacz opłacone"`,
         url: '/sprzedaze/',
         tag: `hold-b2b-${wycena.id}`,
       });
@@ -442,6 +485,18 @@ async function startPipeline(db, wycenaId) {
         worker_last_error: null,
       });
       return { ok: true, path: 'hold-b2b-zagranica' };
+    }
+
+    // Ślad audytowy WDT na osi zdarzeń: numer VAT UE + numer konsultacji VIES
+    // (dowód weryfikacji do dokumentacji 0%).
+    if (wdt0 && !(invoices || []).length) {
+      const vat = vatUeInfo(wycena) || {};
+      await logEvent(db, wycenaId, 'pipeline.wdt0', {
+        nip: vat.nip || wycena.invoice_company_nip || null,
+        vies_konsultacja: vat.consultation || null,
+        sprawdzono: vat.checked_at || null,
+        kwota_netto: kwotaFinalna,
+      });
     }
 
     if (isCod) {
@@ -962,5 +1017,5 @@ async function runWorker(db) {
 
 module.exports = {
   startPipeline, onInvoicePaid, onDelivered, reship, runWorker, policzKwoty, markPaidAndShip,
-  realizujSklep, jestFurgonetka, wymagaCla, firmaNaFakturze,
+  realizujSklep, jestFurgonetka, wymagaCla, firmaNaFakturze, jestWdt0,
 };
