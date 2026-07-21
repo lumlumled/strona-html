@@ -410,9 +410,23 @@ app.post('/api/webhooks/sklep', async (req, res) => {
       }
       const order = normalizeOrderNode(raw);
       const result = await upsertOrder(db, orderToRow(order, skuIndex), order);
-      wyniki.push({ order: order.name, ...result });
+      // fulfillment_order_id z enricha (małe query z fulfillmentOrders) —
+      // Make bierze go z odpowiedzi do mutacji fulfillmentCreate.
+      const foNodes = raw.fulfillmentOrders?.nodes || [];
+      const fo = foNodes.find((n) => n && n.status === 'OPEN') || foNodes[0] || null;
+      wyniki.push({ order: order.name, order_id: order.id, fulfillment_order_id: fo ? fo.id : null, ...result });
     }
-    res.json({ ok: true, wyniki });
+    // Płaskie pola na wierzchu (pierwsze zamówienie) — scenariusz Make obrabia
+    // jedno zamówienie na przebieg, a płaski pill mapuje się bez formułek.
+    const p = wyniki[0] || {};
+    res.json({
+      ok: true,
+      sklep_nr: p.sklep_nr || null,
+      created: Boolean(p.created),
+      order_id: p.order_id || null,
+      fulfillment_order_id: p.fulfillment_order_id || null,
+      wyniki,
+    });
   } catch (err) {
     console.error('Webhook sklep:', err.message);
     res.status(502).json({ error: err.message.slice(0, 300) });
