@@ -313,6 +313,11 @@ async function handleComment(db, payload) {
     senderValue: String(author.id),
     history: [],
   });
+  // Komentarz z sygnałem zakupowym zasługuje na kartę „Do odpisania" tak samo
+  // jak DM — bez tego wisiał w 'waiting' i łatwo było go przegapić.
+  if (verdict?.triage === 'inbox' && verdict?.needsReply !== false) {
+    await db.from('kom_threads').update({ status: 'attention' }).eq('id', thread.id);
+  }
   return { ok: true, customer: customer.public_id, customerCreated: created, threadId: thread.id, comment: true, triage: verdict?.triage };
 }
 

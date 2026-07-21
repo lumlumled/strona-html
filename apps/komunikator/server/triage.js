@@ -26,6 +26,13 @@ const KIND_POLICY = {
   email: 'email: jak dm dla ludzi. Automaty rozdzielaj surowo: "notification" TYLKO gdy wymaga działania właściciela (błąd krytyczny do naprawienia, faktura do zaksięgowania, alert billingowy, odpowiedź supportu na nasze zgłoszenie); cykliczne raporty, newslettery, onboarding narzędzi, marketing, powiadomienia informacyjne bez potrzeby działania → "archive". Adres typu no-reply sam w sobie NIE przesądza — automat może przekazywać wiadomość OD KLIENTA (np. "Przychodząca wiadomość SMS od ..."), a taka jest "inbox".',
 };
 
+// Wiadomości-atrapy: kliknięcie „Rozpocznij" na Messengerze, pusty SMS itp.
+// Zero treści = zero odpowiedzi = zero karty „Do odpisania". Bez LLM.
+const STUB_NO_REPLY = new Set(['', '[pusta wiadomość]', '[pusty komentarz]', 'rozpocznij', 'get started', 'getstarted', 'start', 'zaczynamy']);
+function isStub(text) {
+  return STUB_NO_REPLY.has(String(text || '').trim().toLowerCase());
+}
+
 async function mutedSender(db, senderType, senderValue) {
   if (!senderType || !senderValue) return null;
   const value = String(senderValue).toLowerCase();
@@ -61,8 +68,16 @@ function buildSystem(kind, examples) {
         ...examples.map((e) => `- "${e}"`)]
       : []),
     '',
+    'Dodatkowo oceń "wymaga_odpowiedzi": czy TA wiadomość woła o odpowiedź handlowca?',
+    '- false: grzecznościowe zamknięcie/potwierdzenie bez pytania i bez nowej informacji ("ok, dziękuję",',
+    '  "super, pozdrawiam", "no to działam", "no to teraz tylko kucie i szukanie", "jasne", sama emotka/lajk),',
+    '  kliknięcie startu rozmowy bez treści.',
+    '- true: pytanie, prośba, nowa informacja do sprawy (wymiary, zdjęcie, adres, termin, decyzja o zakupie),',
+    '  reklamacja/problem, cokolwiek, na co klient realnie czeka.',
+    '- W razie wątpliwości: true (lepiej pokazać kartę niż zgubić klienta).',
+    '',
     'Odpowiedz WYŁĄCZNIE JSON-em bez żadnego innego tekstu:',
-    '{"category":"inbox"|"notification"|"archive","reason":"uzasadnienie po polsku, max 12 słów"}',
+    '{"category":"inbox"|"notification"|"archive","reason":"uzasadnienie po polsku, max 12 słów","wymaga_odpowiedzi":true|false}',
   ].join('\n');
 }
 
@@ -73,15 +88,24 @@ function parseVerdict(text) {
   if (!['inbox', 'notification', 'archive'].includes(parsed.category)) {
     throw new Error(`Nieznana kategoria: ${parsed.category}`);
   }
-  return { triage: parsed.category, reason: String(parsed.reason || '').slice(0, 200) };
+  return {
+    triage: parsed.category,
+    reason: String(parsed.reason || '').slice(0, 200),
+    // Domyślnie true — brak pola / dziwna wartość nie może schować klienta.
+    needsReply: parsed.wymaga_odpowiedzi !== false,
+  };
 }
 
 // Klasyfikacja jednej wiadomości. history = ostatnie wiadomości wątku
 // (rosnąco) — kontynuacja rozmowy zakupowej ma zostać w inboxie, nawet
 // gdy pojedyncza wiadomość brzmi neutralnie ("ok, to poproszę").
 async function classifyMessage(db, { kind, channel, text, senderName, senderType, senderValue, history = [] }) {
+  // Atrapa (start rozmowy, pusta treść) — nie ma na co odpowiadać, bez LLM.
+  if (isStub(text)) {
+    return { triage: 'inbox', reason: 'start rozmowy / brak treści', needsReply: false, by: 'rule' };
+  }
   const muted = await mutedSender(db, senderType, senderValue);
-  if (muted) return { triage: muted.action, reason: 'wyciszony nadawca', by: 'rule' };
+  if (muted) return { triage: muted.action, reason: 'wyciszony nadawca', needsReply: false, by: 'rule' };
 
   const examples = await ruleExamples(db);
   const context = history.slice(-5)
@@ -116,6 +140,16 @@ async function applyTriage(db, thread, messageId, result) {
   await db.from('kom_threads')
     .update({ triage: result.triage, triage_reason: result.reason })
     .eq('id', thread.id);
+
+  // Karty „Do odpisania" = status attention. Grzecznościowe zamknięcie
+  // ("ok, dziękuję"), kliknięcie startu czy pusta wiadomość NIE wołają
+  // o odpowiedź — wątek schodzi na 'waiting' (wróci przy realnej wiadomości).
+  // Warunek na status w zapytaniu, nie na obiekcie — thread bywa nieświeży.
+  if (result.needsReply === false) {
+    await db.from('kom_threads')
+      .update({ status: 'waiting' })
+      .eq('id', thread.id).eq('status', 'attention');
+  }
 }
 
 // Awaryjna kategoria, gdy LLM nie odpowiedział (timeout webhooka itp.):
@@ -123,8 +157,8 @@ async function applyTriage(db, thread, messageId, result) {
 // doklasyfikuje go w ≤30 min i ewentualnie wypromuje.
 function fallbackTriage(kind) {
   return kind === 'comment'
-    ? { triage: 'archive', reason: 'czeka na klasyfikację', by: 'fallback' }
-    : { triage: 'inbox', reason: 'czeka na klasyfikację', by: 'fallback' };
+    ? { triage: 'archive', reason: 'czeka na klasyfikację', needsReply: false, by: 'fallback' }
+    : { triage: 'inbox', reason: 'czeka na klasyfikację', needsReply: true, by: 'fallback' };
 }
 
 function withTimeout(promise, ms) {
@@ -141,8 +175,11 @@ async function classifyInWebhook(db, thread, messageId, input, budgetMs = 2500) 
   try {
     const result = await withTimeout(classifyMessage(db, input), budgetMs);
     await applyTriage(db, thread, messageId, result);
-    // Świeża wiadomość real-time — jeśli trafia do 'inbox', dzwoń od razu.
-    if (result.triage === 'inbox') await notifyNewMessage(db, { thread, body: input.text });
+    // Świeża wiadomość real-time — dzwonimy tylko, gdy realnie jest na co
+    // odpowiadać (grzecznościowe "ok, dziękuję" nie budzi telefonu).
+    if (result.triage === 'inbox' && result.needsReply !== false) {
+      await notifyNewMessage(db, { thread, body: input.text });
+    }
     return result;
   } catch (err) {
     console.error('Triage (webhook):', err.message);
@@ -207,7 +244,7 @@ async function sweep(db, limit = 20) {
         // historię (webhook nie zdążył sklasyfikować / import), której nie
         // chcemy nagle wypushować.
         const wiek = Date.now() - new Date(msg.created_at).getTime();
-        if (result.triage === 'inbox' && wiek < PUSH_FRESH_MS) {
+        if (result.triage === 'inbox' && result.needsReply !== false && wiek < PUSH_FRESH_MS) {
           await notifyNewMessage(db, { thread, body: msg.body });
         }
       }
