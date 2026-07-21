@@ -18,6 +18,7 @@ const gmail = require('./ingest/gmail');
 const triage = require('./triage');
 const commitments = require('./commitments');
 const suggest = require('./suggest');
+const media = require('./media');
 
 const app = express();
 // rawBody potrzebny do weryfikacji X-Zernio-Signature (HMAC surowego body).
@@ -112,12 +113,32 @@ async function runWorker(req, res) {
     console.error('Worker (commitments):', err.message);
     result.commitments = { error: err.message };
   }
+  try {
+    // Siatka bezpieczeństwa dla załączników (główny takt: /api/cron/media).
+    result.media = await media.sweep(db, { budgetMs: 60000 });
+  } catch (err) {
+    console.error('Worker (media):', err.message);
+    result.media = { error: err.message };
+  }
   console.log('Cron worker:', JSON.stringify(result));
   res.json(result);
 }
 
 app.all('/api/cron/worker', runWorker);
 app.all('/api/cron/tiktok-comments', runWorker);
+
+// Załączniki: pobieranie do Storage (CDN Mety wygasa!) + analiza AI.
+// pg_cron co 2 min w godzinach pracy — zdjęcie jest zwykle opisane, zanim
+// Antoni otworzy wątek; resztę dociąga endpoint sugestii (processThread).
+app.all('/api/cron/media', async (req, res) => {
+  if (!isCronAuthorized(req)) return res.status(401).json({ error: 'Brak autoryzacji' });
+  try {
+    res.json(await media.sweep(getClient(), { budgetMs: 150000 }));
+  } catch (err) {
+    console.error('Cron media:', err.message);
+    res.status(502).json({ ok: false, error: err.message });
+  }
+});
 
 // Push z Gmaila (Pub/Sub push subscription). Powiadomienie to tylko dzwonek —
 // treść i tak bierzemy z Gmail API (syncGmail, idempotentny). Token w query
@@ -384,13 +405,16 @@ app.get('/api/threads/:id', async (req, res) => {
     if (!thread) return res.status(404).json({ error: 'Nie znaleziono wątku' });
 
     const customer = await identity.loadCustomer(db, thread.customer_id);
-    const [messagesRes, identitiesRes, proposalsRes, threadsRes] = await Promise.all([
+    const [messagesRes, identitiesRes, proposalsRes, threadsRes, attachmentsRes] = await Promise.all([
       db.from('kom_messages').select('*').eq('thread_id', thread.id).order('created_at', { ascending: true }).limit(500),
       db.from('kom_customer_identities').select('*').eq('customer_id', customer.id),
       db.from('kom_merge_proposals').select('*').eq('thread_id', thread.id).eq('status', 'pending'),
       db.from('kom_threads').select('*').eq('customer_id', customer.id),
+      db.from('kom_attachments')
+        .select('id,message_id,position,type,mime,filename,title,original_url,status,ai_status,ai_summary,ai_corrected')
+        .eq('thread_id', thread.id).order('position', { ascending: true }),
     ]);
-    for (const r of [messagesRes, identitiesRes, proposalsRes, threadsRes]) if (r.error) throw r.error;
+    for (const r of [messagesRes, identitiesRes, proposalsRes, threadsRes, attachmentsRes]) if (r.error) throw r.error;
 
     // Wzbogacenie tożsamości z treści rozmowy: gdy kontaktowi brakuje maila lub
     // telefonu (np. z Messengera przychodzi tylko fb id), wyłuskujemy je z tego,
@@ -489,6 +513,7 @@ app.get('/api/threads/:id', async (req, res) => {
         threads: (threadsRes.data || []).map((t) => ({ id: t.id, channel: t.channel, status: t.status })),
       },
       messages: messagesRes.data || [],
+      attachments: attachmentsRes.data || [],
       send: sendState,
       window_expires_at: sendState.window_expires_at || null,
       merge_proposals: proposals.map((p) => ({
@@ -524,6 +549,48 @@ app.post('/api/threads/:id/status', async (req, res) => {
   }
 });
 
+// ── Załączniki: plik + edycja opisu AI ──────────────────────────────────────
+
+// Podgląd/odtwarzanie: redirect na podpisany URL Storage (bucket prywatny).
+// <img>/<video> w panelu idą przez ten endpoint — sesja pilnuje dostępu.
+app.get('/api/attachments/:id/file', async (req, res) => {
+  try {
+    const db = getClient();
+    const { data, error } = await db.from('kom_attachments').select('*').eq('id', req.params.id).limit(1);
+    if (error) throw error;
+    const att = data && data[0];
+    if (!att) return res.status(404).json({ error: 'Nie znaleziono załącznika' });
+    if (!att.storage_path) {
+      if (att.original_url) return res.redirect(att.original_url);
+      return res.status(404).json({ error: 'Załącznik jeszcze niepobrany' });
+    }
+    res.redirect(await media.signedUrl(db, att));
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// Korekta opisu AI: Antoni poprawia, poprawka od razu wchodzi do kontekstu
+// sugestii (notesByMessage czyta ai_summary, ai_corrected znaczy pochodzenie).
+app.patch('/api/attachments/:id', async (req, res) => {
+  try {
+    const summary = String(req.body?.ai_summary || '').trim();
+    if (!summary) return res.status(400).json({ error: 'Pusty opis' });
+    const db = getClient();
+    const { data, error } = await db.from('kom_attachments').update({
+      ai_summary: summary.slice(0, 2000),
+      ai_corrected: true,
+      ai_status: 'done',
+      updated_at: new Date().toISOString(),
+    }).eq('id', req.params.id).select('id');
+    if (error) throw error;
+    if (!data || !data.length) return res.status(404).json({ error: 'Nie znaleziono załącznika' });
+    res.json({ ok: true });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
 // ── Sugestia AI (lazy — generowana na otwarcie wątku w panelu) ──────────────
 
 app.post('/api/threads/:id/suggestion', async (req, res) => {
@@ -533,6 +600,15 @@ app.post('/api/threads/:id/suggestion', async (req, res) => {
     if (error) throw error;
     const thread = threads && threads[0];
     if (!thread) return res.status(404).json({ error: 'Nie znaleziono wątku' });
+
+    // Załączniki wątku "na żądanie": jeśli cron nie zdążył opisać zdjęcia/rzutu,
+    // dociągamy analizę teraz — propozycja odpowiedzi ma wiedzieć, co klient
+    // przysłał. Budżet ograniczony; porażka nie blokuje sugestii.
+    try {
+      await media.processThread(db, thread.id, { budgetMs: 60000 });
+    } catch (mediaErr) {
+      console.error('Analiza załączników przed sugestią:', mediaErr.message);
+    }
 
     const customer = await identity.loadCustomer(db, thread.customer_id);
     const [messagesRes, identitiesRes] = await Promise.all([
@@ -662,20 +738,32 @@ app.post('/api/threads/:id/messages', async (req, res) => {
       throw sendErr;
     }
 
+    // Wiadomość POSZŁA do klienta — od tego momentu błąd zapisu w bazie NIE
+    // MOŻE wrócić do panelu jako błąd wysyłki: użytkownik kliknąłby „Wyślij”
+    // jeszcze raz i klient dostałby dubla (dokładnie tak działał bug
+    // kom_messages_sent_by_check przed migracją 010). Zapis historii jest
+    // best-effort; porażkę raportujemy jako saved:false, front pokazuje toast.
+    //
     // external_message_id dla Zernio celowo NULL — webhook message.sent dopina
     // ID Zernio do tego wiersza (dedup po treści w ingest/zernio.js) zamiast
     // dublować. Gmail webhooka nie ma, więc ID wpisujemy od razu.
-    const { error: msgErr } = await db.from('kom_messages').insert({
-      thread_id: thread.id,
-      direction: 'out',
-      body: text,
-      sent_by: req.user?.email || 'antoni',
-      suggestion_id: req.body?.suggestion_id || null,
-      ...(externalMessageId ? { external_message_id: externalMessageId } : {}),
-      ...(Object.keys(outMeta).length ? { meta: outMeta } : {}),
-    });
-    if (msgErr) throw msgErr;
-    await db.from('kom_threads').update({ status: 'waiting', last_message_at: new Date().toISOString() }).eq('id', thread.id);
+    let saved = true;
+    try {
+      const { error: msgErr } = await db.from('kom_messages').insert({
+        thread_id: thread.id,
+        direction: 'out',
+        body: text,
+        sent_by: req.user?.email || 'antoni',
+        suggestion_id: req.body?.suggestion_id || null,
+        ...(externalMessageId ? { external_message_id: externalMessageId } : {}),
+        ...(Object.keys(outMeta).length ? { meta: outMeta } : {}),
+      });
+      if (msgErr) throw msgErr;
+      await db.from('kom_threads').update({ status: 'waiting', last_message_at: new Date().toISOString() }).eq('id', thread.id);
+    } catch (dbErr) {
+      saved = false;
+      console.error('Zapis wysłanej wiadomości do historii:', dbErr.message);
+    }
 
     // Rozlicz sugestię: bez zmian → sent_as_is, poprawiona → edited + wpis
     // do korpusu uczącego (kom_examples). Błąd tutaj nie może cofnąć wysyłki.
@@ -689,7 +777,7 @@ app.post('/api/threads/:id/messages', async (req, res) => {
         console.error('Rozliczenie sugestii:', suggErr.message);
       }
     }
-    res.json({ ok: true });
+    res.json({ ok: true, saved });
   } catch (err) {
     handleError(res, err, 502);
   }

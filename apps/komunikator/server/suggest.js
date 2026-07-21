@@ -6,9 +6,10 @@
 // dociągnie Etap 7 — kolumna na razie zostaje NULL).
 
 const llm = require('./llm');
+const media = require('./media');
 const knowledge = require('../../shared/server/knowledge');
 
-const PROMPT_VERSION = 'suggest-v2-kb';
+const PROMPT_VERSION = 'suggest-v3-media';
 const CONTACT_PHONE = '604 650 590';
 
 const SYSTEM_PROMPT = `Jesteś asystentem Antoniego, właściciela LumLum — polskiej firmy sprzedającej
@@ -32,17 +33,25 @@ Zasady:
   (telefon = najszybsza droga do wyceny). Nie wymuszaj tego w każdej wiadomości.
 - Jeśli klient zadał proste pytanie (np. jak się skontaktować) — odpowiedz wprost, jednym-dwoma zdaniami.
 - Notatki oznaczone [notatka Antoniego] to wewnętrzny kontekst — nie odnoś się do nich wprost.
+- Wstawki typu [zdjęcie od klienta - analiza AI: ...] opisują załączniki (zdjęcia, rzuty, filmy).
+  Traktuj je jak treść od klienta i odnoś się do nich naturalnie ("widzę na rzucie...").
+  Wymiary z takiej analizy są ORIENTACYJNE — jeśli wycena od nich zależy, dopisz prośbę
+  o potwierdzenie wymiarów zamiast podawać kwotę jak pewnik.
 
 Poniżej przykłady wcześniejszych odpowiedzi Antoniego (jeśli są) — trzymaj się ich stylu i sposobu
 prowadzenia rozmowy. Odpowiedz WYŁĄCZNIE treścią wiadomości do klienta, bez komentarzy.`;
 
 // Historia wątku → naprzemienne tury dla modelu. Kolejne wiadomości z tej
 // samej strony sklejamy w jedną turę (API wymaga naprzemienności user/assistant).
-function buildTurns(messages) {
+// attNotes: message_id → notki o załącznikach ("[zdjęcie od klienta - analiza
+// AI: ...]") — doklejane pod treścią wiadomości, do której należą.
+function buildTurns(messages, attNotes = new Map()) {
   const turns = [];
   for (const m of messages.slice(-15)) {
     const role = m.direction === 'out' ? 'assistant' : 'user';
-    const text = m.direction === 'internal' ? `[notatka Antoniego] ${m.body}` : m.body;
+    let text = m.direction === 'internal' ? `[notatka Antoniego] ${m.body}` : m.body;
+    const notes = attNotes.get(m.id);
+    if (notes && notes.length) text += `\n${notes.join('\n')}`;
     const last = turns[turns.length - 1];
     if (last && last.role === role) last.content += `\n${text}`;
     else turns.push({ role, content: text });
@@ -122,7 +131,15 @@ function correctionContext(messages) {
 // Generuje sugestię dla wątku i zapisuje ją w kom_suggestions.
 // Zwraca { id, text, provider, model }.
 async function generateSuggestion(db, thread, customer, messages) {
-  const turns = buildTurns(messages);
+  // Opisy załączników (analiza AI zdjęć/rzutów, transkrypcje filmów) — sugestia
+  // ma wiedzieć, co klient przysłał. Degraduje się do gołych "[zdjęcie]".
+  let attNotes = new Map();
+  try {
+    attNotes = await media.notesByMessage(db, messages.map((m) => m.id));
+  } catch (err) {
+    console.error('Notki załączników do sugestii:', err.message);
+  }
+  const turns = buildTurns(messages, attNotes);
   if (!turns.length) throw new Error('Brak wiadomości klienta do zasugerowania odpowiedzi');
 
   // Kontekst wyszukiwania = ostatnie wiadomości klienta (jak przy korektach).

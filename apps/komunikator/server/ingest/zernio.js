@@ -19,6 +19,7 @@
 const crypto = require('crypto');
 const identity = require('../identity');
 const triage = require('../triage');
+const media = require('../media');
 
 const PLATFORM_MAP = {
   facebook: { channel: 'messenger', identityType: 'fb' },
@@ -160,6 +161,21 @@ async function handleMessage(db, payload) {
     throw msgErr;
   }
 
+  // Załączniki: wiersz w kom_attachments od razu (tania operacja w budżecie
+  // webhooka); pobranie pliku i analiza AI robi worker (media.sweep).
+  if (msg.attachments?.length) {
+    try {
+      await media.captureZernio(db, {
+        messageId: inserted[0].id,
+        threadId: thread.id,
+        direction: incoming ? 'in' : 'out',
+        attachments: msg.attachments,
+      });
+    } catch (attErr) {
+      console.error('Capture załączników Zernio:', attErr.message);
+    }
+  }
+
   await db.from('kom_threads')
     .update({ status: incoming ? 'attention' : 'waiting', last_message_at: new Date().toISOString() })
     .eq('id', thread.id);
@@ -269,6 +285,19 @@ async function handleComment(db, payload) {
   if (msgErr) {
     if (/duplicate|unique/i.test(msgErr.message)) return { ok: true, duplicate: true, customer: customer.public_id };
     throw msgErr;
+  }
+
+  if (comment.attachment) {
+    try {
+      await media.captureZernio(db, {
+        messageId: inserted[0].id,
+        threadId: thread.id,
+        direction: 'in',
+        attachments: [comment.attachment],
+      });
+    } catch (attErr) {
+      console.error('Capture załącznika komentarza:', attErr.message);
+    }
   }
 
   const statusPatch = { last_message_at: new Date().toISOString() };

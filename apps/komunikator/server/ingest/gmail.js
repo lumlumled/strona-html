@@ -297,6 +297,25 @@ async function syncMailbox(db, box, ownEmails) {
       throw msgErr;
     }
     added += 1;
+
+    // Załączniki maila (zdjęcia, PDF-y z rzutami): wiersze w kom_attachments,
+    // pobranie przez Gmail API i analizę AI robi worker (media.sweep).
+    try {
+      const media = require('../media'); // require w funkcji — cykl media↔gmail
+      const parts = media.gmailAttachmentParts(msg.payload);
+      if (parts.length) {
+        await media.captureGmail(db, {
+          messageId: inserted[0].id,
+          threadId: thread.id,
+          mailbox: box.email,
+          gmailMessageId: id,
+          parts,
+        });
+      }
+    } catch (attErr) {
+      console.error('Capture załączników Gmail:', attErr.message);
+    }
+
     await db.from('kom_threads')
       .update({ status: 'attention', last_message_at: new Date().toISOString() })
       .eq('id', thread.id);
@@ -497,4 +516,15 @@ async function ensureWatch(db) {
   return out;
 }
 
-module.exports = { authUrl, exchangeCode, syncGmail, ensureWatch, status, sendReply, sendNew, mailboxForUser, markMessagesRead };
+// Pobranie treści załącznika (media.js, faza fetch): source.gmail z kom_attachments.
+async function downloadAttachment(db, { mailbox, gmailMessageId, attachmentId }) {
+  const box = await mailboxFor(db, mailbox);
+  const auth = await ensureAccessToken(db, box);
+  if (!auth) throw new Error(`Skrzynka ${box.email} bez refresh_token — połącz ponownie`);
+  const att = await gmailFetch(auth.token, `/messages/${gmailMessageId}/attachments/${attachmentId}`);
+  if (!att.data) throw new Error('Gmail zwrócił załącznik bez danych');
+  const buffer = Buffer.from(String(att.data).replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+  return { buffer, mime: null }; // mime siedzi już w kom_attachments (z part.mimeType)
+}
+
+module.exports = { authUrl, exchangeCode, syncGmail, ensureWatch, status, sendReply, sendNew, mailboxForUser, markMessagesRead, downloadAttachment };

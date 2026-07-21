@@ -10,6 +10,10 @@ const TASK_DEFAULTS = {
   classify: 'anthropic:claude-sonnet-4-6',
   summarize_call: 'openai:gpt-5.1',
   commitments: 'openai:gpt-5-mini',
+  // Analiza załączników (zdjęcia, rzuty techniczne, PDF-y) — wizja. Najmocniejszy
+  // model: wolumen to kilkanaście obrazów tygodniowo, a błędny odczyt wymiarów
+  // z rzutu kosztuje więcej niż tokeny.
+  media: 'anthropic:claude-opus-4-8',
 };
 
 function taskConfig(task) {
@@ -63,7 +67,32 @@ async function completeOpenAI({ model, system, messages, maxTokens, json, reason
   return { text: String(data.choices?.[0]?.message?.content || '').trim(), provider: 'openai', model };
 }
 
+// Transkrypcja audio/wideo (OpenAI, multipart). Przyjmuje bezpośrednio kontenery
+// wideo (mp4/webm) — model bierze ścieżkę dźwiękową, więc filmy z Messengera
+// idą bez ekstrakcji audio. Limit API ~25 MB — wołający pilnuje rozmiaru.
+async function transcribe({ buffer, filename, mime, language = 'pl' }) {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) throw new Error('Brak OPENAI_API_KEY w konfiguracji serwera');
+  const model = process.env.TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe';
+  const form = new FormData();
+  form.append('file', new Blob([buffer], { type: mime || 'application/octet-stream' }), filename || 'media.mp4');
+  form.append('model', model);
+  form.append('language', language);
+  const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}` },
+    body: form,
+  });
+  const body = await res.text();
+  if (!res.ok) throw new Error(`OpenAI transkrypcja ${res.status}: ${body.slice(0, 300)}`);
+  const data = JSON.parse(body);
+  return { text: String(data.text || '').trim(), model };
+}
+
 // messages: [{role: 'user'|'assistant', content: string}]
+// content może też być tablicą bloków Anthropic (image/document) — completeAnthropic
+// przekazuje messages bez zmian, więc zadania wizyjne (task: media) działają
+// przez ten sam adapter. Dla OpenAI bloki nie są wspierane.
 // json/reasoningEffort: tylko OpenAI (Anthropic je ignoruje — prompt i tak
 // wymusza czysty JSON, a parse jest defensywny po stronie wołającego).
 async function complete({ task, system, messages, maxTokens = 1024, json, reasoningEffort }) {
@@ -73,4 +102,4 @@ async function complete({ task, system, messages, maxTokens = 1024, json, reason
   throw new Error(`Nieznany dostawca LLM: ${provider}`);
 }
 
-module.exports = { complete, taskConfig };
+module.exports = { complete, taskConfig, transcribe };

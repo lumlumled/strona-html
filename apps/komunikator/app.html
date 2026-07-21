@@ -142,6 +142,25 @@
     .msg.internal { align-self: center; max-width: 88%; background: transparent; border: 1px dashed var(--border); color: var(--text-secondary); font-size: .82rem; }
     .msg-time { display: block; font-size: .65rem; opacity: .6; margin-top: .2rem; }
 
+    /* ── Załączniki w dymku ── */
+    .msg-att { margin-top: .4rem; }
+    .att-img { display: block; max-width: min(260px, 100%); max-height: 300px; border-radius: 10px; cursor: zoom-in; }
+    .att-video { display: block; max-width: min(300px, 100%); border-radius: 10px; }
+    .att-audio { display: block; max-width: min(280px, 100%); }
+    .att-file { display: inline-block; font-size: .82rem; text-decoration: underline; color: inherit; word-break: break-all; }
+    .att-chip { display: inline-block; font-size: .72rem; opacity: .75; }
+    .att-ai {
+      margin-top: .3rem; font-size: .74rem; line-height: 1.4; white-space: pre-wrap;
+      background: rgba(127, 127, 127, .16); border-radius: 8px; padding: .35rem .5rem;
+    }
+    .att-ai button { background: transparent; border: none; cursor: pointer; font-size: .74rem; opacity: .7; padding: 0 .2rem; }
+    .att-ai button:hover { opacity: 1; }
+    .att-ai textarea {
+      width: 100%; min-height: 80px; font: inherit; font-size: .74rem; resize: vertical;
+      background: var(--page); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; padding: .3rem .4rem;
+    }
+    .att-ai .att-ai-save { border: 1px solid var(--border); border-radius: 999px; padding: .15rem .6rem; margin-top: .25rem; opacity: .9; }
+
     .window-note { padding: .4rem 1.1rem; font-size: .78rem; color: var(--text-muted); }
     .window-note.closed { color: var(--bad); font-weight: 600; }
 
@@ -447,9 +466,14 @@
         banners.appendChild(div);
       });
 
-      // Wiadomości
+      // Wiadomości (+ załączniki z kom_attachments pod dymkiem)
       const wrap = $('messages');
       wrap.innerHTML = '';
+      const attByMsg = new Map();
+      (d.attachments || []).forEach((a) => {
+        if (!attByMsg.has(a.message_id)) attByMsg.set(a.message_id, []);
+        attByMsg.get(a.message_id).push(a);
+      });
       d.messages.forEach((m) => {
         const div = document.createElement('div');
         div.className = `msg ${m.direction}`;
@@ -459,7 +483,17 @@
           m.meta?.human_agent ? 'human agent' : '',
           m.meta?.private_reply_to ? 'private reply' : '',
         ].filter(Boolean).map((x) => ` · ${x}`).join('');
-        div.innerHTML = `${label}${escapeHtml(m.body)}<span class="msg-time">${fmtTime(m.created_at)}${marks}</span>`;
+        const atts = attByMsg.get(m.id) || [];
+        // Sam placeholder "[zdjęcie]" nie wnosi nic, gdy niżej renderuje się
+        // prawdziwy załącznik (albo czytelny chip o jego stanie).
+        const placeholderOnly = atts.length
+          && /^(\[[^\]]+\])( \[[^\]]+\])*$/.test((m.body || '').trim());
+        div.innerHTML = `${label}${placeholderOnly ? '' : escapeHtml(m.body)}`;
+        atts.forEach((a) => div.appendChild(renderAttachment(a)));
+        const time = document.createElement('span');
+        time.className = 'msg-time';
+        time.textContent = `${fmtTime(m.created_at)}${marks}`;
+        div.appendChild(time);
         wrap.appendChild(div);
       });
       wrap.scrollTop = wrap.scrollHeight;
@@ -641,6 +675,95 @@
       }
     }
 
+    // ── Załączniki: render + edycja opisu AI ──
+    // Opis AI przy załączniku to kontekst dla sugestii — poprawka Antoniego
+    // (✏️) nadpisuje analizę i od razu wchodzi do promptu (PATCH /attachments).
+    function renderAttachment(a) {
+      const box = document.createElement('div');
+      box.className = 'msg-att';
+      const fileUrl = `${API}/attachments/${a.id}/file`;
+      if (a.status === 'stored' && a.type === 'image') {
+        const link = document.createElement('a');
+        link.href = fileUrl; link.target = '_blank'; link.rel = 'noopener';
+        const img = document.createElement('img');
+        img.className = 'att-img'; img.loading = 'lazy'; img.src = fileUrl; img.alt = a.filename || 'zdjęcie';
+        link.appendChild(img);
+        box.appendChild(link);
+      } else if (a.status === 'stored' && a.type === 'video') {
+        const v = document.createElement('video');
+        v.className = 'att-video'; v.controls = true; v.preload = 'metadata'; v.src = fileUrl;
+        box.appendChild(v);
+      } else if (a.status === 'stored' && a.type === 'audio') {
+        const au = document.createElement('audio');
+        au.className = 'att-audio'; au.controls = true; au.preload = 'metadata'; au.src = fileUrl;
+        box.appendChild(au);
+      } else if (a.status === 'stored') {
+        const link = document.createElement('a');
+        link.className = 'att-file'; link.href = fileUrl; link.target = '_blank'; link.rel = 'noopener';
+        link.textContent = `📎 ${a.filename || 'plik'}`;
+        box.appendChild(link);
+      } else if (a.status === 'skipped' && a.original_url) {
+        // Share (reel/post/link) — nie plik; zostaje link z tytułem.
+        const link = document.createElement('a');
+        link.className = 'att-file'; link.href = a.original_url; link.target = '_blank'; link.rel = 'noopener';
+        link.textContent = `🔗 ${a.title || 'udostępniona treść'}`;
+        box.appendChild(link);
+      } else if (a.status === 'pending' || a.status === 'fetching') {
+        const chip = document.createElement('span');
+        chip.className = 'att-chip';
+        chip.textContent = '⏳ pobieram załącznik…';
+        box.appendChild(chip);
+      } else {
+        const chip = document.createElement('span');
+        chip.className = 'att-chip';
+        chip.textContent = '⚠️ załącznik niedostępny (link Mety wygasł, zanim zdążyliśmy go pobrać)';
+        box.appendChild(chip);
+      }
+
+      if (a.ai_summary || a.ai_status === 'pending' || a.ai_status === 'running') {
+        const ai = document.createElement('div');
+        ai.className = 'att-ai';
+        if (a.ai_summary) {
+          const txt = document.createElement('span');
+          txt.textContent = `🤖 ${a.ai_summary}${a.ai_corrected ? ' ✔ (poprawione)' : ''}`;
+          const btn = document.createElement('button');
+          btn.type = 'button'; btn.textContent = '✏️';
+          btn.title = 'Popraw opis - AI użyje poprawki jako kontekstu odpowiedzi';
+          btn.addEventListener('click', () => editAiSummary(ai, a));
+          ai.appendChild(txt);
+          ai.appendChild(btn);
+        } else {
+          ai.textContent = '🤖 analiza załącznika w toku… (opis pojawi się za chwilę)';
+        }
+        box.appendChild(ai);
+      }
+      return box;
+    }
+
+    function editAiSummary(container, a) {
+      container.innerHTML = '';
+      const ta = document.createElement('textarea');
+      ta.value = a.ai_summary || '';
+      const save = document.createElement('button');
+      save.type = 'button'; save.className = 'att-ai-save'; save.textContent = 'Zapisz opis';
+      save.addEventListener('click', async () => {
+        const val = ta.value.trim();
+        if (!val) return toast('Opis nie może być pusty');
+        save.disabled = true;
+        try {
+          await api(`/attachments/${a.id}`, { method: 'PATCH', body: JSON.stringify({ ai_summary: val }) });
+          toast('Opis zapisany - AI dostanie go w kontekście');
+          if (state.detail) openThread(state.detail.thread.id);
+        } catch (err) {
+          toast(err.message);
+          save.disabled = false;
+        }
+      });
+      container.appendChild(ta);
+      container.appendChild(save);
+      ta.focus();
+    }
+
     // ── Akcje ──
     $('btn-send').addEventListener('click', async () => {
       const text = $('reply-text').value.trim();
@@ -648,14 +771,18 @@
       $('btn-send').disabled = true;
       try {
         const suggestionId = state.suggestion?.forThread === state.detail.thread.id ? state.suggestion.id : null;
-        await api(`/threads/${state.detail.thread.id}/messages`, {
+        const result = await api(`/threads/${state.detail.thread.id}/messages`, {
           method: 'POST',
           body: JSON.stringify({ body: text, suggestion_id: suggestionId }),
         });
         state.suggestion = null;
         $('suggestion-note').hidden = true;
         $('reply-text').value = '';
-        toast('Wysłano');
+        // saved:false = wiadomość POSZŁA do klienta, tylko zapis historii padł —
+        // absolutnie nie klikać "Wyślij" drugi raz.
+        toast(result.saved === false
+          ? 'Wysłano do klienta, ale zapis w historii się nie udał - NIE wysyłaj ponownie'
+          : 'Wysłano');
         openThread(state.detail.thread.id);
         loadThreads();
       } catch (err) {
