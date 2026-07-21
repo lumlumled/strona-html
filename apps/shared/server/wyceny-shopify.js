@@ -92,6 +92,32 @@ function parseAdres(addr) {
   return { street, house, flat };
 }
 
+// Payloady zamówień przychodzą w dwóch smakach: nasz sync GraphQL (MoneyBag =
+// {shopMoney:{amount}}, lineItems.nodes) i webhook z Make (spłaszczone
+// {amount}, lineItems jako tablica, czasem tags jako string). Sprowadzamy
+// wszystko do kształtu synca, żeby orderToRow miał jedno wejście.
+function moneyBag(v) {
+  if (!v || v.shopMoney) return v;
+  return { shopMoney: { amount: v.amount } };
+}
+function normalizeOrderNode(o) {
+  const order = { ...o };
+  order.totalPriceSet = moneyBag(o.totalPriceSet);
+  if (typeof o.tags === 'string') {
+    order.tags = o.tags.split(',').map((s) => s.trim()).filter(Boolean);
+  }
+  const items = o.lineItems?.nodes || o.lineItems || [];
+  order.lineItems = {
+    nodes: items.map((li) => ({
+      ...li,
+      discountedUnitPriceSet: moneyBag(
+        li.discountedUnitPriceSet || li.discountedUnitPriceAfterAllDiscountsSet || li.originalUnitPriceSet
+      ),
+    })),
+  };
+  return order;
+}
+
 // Pobranie: brak opłaty w sklepie (PENDING) albo bramka typu "cash on
 // delivery"/"pobranie". Opłacone z góry (Shopify Payments/P24) -> nie-COD.
 function jestPobranie(order) {
@@ -197,6 +223,9 @@ async function tagujWShopify(db, wycenaId, order, sklepNr) {
   if ((order.tags || []).includes(sklepNr)) return;
   try {
     const data = await shopifyGraphql(TAGS_ADD_MUTATION, { id: order.id, tags: [sklepNr] });
+    // shopifyGraphql zwraca null bez SHOPIFY_ADMIN_TOKEN — wtedy tag dokleja
+    // scenariusz Make (z sklep_nr w odpowiedzi webhooka) albo backfill ręczny.
+    if (data === null) throw new Error('brak SHOPIFY_ADMIN_TOKEN (tag doda Make)');
     const errs = data?.tagsAdd?.userErrors || [];
     if (errs.length) throw new Error(errs.map((e) => e.message).join('; '));
   } catch (err) {
@@ -238,7 +267,8 @@ async function upsertOrder(db, row, order) {
   if (existing && existing.length) {
     const w = existing[0];
     // Po potwierdzeniu/realizacji wiersz jest nasz — sync nie nadpisuje.
-    if (!ETAPY_SYNCA.has(String(w.process_stage))) return { id: w.id, created: false, skipped: 'realized' };
+    // sklep_nr w odpowiedzi zawsze — Make dokleja z niego tag w Shopify.
+    if (!ETAPY_SYNCA.has(String(w.process_stage))) return { id: w.id, created: false, skipped: 'realized', sklep_nr: w.sklep_nr };
     const { error: upErr } = await db.from('wyceny').update({
       status: row.status,
       // SHIPPED (sklep sam zrealizował) wygrywa; inaczej nie cofamy etapu.
@@ -254,7 +284,7 @@ async function upsertOrder(db, row, order) {
     }).eq('id', w.id);
     if (upErr) throw upErr;
     if (order && w.sklep_nr) await tagujWShopify(db, w.id, order, w.sklep_nr);
-    return { id: w.id, created: false };
+    return { id: w.id, created: false, sklep_nr: w.sklep_nr };
   }
   // Tag S już w Shopify, a wiersza brak = przeprocesowane kiedyś (np. wiersz
   // skasowany ręcznie) — nie tworzymy duplikatu.
@@ -296,4 +326,4 @@ async function syncShopifyOrders(db) {
   return { created, updated, skipped };
 }
 
-module.exports = { syncShopifyOrders, orderToRow, upsertOrder, buildSkuIndex, parseAdres, jestPobranie, ORDERS_QUERY };
+module.exports = { syncShopifyOrders, orderToRow, upsertOrder, buildSkuIndex, parseAdres, jestPobranie, normalizeOrderNode, ORDERS_QUERY };

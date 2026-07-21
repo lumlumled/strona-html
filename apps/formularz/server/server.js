@@ -354,6 +354,36 @@ app.post('/api/infakt-webhook', async (req, res) => {
   }
 });
 
+// POST /formularz/api/webhooks/sklep?token=... — zamówienie ze SKLEPU pchane
+// przez scenariusz Make (łapie nowe zamówienia Shopify i wysyła payload
+// GraphQL — pojedynczy obiekt albo tablicę). Zastępuje polling po
+// SHOPIFY_ADMIN_TOKEN (martwy od ~13.07); dedupe po shopify_order_id + tagu S,
+// więc webhook i sync mogą działać równolegle bez dubli. Odpowiedź zawiera
+// sklep_nr (S49, S50, …) — Make dokleja go jako tag zamówienia w Shopify
+// (bez tokenu sami nie umiemy; tagujWShopify loguje wtedy shopify.tag_failed).
+app.post('/api/webhooks/sklep', async (req, res) => {
+  try {
+    if (!process.env.SKLEP_WEBHOOK_TOKEN || req.query.token !== process.env.SKLEP_WEBHOOK_TOKEN) {
+      return res.status(401).json({ error: 'Zły token' });
+    }
+    const { upsertOrder, orderToRow, buildSkuIndex, normalizeOrderNode } = require('../../shared/server/wyceny-shopify');
+    const orders = (Array.isArray(req.body) ? req.body : [req.body]).filter((o) => o && o.id && o.name);
+    if (!orders.length) return res.status(400).json({ error: 'Brak zamówienia w body' });
+    const db = getClient();
+    const skuIndex = await buildSkuIndex(db);
+    const wyniki = [];
+    for (const raw of orders) {
+      const order = normalizeOrderNode(raw);
+      const result = await upsertOrder(db, orderToRow(order, skuIndex), order);
+      wyniki.push({ order: order.name, ...result });
+    }
+    res.json({ ok: true, wyniki });
+  } catch (err) {
+    console.error('Webhook sklep:', err.message);
+    res.status(502).json({ error: err.message.slice(0, 300) });
+  }
+});
+
 // /formularz/api/cron/worker — odpalany przez pg_cron + pg_net (Vercel Hobby:
 // crony częstsze niż 1/dzień muszą iść spoza vercel.json, jak w komunikatorze;
 // pg_net woła GET z ?secret=, ręcznie można POST z Bearerem).
