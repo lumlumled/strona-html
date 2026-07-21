@@ -361,18 +361,41 @@ app.post('/api/infakt-webhook', async (req, res) => {
 // więc webhook i sync mogą działać równolegle bez dubli. Odpowiedź zawiera
 // sklep_nr (S49, S50, …) — Make dokleja go jako tag zamówienia w Shopify
 // (bez tokenu sami nie umiemy; tagujWShopify loguje wtedy shopify.tag_failed).
+// Make może przysłać zamówienie w kilku opakowaniach: gołe / tablica /
+// odpowiedź modułu GraphQL ([{body:{data:{order|orders.nodes}}, headers,
+// statusCode}]). Wyłuskujemy rekurencyjnie wszystko, co wygląda na zamówienie.
+function wyluskajZamowienia(body) {
+  const out = [];
+  const zbierz = (x) => {
+    if (!x || typeof x !== 'object') return;
+    if (Array.isArray(x)) { x.forEach(zbierz); return; }
+    if (x.id && x.name) { out.push(x); return; }
+    zbierz(x.body); zbierz(x.data); zbierz(x.order);
+    zbierz(x.orders && (x.orders.nodes || x.orders));
+    zbierz(x.nodes);
+  };
+  zbierz(body);
+  return out;
+}
+
 app.post('/api/webhooks/sklep', async (req, res) => {
   try {
     if (!process.env.SKLEP_WEBHOOK_TOKEN || req.query.token !== process.env.SKLEP_WEBHOOK_TOKEN) {
       return res.status(401).json({ error: 'Zły token' });
     }
     const { upsertOrder, orderToRow, buildSkuIndex, normalizeOrderNode } = require('../../shared/server/wyceny-shopify');
-    const orders = (Array.isArray(req.body) ? req.body : [req.body]).filter((o) => o && o.id && o.name);
+    const orders = wyluskajZamowienia(req.body);
     if (!orders.length) return res.status(400).json({ error: 'Brak zamówienia w body' });
     const db = getClient();
     const skuIndex = await buildSkuIndex(db);
     const wyniki = [];
     for (const raw of orders) {
+      // Bezpiecznik: query z samą płatnością (order{id name paymentGatewayNames})
+      // to enrich, nie zamówienie — bez pozycji/kwoty nie tworzymy pustego wiersza.
+      if (!raw.lineItems && !raw.totalPriceSet) {
+        wyniki.push({ order: raw.name, skipped: 'niekompletne (brak lineItems/totalPriceSet)' });
+        continue;
+      }
       const order = normalizeOrderNode(raw);
       const result = await upsertOrder(db, orderToRow(order, skuIndex), order);
       wyniki.push({ order: order.name, ...result });
