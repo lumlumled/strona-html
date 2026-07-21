@@ -1304,6 +1304,18 @@
   border-color: rgba(255,180,80,.35);
 }
 
+/* Zamknięty formularz: pola disabled mają zostać CZYTELNE (podgląd danych) */
+.lumlum-orderfill__input:disabled,
+.lumlum-orderfill__select:disabled{
+  opacity: .75;
+  cursor: default;
+  -webkit-text-fill-color: rgba(255,255,255,.85);
+}
+.lumlum-orderfill__radio input:disabled ~ .lumlum-orderfill__radio-text,
+.lumlum-orderfill__check input:disabled ~ .lumlum-orderfill__check-text{
+  opacity: .85;
+}
+
   </style>
 
 <script>
@@ -1483,26 +1495,113 @@
       formCard.parentNode.insertBefore(baner, formCard);
     }
   }
+  /* Zamknięty formularz: NIE chowamy niczego — klient dalej widzi produkty,
+     ceny i swoje dane (podgląd), ale pola są zablokowane (lockFormularz).
+     Na górze komunikat z kontaktem do zmian w zamówieniu. */
   function renderZlozone(){
     state.locked = true;
-    if (els.formCard) els.formCard.classList.add('is-hidden');
-    if (els.summaryDesktop) els.summaryDesktop.classList.add('is-hidden');
-    if (els.summaryMobile) els.summaryMobile.classList.add('is-hidden');
     var istnieje = document.getElementById('lumlum-zlozone');
     if (istnieje) return;
     var box = document.createElement('div');
     box.id = 'lumlum-zlozone';
-    box.style.cssText = 'border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.05);border-radius:16px;padding:32px 24px;text-align:center;display:grid;gap:10px;';
+    box.style.cssText = 'border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.05);border-radius:16px;padding:24px 20px;text-align:center;display:grid;gap:10px;margin-bottom:14px;';
     var h = document.createElement('div');
     h.style.cssText = 'font-size:19px;font-weight:800;color:rgba(255,255,255,.95);';
     h.textContent = 'Zamówienie zostało już złożone';
     var p = document.createElement('div');
     p.style.cssText = 'font-size:14px;color:rgba(255,255,255,.72);line-height:1.55;';
-    p.textContent = 'Ten formularz został już wypełniony i został zamknięty. Jeśli chcesz coś zmienić w zamówieniu, po prostu nam odpisz — otworzymy go ponownie.';
+    p.innerHTML = 'Poniżej podgląd zamówienia - formularz jest zamknięty i nie można go już edytować. '
+      + 'Jeśli chcesz coś zmienić w zamówieniu, skontaktuj się z nami: '
+      + '<a href="mailto:kontakt@lumlum.co" style="color:rgba(255,255,255,.95);font-weight:700;">kontakt@lumlum.co</a> '
+      + 'lub telefonicznie pod numerem '
+      + '<a href="tel:+48604650590" style="color:rgba(255,255,255,.95);font-weight:700;white-space:nowrap;">604 650 590</a>.';
     box.appendChild(h);
     box.appendChild(p);
     var formCard = root.querySelector('[data-form-card]');
     if (formCard && formCard.parentNode) formCard.parentNode.insertBefore(box, formCard);
+  }
+
+  /* Podgląd danych w zamkniętym formularzu: wypełnia pola tym, co klient
+     wysłał (prefill z GET /api/dane). Tylko do odczytu — zaraz po tym
+     wołany jest lockFormularz(). */
+  function applyPrefillLocked(pf){
+    if (!pf || !els.form) return;
+    function setVal(name, v){
+      var el = els.form.querySelector('[name="' + name + '"]');
+      if (el && v != null && v !== '') el.value = v;
+    }
+    function setRadio(name, v){
+      if (!v) return;
+      var el = els.form.querySelector('[name="' + name + '"][value="' + v + '"]');
+      if (el) el.checked = true;
+    }
+    setVal('first_name', pf.first_name);
+    setVal('last_name', pf.last_name);
+    setVal('email', pf.email);
+    setVal('phone_number', pf.phone);
+    setVal('ship_street', pf.ship_street);
+    setVal('ship_house_no', pf.ship_house_no);
+    setVal('ship_flat_no', pf.ship_flat_no);
+    setVal('ship_postcode', pf.ship_postcode);
+    setVal('ship_city', pf.ship_city);
+    setVal('ship_country', pf.ship_country);
+    setRadio('delivery_method', pf.delivery_method);
+    setRadio('payment_method', String(pf.payment_method || '').toLowerCase() === 'cod' ? 'cod' : (pf.payment_method ? 'transfer' : ''));
+
+    // Paczkomat: pokaż stan „wybrany" zamiast mapy
+    if (pf.delivery_method === 'INPOST_LOCKER' && pf.punkt_odbioru){
+      if (els.lockerWrap) els.lockerWrap.classList.remove('is-hidden');
+      if (els.lockerValue) els.lockerValue.textContent = pf.punkt_odbioru;
+      if (els.lockerPicker) els.lockerPicker.classList.add('is-hidden');
+      if (els.lockerSelected) els.lockerSelected.classList.remove('is-hidden');
+    }
+
+    // Faktura: firma albo inne dane prywatne — otwieramy sekcję i wypełniamy
+    var inv = pf.invoice || {};
+    if (pf.invoice_enabled){
+      var cb = els.form.querySelector('[name="invoice_enabled"]');
+      if (cb) cb.checked = true;
+      toggleInvoiceCompany(true);
+      var nip = String(pf.invoice_company_nip || inv.invoice_company_nip || '').toUpperCase();
+      var nipM = nip.match(/^([A-Z]{2})(.+)$/);
+      var ccSel = document.getElementById('lumlum-inv-nip-cc');
+      if (nipM && ccSel){
+        var ccVal = nipM[1] === 'EL' ? 'GR' : nipM[1];
+        ccSel.value = ccVal;
+        if (ccSel.value === ccVal) nip = nipM[2];
+      }
+      setVal('invoice_company_nip', nip);
+      setVal('invoice_company_name', pf.invoice_company_name || inv.invoice_company_name);
+      setVal('invoice_company_street', inv.invoice_company_street);
+      setVal('invoice_company_house_no', inv.invoice_company_house_no);
+      setVal('invoice_company_flat_no', inv.invoice_company_flat_no);
+      setVal('invoice_company_postcode', inv.invoice_company_postcode);
+      setVal('invoice_company_city', inv.invoice_company_city);
+      setVal('invoice_company_country', inv.invoice_company_country);
+    } else if (inv.invoice_private_different){
+      var cbp = els.form.querySelector('[name="invoice_private_different"]');
+      if (cbp) cbp.checked = true;
+      toggleInvoicePrivate(true);
+      setVal('invoice_private_first_name', inv.invoice_private_first_name);
+      setVal('invoice_private_last_name', inv.invoice_private_last_name);
+      setVal('invoice_private_street', inv.invoice_private_street);
+      setVal('invoice_private_house_no', inv.invoice_private_house_no);
+      setVal('invoice_private_flat_no', inv.invoice_private_flat_no);
+      setVal('invoice_private_postcode', inv.invoice_private_postcode);
+      setVal('invoice_private_city', inv.invoice_private_city);
+      setVal('invoice_private_country', inv.invoice_private_country);
+    }
+  }
+
+  /* Blokada edycji: wszystkie kontrolki formularza disabled, submit znika.
+     Akordeon podsumowania (mobile) jest POZA <form>, więc dalej działa. */
+  function lockFormularz(){
+    if (!els.form) return;
+    var ctrls = els.form.querySelectorAll('input, select, textarea, button');
+    for (var i = 0; i < ctrls.length; i += 1) ctrls[i].disabled = true;
+    var sb = els.form.querySelector('[data-submit]');
+    if (sb) sb.classList.add('is-hidden');
+    setFirmaStatus(null);
   }
 
   /* =========================================================
@@ -2463,12 +2562,17 @@
       var data = await res.json();
       state.payload = data;
 
-      // Formularz jednorazowy: prawdziwy form_status z bazy — po zlozeniu
-      // zamowienia link pokazuje ekran informacyjny zamiast formularza.
+      // Formularz jednorazowy: prawdziwy form_status z bazy — po złożeniu
+      // link pokazuje PODGLĄD zamówienia (produkty, ceny, dane klienta)
+      // z zablokowaną edycją + komunikat kontaktowy do zmian.
       if (data && data.form_status && data.form_status !== 'NEW'){
         setLoading(false);
         if (els.orderIdLine) els.orderIdLine.textContent = 'Zamówienie: #' + state.cleanId;
+        renderAll(data || {});
+        applyPrefillLocked(data.prefill || {});
         renderZlozone();
+        lockFormularz();
+        updateShippingCost(); // po ustawieniu kraju wysyłki z prefillu
         return;
       }
 

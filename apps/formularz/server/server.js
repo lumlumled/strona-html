@@ -206,9 +206,17 @@ app.get('/api/dane', async (req, res) => {
         ship_postcode: wycena.ship_postcode || '',
         ship_city: wycena.ship_city || '',
         ship_country: wycena.ship_country || '',
-        delivery_method: '',
-        payment_method: '',
-        invoice_enabled: false,
+        // Wybory z formularza + dane faktury — puste przed złożeniem; liquid
+        // używa ich w widoku ZAMKNIĘTEGO formularza (podgląd bez edycji).
+        delivery_method: wycena.delivery_method || '',
+        payment_method: wycena.payment_method || '',
+        punkt_odbioru: wycena.punkt_odbioru || '',
+        invoice_enabled: Boolean(String(wycena.invoice_company_nip || '').trim()
+          || (wycena.invoice_dane || {}).invoice_enabled),
+        invoice_company_nip: wycena.invoice_company_nip || '',
+        invoice_company_name: wycena.invoice_company_name || '',
+        invoice: Object.fromEntries(Object.entries(wycena.invoice_dane || {})
+          .filter(([k]) => k.startsWith('invoice_'))),
       },
     });
   } catch (err) {
