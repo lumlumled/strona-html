@@ -96,6 +96,9 @@
 
     /* ── Rozmowa ── */
     .main { background: var(--surface-1); border: 1px solid var(--border); border-radius: 16px; display: flex; flex-direction: column; min-height: 60vh; }
+    /* display:flex wygrywa z atrybutem hidden (reguła UA) — bez tego #placeholder
+       „Wybierz wątek…" renderował się POD otwartą rozmową na telefonie. */
+    .main[hidden] { display: none; }
     .conv-head { padding: .9rem 1.1rem; border-bottom: 1px solid var(--border); display: grid; gap: .35rem; }
     .conv-title-row { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
     .back-btn { display: none; border: 1px solid var(--border); background: transparent; color: inherit; border-radius: 999px; font: inherit; font-size: .8rem; padding: .25rem .7rem; cursor: pointer; }
@@ -153,6 +156,9 @@
       margin-top: .3rem; font-size: .74rem; line-height: 1.4; white-space: pre-wrap;
       background: rgba(127, 127, 127, .16); border-radius: 8px; padding: .35rem .5rem;
     }
+    .att-ai summary { cursor: pointer; opacity: .8; user-select: none; }
+    .att-ai[open] summary { opacity: 1; margin-bottom: .25rem; }
+    .att-ai-body { display: grid; gap: .2rem; justify-items: start; }
     .att-ai button { background: transparent; border: none; cursor: pointer; font-size: .74rem; opacity: .7; padding: 0 .2rem; }
     .att-ai button:hover { opacity: 1; }
     .att-ai textarea {
@@ -168,6 +174,7 @@
     .composer textarea {
       width: 100%; min-height: 70px; resize: vertical; font: inherit; font-size: .9rem;
       background: var(--page); color: inherit; border: 1px solid var(--border); border-radius: 12px; padding: .6rem .75rem;
+      overflow: hidden; /* wysokość dopasowuje autoGrowReply — bez wewnętrznego scrolla */
     }
     .composer-row { display: flex; gap: .5rem; justify-content: flex-end; flex-wrap: wrap; }
 
@@ -242,7 +249,7 @@
     </section>
 
     <section class="main" id="placeholder">
-      <div class="empty" style="padding:2rem;">Wybierz wątek z listy albo dodaj notatkę z rozmowy telefonicznej.</div>
+      <div class="empty" style="padding:2rem;">Wybierz wątek z listy.</div>
     </section>
   </div>
 
@@ -357,6 +364,14 @@
     }
 
     // ── Rozmowa ──
+    // Pole odpowiedzi rośnie do wysokości treści (sugestia AI ma być widoczna
+    // w całości, bez scrollowania wewnątrz wąskiego pola).
+    function autoGrowReply() {
+      const ta = $('reply-text');
+      ta.style.height = 'auto';
+      ta.style.height = Math.max(70, ta.scrollHeight + 2) + 'px';
+    }
+
     async function openThread(id) {
       const switched = state.selectedId !== id;
       state.selectedId = id;
@@ -364,6 +379,7 @@
       if (switched) {
         state.suggestion = null;
         $('reply-text').value = '';
+        autoGrowReply();
         $('suggestion-note').hidden = true;
       }
       try {
@@ -392,7 +408,7 @@
         const s = await api(`/threads/${threadId}/suggestion`, { method: 'POST' });
         if (state.selectedId !== threadId) return; // użytkownik zdążył zmienić wątek
         state.suggestion = { id: s.id, forThread: threadId };
-        if (!$('reply-text').value.trim()) $('reply-text').value = s.text;
+        if (!$('reply-text').value.trim()) { $('reply-text').value = s.text; autoGrowReply(); }
         note.textContent = '✨ Propozycja AI — popraw śmiało przed wysłaniem (każda poprawka uczy system).';
       } catch (err) {
         if (state.selectedId === threadId) note.textContent = `Sugestia AI niedostępna: ${err.message}`;
@@ -720,22 +736,31 @@
         box.appendChild(chip);
       }
 
-      if (a.ai_summary || a.ai_status === 'pending' || a.ai_status === 'running') {
-        const ai = document.createElement('div');
-        ai.className = 'att-ai';
-        if (a.ai_summary) {
-          const txt = document.createElement('span');
-          txt.textContent = `🤖 ${a.ai_summary}${a.ai_corrected ? ' ✔ (poprawione)' : ''}`;
-          const btn = document.createElement('button');
-          btn.type = 'button'; btn.textContent = '✏️';
-          btn.title = 'Popraw opis - AI użyje poprawki jako kontekstu odpowiedzi';
-          btn.addEventListener('click', () => editAiSummary(ai, a));
-          ai.appendChild(txt);
-          ai.appendChild(btn);
-        } else {
-          ai.textContent = '🤖 analiza załącznika w toku… (opis pojawi się za chwilę)';
-        }
-        box.appendChild(ai);
+      // Opis AI domyślnie ZWINIĘTY (zdjęcie mówi samo za siebie) — rozwijany
+      // na życzenie; w środku edycja ✏️ (poprawka = lepszy kontekst sugestii).
+      if (a.ai_summary) {
+        const det = document.createElement('details');
+        det.className = 'att-ai';
+        const sum = document.createElement('summary');
+        sum.textContent = `🤖 opis AI${a.ai_corrected ? ' ✔' : ''}`;
+        det.appendChild(sum);
+        const body = document.createElement('div');
+        body.className = 'att-ai-body';
+        const txt = document.createElement('span');
+        txt.textContent = `${a.ai_summary}${a.ai_corrected ? '\n✔ poprawione ręcznie' : ''}`;
+        const btn = document.createElement('button');
+        btn.type = 'button'; btn.textContent = '✏️';
+        btn.title = 'Popraw opis - AI użyje poprawki jako kontekstu odpowiedzi';
+        btn.addEventListener('click', () => editAiSummary(body, a));
+        body.appendChild(txt);
+        body.appendChild(btn);
+        det.appendChild(body);
+        box.appendChild(det);
+      } else if (a.ai_status === 'pending' || a.ai_status === 'running') {
+        const chip = document.createElement('span');
+        chip.className = 'att-chip';
+        chip.textContent = '🤖 analiza w toku…';
+        box.appendChild(chip);
       }
       return box;
     }
@@ -778,6 +803,7 @@
         state.suggestion = null;
         $('suggestion-note').hidden = true;
         $('reply-text').value = '';
+        autoGrowReply();
         // saved:false = wiadomość POSZŁA do klienta, tylko zapis historii padł —
         // absolutnie nie klikać "Wyślij" drugi raz.
         toast(result.saved === false
@@ -820,11 +846,14 @@
         state.suggestion = null;
         $('suggestion-note').hidden = true;
         $('reply-text').value = '';
+        autoGrowReply();
         toast('Dopisano do historii');
         openThread(state.detail.thread.id);
         loadThreads();
       } catch (err) { toast(err.message); }
     });
+
+    $('reply-text').addEventListener('input', autoGrowReply);
 
     $('btn-waiting').addEventListener('click', () => setThreadStatus('waiting', 'Wątek czeka'));
     $('btn-close').addEventListener('click', () => setThreadStatus('closed', 'Zamknięto wątek'));

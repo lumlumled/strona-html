@@ -233,6 +233,14 @@ odpowiedź klientowi, więc musi być rzetelna:
 - Na rzutach architektonicznych wymiary bywają ukryte: w łańcuchach wymiarowych na obrzeżach rysunku,
   w osiach ścian, w opisach pomieszczeń (nazwa + powierzchnia m2). Szukaj ich tam zanim uznasz,
   że wymiarów nie ma. Zwróć uwagę na jednostki (cm vs m vs mm).
+- Na zdjęciach z budowy/remontu AKTYWNIE wypatruj śladów PRZYGOTOWANIA pod montaż LED - to często
+  najważniejsza informacja na zdjęciu, bo pokazuje, gdzie taśma jest przewidziana: zamontowane
+  profile aluminiowe (długie, wąskie kanały w suficie/ścianie/schodach/zabudowie), zwisające albo
+  wyprowadzone ze ściany przewody (punkt zasilania taśmy), bruzdy/szczeliny/wnęki w zabudowie GK,
+  gotowe gniazda czujników ruchu. Każde takie miejsce opisz: gdzie jest i po czym je poznajesz.
+- Jeśli klient podaje w rozmowie długości (np. "dwie linie po 9 m"), spróbuj DOPASOWAĆ je do
+  widocznych profili/odcinków (który odcinek to które 9 m) - a jeśli dopasowanie jest niepewne,
+  powiedz to wprost.
 - Wszystko, co jest interpretacją a nie odczytem, wpisujesz do "niepewnosci".
 - Piszesz po polsku. Nigdy nie używaj długiego myślnika, zawsze zwykły dywiz.
 Odpowiadasz WYŁĄCZNIE poprawnym JSON-em, bez komentarzy przed ani po.`;
@@ -283,17 +291,22 @@ async function analyzeImagePass1(att, buffer, context) {
 2. Opisz dokładnie co widać: pomieszczenia/obiekty, stan (surowy, wykończony), oraz WSZYSTKIE oznaczenia
    naniesione przez klienta (kolorowe linie, strzałki, obrysy, podkreślenia) i co najpewniej oznaczają.
 3. Wypisz wszystkie odczytane napisy i wymiary z jednostkami, dokładnie tak jak na obrazie.
-4. Jeśli widać miejsca planowanego montażu LED (oznaczenia klienta albo opis w rozmowie): opisz gdzie,
-   i jeśli da się policzyć długości odcinków z widocznych wymiarów - policz każdy odcinek krok po kroku.
+4. AKTYWNIE wypatruj miejsc PRZYGOTOWANYCH pod LED: profile aluminiowe (długie wąskie kanały),
+   zwisające/wyprowadzone przewody zasilające, bruzdy/szczeliny/wnęki w zabudowie. Każde opisz
+   (gdzie, po czym poznajesz). To zwykle mówi więcej niż słowa klienta o tym, gdzie pójdzie taśma.
+5. Jeśli widać miejsca planowanego montażu LED (przygotowanie z pkt 4, oznaczenia klienta albo opis
+   w rozmowie): opisz gdzie, dopasuj do długości podanych w rozmowie (które to które), a jeśli da się
+   policzyć długości z widocznych wymiarów - policz każdy odcinek krok po kroku.
 Zwróć JSON:
 {"typ": "...", "opis": "...", "napisy_i_wymiary": ["..."], "oznaczenia_klienta": "..." ,
+ "przygotowane_pod_led": [{"co": "profil aluminiowy/przewód/bruzda/...", "gdzie": "...", "po_czym_poznano": "..."}],
  "led": {"gdzie": "...", "odcinki": [{"opis": "...", "dlugosc_m": 0, "skad": "..."}], "suma_m": 0} | null,
  "niepewnosci": ["..."]}`;
   const result = await llm.complete({
     task: 'media',
     system: ANALYZE_SYSTEM,
     messages: [{ role: 'user', content: [mediaBlock(att, buffer), { type: 'text', text: instruction }] }],
-    maxTokens: 2000,
+    maxTokens: 3500,
   });
   return { parsed: parseModelJson(result.text), model: result.model };
 }
@@ -305,6 +318,8 @@ async function analyzeImagePass2(att, buffer, context, pass1) {
   const instruction = `${context ? `KONTEKST ROZMOWY:\n${context}\n\n` : ''}Poniżej PIERWSZA analiza tego załącznika. Zweryfikuj ją PRZECIWSTAWNIE, patrząc na obraz od nowa:
 - każdy napis i wymiar odczytaj ponownie; usuń z analizy te, których nie widzisz na pewno,
 - każde obliczenie przelicz od zera; jeśli wynik się różni, popraw i pokaż rachunek,
+- miejsca przygotowane pod LED (profile, przewody, bruzdy) potwierdź na obrazie; dopasowanie
+  odcinków do długości z rozmowy oznacz jako pewne albo przenieś do niepewności,
 - porównaj z kontekstem rozmowy; sprzeczności wypisz wprost,
 - wszystko co jest interpretacją, przenieś do "niepewnosci",
 - jeśli czegoś kluczowego brakuje do wyceny, sformułuj konkretne pytania do klienta.
@@ -313,15 +328,16 @@ PIERWSZA ANALIZA:
 ${JSON.stringify(pass1, null, 1).slice(0, 6000)}
 
 Zwróć FINALNY JSON:
-{"podsumowanie": "2-4 zdania po polsku dla handlowca: co to jest, co klient chce, kluczowe wymiary/metraż",
+{"podsumowanie": "2-4 zdania po polsku dla handlowca: co to jest, co klient chce, gdzie widać przygotowanie pod LED, kluczowe wymiary/metraż",
  "typ": "...", "fakty": ["..."], "wymiary": ["..."],
+ "przygotowane_pod_led": ["profil aluminiowy w suficie nad wyspą, ok. ...", "..."],
  "led_suma_m": 0 | null, "obliczenia": "..." | null,
  "niepewnosci": ["..."], "pytania_do_klienta": ["..."]}`;
   const result = await llm.complete({
     task: 'media',
     system: ANALYZE_SYSTEM,
     messages: [{ role: 'user', content: [mediaBlock(att, buffer), { type: 'text', text: instruction }] }],
-    maxTokens: 2000,
+    maxTokens: 3500,
   });
   return { parsed: parseModelJson(result.text), model: result.model };
 }
