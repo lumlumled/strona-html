@@ -619,6 +619,110 @@ async function markPaidAndShip(db, wycenaId) {
   }
 }
 
+// Realizacja zamówienia ze SKLEPU (Shopify) po ręcznym potwierdzeniu danych
+// w panelu Fulfillment (etap SHOP_CONFIRM → „Potwierdź i realizuj"). Sklep NIE
+// robi już fulfillmentu — my: etykieta InPost + faktury inFakt, jak przy
+// zamówieniach z formularza. Dwie ścieżki:
+//   OPŁACONE (Shopify Payments/P24): przesyłka bez COD + proforma → od razu
+//     FV VAT (paid, KSeF, delete proformy) + mail z FV i trackingiem.
+//   POBRANIE: identycznie jak COD formularza — przesyłka z pobraniem +
+//     proforma "delivery" + mail z trackingiem; FV końcową robi onDelivered.
+// Wznawialne po błędzie (ERROR → ponowne „Potwierdź"): istniejąca przesyłka /
+// proforma / FV nie są tworzone drugi raz.
+async function realizujSklep(db, wycenaId, { pobranie } = {}) {
+  const token = await acquireLock(db, wycenaId);
+  if (!token) return { skipped: 'locked' };
+  try {
+    const wycena = await loadWycena(db, wycenaId);
+    if (!wycena || wycena.source !== 'shopify') {
+      await releaseLock(db, wycenaId, token);
+      return { skipped: 'not-shop' };
+    }
+    const { kwotaFinalna, rabatLaczny } = policzKwoty(wycena);
+    // Total Shopify zawiera koszt dostawy — nadwyżka nad sumą pozycji idzie na
+    // fakturę jako jawna pozycja "Dostawa" (buildServices dodaje tylko ujemny
+    // rabat, dodatniej różnicy nie zna).
+    const services = infakt.buildServices(wycena.items, Math.min(rabatLaczny, 0), 0);
+    if (rabatLaczny > 0) {
+      services.push({ name: 'Dostawa', unit: 'szt.', quantity: 1, tax_symbol: '23', gross_price: infakt.grosze(rabatLaczny) });
+    }
+
+    // wznowienie: co już istnieje?
+    const [{ data: shipments }, { data: proformy }, { data: vaty }] = await Promise.all([
+      db.from('wyceny_shipments').select('*').eq('wycena_id', wycenaId).eq('kind', 'order'),
+      db.from('wyceny_invoices').select('*').eq('wycena_id', wycenaId).eq('kind', 'proforma').neq('status', 'deleted'),
+      db.from('wyceny_invoices').select('*').eq('wycena_id', wycenaId).eq('kind', 'vat'),
+    ]);
+
+    if (pobranie) {
+      let shipment = (shipments || [])[0];
+      if (!shipment) {
+        shipment = await krokPrzesylka(db, wycena, { codAmount: kwotaFinalna, insuranceAmount: kwotaFinalna });
+      }
+      let proformaRow = (proformy || [])[0];
+      if (!proformaRow) {
+        proformaRow = await krokProforma(db, wycena, { services, paymentMethod: 'delivery', kwotaFinalna });
+      }
+      if (proformaRow.infakt_uuid && wycena.email) {
+        const pdf = await infakt.downloadPdf(proformaRow.infakt_uuid);
+        await krokMail(db, wycena, {
+          subject: `Numer śledzenia zamówienia ${wycena.shopify_order_name || `#${wycena.id}`}`,
+          text: mailer.MAILE.codZProforma(shipment?.tracking_number || '(numer wkrótce)').text,
+          attachments: [{ filename: `proforma-${wycena.id}.pdf`, data: pdf }],
+        });
+      }
+      await releaseLock(db, wycenaId, token, {
+        process_stage: 'SHIPPED',
+        status: 'Fulfilled',
+        paid: false,
+        worker_last_error: null,
+      });
+      await notifyFulfillment(db, wycena);
+      await pushWeekend(db, wycena);
+      return { ok: true, path: 'sklep-pobranie' };
+    }
+
+    // OPŁACONE w sklepie: przesyłka bez COD, FV VAT od razu.
+    let shipment = (shipments || [])[0];
+    if (!shipment) {
+      shipment = await krokPrzesylka(db, wycena, { codAmount: null, insuranceAmount: kwotaFinalna });
+    }
+    let fakturaPdf = null;
+    if (!(vaty || []).length) {
+      let proformaRow = (proformy || [])[0];
+      if (!proformaRow) {
+        proformaRow = await krokProforma(db, wycena, { services, paymentMethod: 'transfer', kwotaFinalna });
+      }
+      if (!proformaRow.infakt_uuid) {
+        throw new Error('Proforma inFakt jeszcze bez uuid (async) — kliknij „Potwierdź" ponownie za chwilę');
+      }
+      const { pdf } = await krokFakturaKoncowa(db, wycena, proformaRow);
+      fakturaPdf = pdf;
+    }
+    if (fakturaPdf && wycena.email) {
+      await krokMail(db, wycena, {
+        subject: `Faktura VAT za zamówienie ${wycena.shopify_order_name || `#${wycena.id}`}`,
+        text: mailer.MAILE.oplaconaVatZTrackingiem(shipment?.tracking_number || '(numer wkrótce)').text,
+        attachments: [{ filename: `faktura-${wycena.id}.pdf`, data: fakturaPdf }],
+      });
+    }
+    await releaseLock(db, wycenaId, token, {
+      process_stage: 'SHIPPED',
+      status: 'Fulfilled',
+      paid: true,
+      paid_at: wycena.paid_at || new Date().toISOString(),
+      worker_last_error: null,
+    });
+    await notifyFulfillment(db, wycena);
+    await pushWeekend(db, wycena);
+    return { ok: true, path: 'sklep-oplacone' };
+  } catch (err) {
+    await zapiszBlad(db, wycenaId, 'realizujSklep', err);
+    await releaseLock(db, wycenaId, token);
+    throw err;
+  }
+}
+
 // Doręczenie (worker): przy pobraniu faktura końcowa z opłaconej proformy.
 async function onDelivered(db, shipment) {
   const wycena = await loadWycena(db, shipment.wycena_id);
@@ -858,5 +962,5 @@ async function runWorker(db) {
 
 module.exports = {
   startPipeline, onInvoicePaid, onDelivered, reship, runWorker, policzKwoty, markPaidAndShip,
-  jestFurgonetka, wymagaCla, firmaNaFakturze,
+  realizujSklep, jestFurgonetka, wymagaCla, firmaNaFakturze,
 };

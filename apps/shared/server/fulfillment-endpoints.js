@@ -58,6 +58,14 @@ function bucketOf(w, ship, now) {
   const status = String(w.status || '').toLowerCase();
   if (status === 'stracone') return null;
 
+  // Nowe zamówienie ze SKLEPU (Shopify) czeka na ręczne potwierdzenie danych
+  // (adres/telefon z Shopify bywa niedookreślony) — osobna sekcja z formularzem;
+  // „Potwierdź i realizuj" robi FV inFakt + etykietę InPost (realizujSklep).
+  // ERROR z realizacji też tu wraca — poprawka danych + ponowny klik.
+  if (w.source === 'shopify' && ['SHOP_CONFIRM', 'ERROR'].includes(String(w.process_stage))) {
+    return 'sklep_potwierdz';
+  }
+
   // Doręczone: nasza przesyłka delivered LUB pipeline oznaczył DELIVERED
   // (Shopify/import nie mają naszej przesyłki — sygnałem jest process_stage).
   if (doreczona(ship) || String(w.process_stage) === 'DELIVERED') {
@@ -117,9 +125,25 @@ function serializeItems(items, cennikBySku) {
 
 function serializeOrder(w, shipments, bucket, cennikBySku) {
   const ship = przesylkaZamowienia(shipments);
+  const shopifyMeta = (w.legacy && w.legacy.shopify) || {};
   return {
     id: w.id,
     bucket,
+    sklep_nr: w.sklep_nr || null,
+    shopify_order_name: w.shopify_order_name || null,
+    // Formularz potwierdzenia (sekcja Sklep): edytowalne pola + kontekst.
+    adres: {
+      ulica: w.ship_street || '',
+      nr_domu: w.ship_house_no || '',
+      nr_lokalu: w.ship_flat_no || '',
+      kod_pocztowy: w.ship_postcode || '',
+      miasto: w.ship_city || '',
+      kraj: w.ship_country || 'PL',
+    },
+    pobranie: String(w.payment_method || '').toLowerCase() === 'delivery' && !w.paid,
+    shopify_surowy_adres: [shopifyMeta.address1, shopifyMeta.address2].filter(Boolean).join(' · ') || null,
+    shopify_platnosc: [shopifyMeta.financial_status, ...(shopifyMeta.gateways || [])].filter(Boolean).join(' · ') || null,
+    worker_last_error: String(w.process_stage) === 'ERROR' ? (w.worker_last_error || null) : null,
     imie_nazwisko: w.imie_nazwisko || [w.first_name, w.last_name].filter(Boolean).join(' ').trim() || '',
     telefon: w.telefon_e164 ? `+${String(w.telefon_e164).replace(/^\+/, '')}` : (w.telefon_digits ? `+48${w.telefon_digits}` : ''),
     email: w.email || '',
@@ -298,10 +322,12 @@ function registerFulfillmentEndpoints(app, { getClient, requireAdmin }) {
         if (!shipByWycena.has(s.wycena_id)) shipByWycena.set(s.wycena_id, []);
         shipByWycena.get(s.wycena_id).push(s);
       });
-      // Pakujemy własne zamówienia; DOKŁADAMY import/sklep z naszą przesyłką
-      // oraz czekające na płatność z dowolnego źródła (pilnowanie wpłaty).
+      // Pakujemy własne zamówienia; DOKŁADAMY import/sklep z naszą przesyłką,
+      // czekające na płatność z dowolnego źródła (pilnowanie wpłaty) oraz
+      // zamówienia ze sklepu czekające na potwierdzenie danych (SHOP_CONFIRM).
       const rows = (wyceny || []).filter((w) => jestNasze(w)
         || shipByWycena.has(w.id)
+        || (w.source === 'shopify' && ['SHOP_CONFIRM', 'ERROR'].includes(String(w.process_stage)))
         || (String(w.status || '').toLowerCase() === 'waiting for payment' && !w.paid));
 
       // Zdjęcia pozycji bez image_url — dociągnij z cennika po SKU (jedno zapytanie).
@@ -317,7 +343,7 @@ function registerFulfillmentEndpoints(app, { getClient, requireAdmin }) {
       }
 
       const now = Date.now();
-      const out = { do_spakowania: [], spakowane: [], czeka_na_platnosc: [], wyslane: [] };
+      const out = { sklep_potwierdz: [], do_spakowania: [], spakowane: [], czeka_na_platnosc: [], wyslane: [] };
       rows.forEach((w) => {
         const sh = shipByWycena.get(w.id) || [];
         if (!realizowane(w, sh)) return;
@@ -325,8 +351,9 @@ function registerFulfillmentEndpoints(app, { getClient, requireAdmin }) {
         if (!bucket) return;
         out[bucket].push(serializeOrder(w, sh, bucket, cennikBySku));
       });
-      // Kolejki do roboty (do spakowania / spakowane): najstarsze u góry
-      // (najdłużej czekają); reszta: najnowsze u góry.
+      // Kolejki do roboty (potwierdzenie / do spakowania / spakowane):
+      // najstarsze u góry (najdłużej czekają); reszta: najnowsze u góry.
+      out.sklep_potwierdz.sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
       out.do_spakowania.sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
       out.spakowane.sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
       res.json({ data: out });
@@ -443,6 +470,67 @@ function registerFulfillmentEndpoints(app, { getClient, requireAdmin }) {
         payload: { source: 'fulfillment-manual', user: req.user?.name || null },
       });
       res.json({ ok: true });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  // POST /api/fulfillment/:id/sklep-potwierdz — zamówienie ze SKLEPU (Shopify):
+  // Antoni potwierdza/poprawia dane z formularza (dane Shopify bywają
+  // niedookreślone), my zapisujemy je na wycenie i odpalamy realizujSklep
+  // (FV inFakt + kurier InPost; pobranie = COD). Tylko dostawa kurierem — bez
+  // paczkomatu (sklep nie zbiera punktu odbioru).
+  app.post('/api/fulfillment/:id(\\d+)/sklep-potwierdz', guard, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const supabase = getClient();
+      const b = req.body || {};
+      const { data, error } = await supabase.from('wyceny').select('*').eq('id', id).limit(1);
+      if (error) throw error;
+      const w = data && data[0];
+      if (!w) return res.status(404).json({ error: 'Nie znaleziono zamówienia' });
+      if (w.source !== 'shopify') return res.status(400).json({ error: 'To nie jest zamówienie ze sklepu.' });
+      if (!['SHOP_CONFIRM', 'ERROR'].includes(String(w.process_stage))) {
+        return res.status(400).json({ error: 'To zamówienie jest już zrealizowane (albo w innym etapie).' });
+      }
+
+      const wymagane = { ulica: b.ulica, nr_domu: b.nr_domu, kod_pocztowy: b.kod_pocztowy, miasto: b.miasto, telefon: b.telefon };
+      const braki = Object.entries(wymagane).filter(([, v]) => !String(v || '').trim()).map(([k]) => k);
+      if (braki.length) return res.status(400).json({ error: `Uzupełnij pola: ${braki.join(', ')}` });
+
+      const pobranie = Boolean(b.pobranie);
+      const kraj = String(w.ship_country || 'PL').toUpperCase();
+      if (kraj !== 'PL') {
+        // Sklep wysyła po Polsce; zagraniczny adres = przypadek ręczny (routing
+        // Furgonetki wymaga innych danych) — nie realizujemy w ciemno.
+        return res.status(400).json({ error: `Adres poza Polską (${kraj}) — zrealizuj ręcznie (Furgonetka).` });
+      }
+
+      const digits = String(b.telefon).replace(/\D/g, '').replace(/^48/, '');
+      const patch = {
+        telefon_e164: digits ? `48${digits}` : null,
+        telefon_digits: digits || null,
+        email: String(b.email || '').trim() || null,
+        ship_street: String(b.ulica).trim(),
+        ship_house_no: String(b.nr_domu).trim(),
+        ship_flat_no: String(b.nr_lokalu || '').trim() || null,
+        ship_postcode: String(b.kod_pocztowy).trim(),
+        ship_city: String(b.miasto).trim(),
+        ship_country: 'PL',
+        punkt_odbioru: null, // tylko kurier — sklep nie zbiera paczkomatu
+        payment_method: pobranie ? 'delivery' : 'shopify_payments',
+        updated_at: new Date().toISOString(),
+      };
+      const { error: uErr } = await supabase.from('wyceny').update(patch).eq('id', id);
+      if (uErr) throw uErr;
+      await supabase.from('wyceny_events').insert({
+        wycena_id: id, kind: 'sklep.potwierdzone',
+        payload: { user: req.user?.name || null, pobranie, dane: { ...patch, updated_at: undefined } },
+      });
+
+      const { realizujSklep } = require('./wyceny-pipeline');
+      const result = await realizujSklep(supabase, id, { pobranie });
+      res.json({ ok: true, ...result });
     } catch (err) {
       handleError(res, err);
     }

@@ -130,9 +130,38 @@
     .btn.primary:hover { opacity: 0.9; }
     .btn:disabled { opacity: 0.5; cursor: default; }
 
+    /* Sekcja „Sklep — potwierdź dane": formularz korekty danych z Shopify */
+    .warn-note {
+      display: flex; gap: 0.45rem; align-items: baseline;
+      font-size: 0.82rem; color: var(--warn);
+      background: color-mix(in srgb, var(--warn) 12%, transparent);
+      border-radius: 9px; padding: 0.45rem 0.6rem;
+    }
+    .err-note {
+      font-size: 0.82rem; color: var(--bad);
+      background: color-mix(in srgb, var(--bad) 12%, transparent);
+      border-radius: 9px; padding: 0.45rem 0.6rem;
+    }
+    .raw-note { font-size: 0.78rem; color: var(--text-muted); }
+    .form-grid {
+      display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.5rem 0.6rem;
+    }
+    .form-grid label {
+      display: flex; flex-direction: column; gap: 0.2rem;
+      font-size: 0.72rem; font-weight: 600; color: var(--text-muted);
+    }
+    .form-grid input, .form-grid select {
+      font: inherit; font-size: 0.88rem; padding: 0.45rem 0.55rem; border-radius: 9px;
+      border: 1px solid var(--border); background: var(--page); color: var(--text-primary);
+      min-width: 0;
+    }
+    .fg-3 { grid-column: span 3; }
+    .fg-2 { grid-column: span 2; }
     @media (max-width: 720px) {
       .content { padding: 1.25rem 1rem 3rem; }
       .item-name { max-width: 11rem; }
+      .form-grid { grid-template-columns: repeat(2, 1fr); }
+      .fg-3, .fg-2 { grid-column: span 2; }
     }
   </style>
 </head>
@@ -155,10 +184,10 @@
     const API_BASE = window.API_BASE || '';
     LumTopbar.mount({ active: 'fulfillment', into: document.getElementById('site-header') });
 
-    let data = { do_spakowania: [], spakowane: [], czeka_na_platnosc: [], wyslane: [] };
+    let data = { sklep_potwierdz: [], do_spakowania: [], spakowane: [], czeka_na_platnosc: [], wyslane: [] };
 
     const PAYMENT_LABELS = {
-      cod: 'Pobranie', COD: 'Pobranie', transfer: 'Przelew',
+      cod: 'Pobranie', COD: 'Pobranie', delivery: 'Pobranie', transfer: 'Przelew',
       FREE: 'Gratis', shopify_payments: 'Sklep',
     };
     const money = (n) => `${Number(n || 0).toLocaleString('pl-PL', { maximumFractionDigits: 0 })} zł`;
@@ -299,7 +328,106 @@
       btn.disabled = false; btn.textContent = prev;
     }
 
+    // Karta „Sklep — potwierdź dane": moje najlepsze rozbicie danych z Shopify
+    // w edytowalnych polach; „Potwierdź i realizuj" = zapis + FV inFakt +
+    // kurier InPost (pobranie/opłacone wg selecta). Tylko kurier, bez paczkomatu.
+    function sklepCard(o) {
+      const c = h('div', 'card');
+      c.dataset.wid = String(o.id);
+
+      const top = h('div', 'card-top');
+      top.append(
+        h('span', 'card-id', `${o.sklep_nr ? o.sklep_nr + ' · ' : ''}${o.shopify_order_name || ''} · #${o.id}`),
+        h('span', 'card-name', o.imie_nazwisko || '(bez danych)')
+      );
+      top.appendChild(h('span', o.pobranie ? 'chip warn' : 'chip good', o.pobranie ? 'Za pobraniem' : 'Opłacone'));
+      top.appendChild(h('span', 'card-kwota', money(o.kwota)));
+      c.appendChild(top);
+
+      const warn = h('div', 'warn-note');
+      warn.append(h('span', null, '⚠️'), h('span', null,
+        'Dane z Shopify bywają niepewne — sprawdź i popraw przed realizacją.'));
+      c.appendChild(warn);
+      if (o.worker_last_error) c.appendChild(h('div', 'err-note', `Poprzednia próba: ${o.worker_last_error}`));
+      const surowe = [];
+      if (o.shopify_surowy_adres) surowe.push(`Adres w Shopify: ${o.shopify_surowy_adres}`);
+      if (o.shopify_platnosc) surowe.push(`Płatność: ${o.shopify_platnosc}`);
+      if (surowe.length) c.appendChild(h('div', 'raw-note', surowe.join('  ·  ')));
+
+      if (o.items && o.items.length) {
+        const items = h('div', 'items');
+        o.items.forEach((it) => items.appendChild(itemNode(it)));
+        c.appendChild(items);
+      }
+
+      const form = h('div', 'form-grid');
+      const inputs = {};
+      const pole = (key, label, value, span) => {
+        const l = h('label', span || null, label);
+        const i = document.createElement('input');
+        i.type = 'text'; i.value = value || '';
+        inputs[key] = i;
+        l.appendChild(i);
+        return l;
+      };
+      const a = o.adres || {};
+      form.append(
+        pole('telefon', 'Telefon', o.telefon, 'fg-3'),
+        pole('email', 'E-mail', o.email, 'fg-3'),
+        pole('ulica', 'Ulica', a.ulica, 'fg-3'),
+        pole('nr_domu', 'Nr domu'),
+        pole('nr_lokalu', 'Nr lokalu'),
+        pole('kod_pocztowy', 'Kod pocztowy'),
+        pole('miasto', 'Miasto', a.miasto, 'fg-3')
+      );
+      inputs.nr_domu.value = a.nr_domu || '';
+      inputs.nr_lokalu.value = a.nr_lokalu || '';
+      inputs.kod_pocztowy.value = a.kod_pocztowy || '';
+      const platnoscL = h('label', 'fg-3', 'Płatność');
+      const platnosc = document.createElement('select');
+      [['oplacone', 'Opłacone (sklep)'], ['pobranie', 'Za pobraniem']].forEach(([v, t]) => {
+        const opt = document.createElement('option');
+        opt.value = v; opt.textContent = t;
+        platnosc.appendChild(opt);
+      });
+      platnosc.value = o.pobranie ? 'pobranie' : 'oplacone';
+      platnoscL.appendChild(platnosc);
+      form.appendChild(platnoscL);
+      c.appendChild(form);
+
+      const foot = h('div', 'card-foot');
+      foot.appendChild(h('span', 'spacer'));
+      const b = h('button', 'btn primary', 'Potwierdź i realizuj');
+      b.onclick = async () => {
+        const prev = b.textContent;
+        b.disabled = true; b.textContent = 'Realizuję…';
+        try {
+          const body = {
+            telefon: inputs.telefon.value, email: inputs.email.value,
+            ulica: inputs.ulica.value, nr_domu: inputs.nr_domu.value,
+            nr_lokalu: inputs.nr_lokalu.value, kod_pocztowy: inputs.kod_pocztowy.value,
+            miasto: inputs.miasto.value, pobranie: platnosc.value === 'pobranie',
+          };
+          const res = await fetch(`${API_BASE}/api/fulfillment/${o.id}/sklep-potwierdz`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+          });
+          const out = await res.json().catch(() => ({}));
+          if (res.status === 401) { window.location.href = `${API_BASE}/login`; return; }
+          if (!res.ok) throw new Error(out.error || `Błąd ${res.status}`);
+          alert(`Zrealizowane: ${o.sklep_nr || ''} ${o.shopify_order_name || ''}\nFaktura inFakt + etykieta InPost utworzone — zamówienie jest w „Do spakowania".`);
+          await load();
+        } catch (err) {
+          alert(err.message);
+          b.disabled = false; b.textContent = prev;
+        }
+      };
+      foot.appendChild(b);
+      c.appendChild(foot);
+      return c;
+    }
+
     function card(o) {
+      if (o.bucket === 'sklep_potwierdz') return sklepCard(o);
       const c = h('div', 'card');
       c.dataset.wid = String(o.id);
 
@@ -384,6 +512,7 @@
     }
 
     const SEGMENTS = [
+      ['sklep_potwierdz', 'Sklep — potwierdź dane'],
       ['czeka_na_platnosc', 'Czeka na płatność'],
       ['do_spakowania', 'Do spakowania'],
       ['spakowane', 'Spakowane · czeka na kuriera'],
@@ -392,7 +521,7 @@
 
     function matches(o, q) {
       if (!q) return true;
-      const hay = `#${o.id} ${o.imie_nazwisko} ${o.telefon} ${o.email} ${o.miejsce && o.miejsce.city || ''} ${o.miejsce && o.miejsce.adres || ''} ${o.miejsce && o.miejsce.kod || ''} ${o.shipment && o.shipment.tracking_number || ''}`.toLowerCase();
+      const hay = `#${o.id} ${o.sklep_nr || ''} ${o.shopify_order_name || ''} ${o.imie_nazwisko} ${o.telefon} ${o.email} ${o.miejsce && o.miejsce.city || ''} ${o.miejsce && o.miejsce.adres || ''} ${o.miejsce && o.miejsce.kod || ''} ${o.shipment && o.shipment.tracking_number || ''}`.toLowerCase();
       return hay.includes(q);
     }
 
@@ -405,6 +534,8 @@
         const rows = (data[key] || []).filter((o) => matches(o, q));
         total += (data[key] || []).length;
         shown += rows.length;
+        // Sekcja sklepu to przepływ wyjątkowy — bez czekających nie zaśmieca panelu.
+        if (key === 'sklep_potwierdz' && !(data[key] || []).length) return;
         const section = h('section', 'segment');
         const head = h('div', 'segment-head');
         head.append(h('span', 'segment-title', label), h('span', 'segment-count', String(rows.length)));
@@ -422,7 +553,7 @@
         if (res.status === 401) { window.location.href = `${API_BASE}/login`; return; }
         const body = await res.json();
         if (!res.ok) throw new Error(body.error || 'Błąd wczytywania');
-        data = body.data || { do_spakowania: [], spakowane: [], czeka_na_platnosc: [], wyslane: [] };
+        data = body.data || { sklep_potwierdz: [], do_spakowania: [], spakowane: [], czeka_na_platnosc: [], wyslane: [] };
         render();
       } catch (err) {
         document.getElementById('list').innerHTML = `<p class="empty-note">Błąd wczytywania: ${err.message}</p>`;
