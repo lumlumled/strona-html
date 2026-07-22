@@ -2,6 +2,23 @@
 
 > Status: **POMYSŁ / SPEC — nie wdrażać teraz.** Antoni świadomie odkłada to o ~tydzień, żeby najpierw tydzień pracować na sprzedaży (domykanie pipeline'u). Ten plik = brief dla przyszłego czatu, który to zbuduje. Cel: żeby Lorenzo dostawał lidy w kolejności potencjalnego zwrotu, zanim przyzwyczai się do obecnej (chronologicznej) kolejności.
 
+## AKTUALIZACJA 2026-07-22 — decyzje dopięte (NADPISUJĄ poniższe, gdzie się różnią)
+
+Rozmowa z Antonim doprecyzowała spec. Te ustalenia mają pierwszeństwo nad starszymi sekcjami:
+
+1. **„Wycena" ≠ „wysłana oferta". Kluczowe.** +30 i punkty za wartość dostaje TYLKO realna wycena wpisana w systemie = koszyk z konkretnymi produktami i kwotą (rekord w tabeli `wyceny`, typ=WYCENA, status Open, z pozycjami + `kwota`). NIE liczy się: oferta produktowa/katalog wysyłany projektantom albo B2C „na maila żeby popatrzeć", „poproszę o ofertę" bez konkretów, sam link formularza, ani status „Wycena wysłana" na leadzie. → **Poprawka do Reżimu A niżej: usuwamy „leady 'Wycena wysłana'" jako źródło; źródło = wyłącznie rekordy z tabeli `wyceny`.**
+2. **Układ backlogu: ZOSTAWIAMY istniejące kafelki + naprawiamy** (NIE robimy 3 czystych kategorii z sekcji „3 KATEGORIE" niżej — ta zostaje jako alternatywa historyczna). Nie wyrzucamy tego, co już działa.
+3. **Kasujemy kafelek „Wyceny historyczne"** jako osobny. Jego wyceny wpadają do kubełka „Wyceny do domknięcia" (scoring). **Dedup: case z realną wyceną pojawia się TYLKO w jednym kubełku (wyceny do domknięcia), nigdy równolegle w „inne z feedbackiem".** To usuwa dzisiejsze miksowanie (te same 7 „inne z feedbackiem" siedziały też w „historycznych").
+4. **Kolejność kafelków od góry:**
+   1. 🔥 **DZIŚ / PILNE** — zostaje na samej górze (świeże leady real-time + terminy na dziś).
+   2. 📥 **Nowe leady**.
+   3. 💰 **Wyceny do domknięcia** — scoring (Reżim A), 💎 na 5k+, **nowe wyceny lądują na górze tego kubełka** (świeżość podbija score). Wchłania dawne „wyceny z feedbackiem" + „historyczne".
+   4. 📞 **Nieodebrane** (≤5 prób; 6+ → auto-SMS i znika).
+   5. 📋 **Inne z feedbackiem** — tylko BEZ wyceny, deduped względem kubełka 3.
+5. **Dynamiczny re-scoring po każdej odebranej rozmowie.** Score przelicza się automatycznie po telefonie (webhook Zadarmy — wpina się w istniejące przeliczanie temperatury/najbliższej akcji). Klient mówi „temat za 2 miesiące" → temperatura spada / termin się przesuwa → score leci w dół, case schodzi z góry.
+6. **Widok priorytetu = tier 🔴/🟠/⚪ + „dlaczego"** (2–3 powody), NIE liczba. (Rozstrzyga otwarte pytanie z końca pliku.)
+7. **Auto-SMS po 5–6 próbach — potwierdzone** (case znika z góry listy).
+
 ## Kontekst / dlaczego
 
 Dziś cron „Umowa" dzieli lidy na 5 kategorii w sztywnej kolejności; wewnątrz sortuje **po dacie feedbacku**, a Kwota to tylko tie-breaker. W danych: **Kwota pusta u 89% lidów, Temperatura u 92%** (system AI-analizy jest świeży, wypełnia się z każdą rozmową — to OK, będzie rósł). Efekt: lista jest de facto **chronologiczna, wartość prawie nie gra** — a big-ticket to 56% przychodu. Trzeba, żeby **najgrubsze/najgorętsze wyceny szły na górę.**
