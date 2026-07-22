@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link rel="manifest" href="/assets/manifest.webmanifest">
+  <meta name="theme-color" content="#000000">
+  <title>Feedbacki</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared/lead-card.css">
+  <link rel="stylesheet" href="shared/wycena-card.css">
+  <link rel="stylesheet" href="shared/topbar.css">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --surface-1: #ffffff;
+      --surface-2: #faf9f7;
+      --page: #f5f5f4;
+      --text-primary: #111111;
+      --text-secondary: #52514e;
+      --text-muted: #8a8984;
+      --border: rgba(17, 17, 17, 0.12);
+      --border-strong: rgba(17, 17, 17, 0.2);
+      --accent: #111111;
+      --accent-contrast: #ffffff;
+      --accent-soft: #ececea;
+      --good: #0ca30c;
+      --bad: #b5433f;
+      --overdue: #b5433f;
+      --overdue-soft: rgba(181, 67, 63, 0.1);
+      /* Natężenie feedbacków — sekwencyjna skala indygo (osobna od czerwieni
+         „zaległe", żeby liczba i przeterminowanie nie myliły się kolorem). */
+      --heat: 99, 102, 241;
+      --t-wycena: #0f9d58;
+      --t-lead: #3b82f6;
+      --t-wiadomosc: #8b5cf6;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-1: #161616;
+        --surface-2: #1d1d1d;
+        --page: #0a0a0a;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted: #8a8984;
+        --border: rgba(255, 255, 255, 0.14);
+        --border-strong: rgba(255, 255, 255, 0.24);
+        --accent: #ffffff;
+        --accent-contrast: #0a0a0a;
+        --accent-soft: #262626;
+        --good: #16c116;
+        --bad: #e08585;
+        --overdue: #e08585;
+        --overdue-soft: rgba(224, 133, 133, 0.14);
+        --heat: 129, 140, 248;
+        --t-wycena: #34d399;
+        --t-lead: #60a5fa;
+        --t-wiadomosc: #a78bfa;
+      }
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--page);
+      color: var(--text-primary);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    button { font-family: inherit; cursor: pointer; }
+
+    .wrap { max-width: 1280px; margin: 0 auto; padding: 1rem 1rem 4rem; }
+
+    /* ── Pasek sterowania ─────────────────────────────────────────── */
+    .toolbar {
+      display: flex; flex-wrap: wrap; align-items: center; gap: .6rem;
+      margin: 1rem 0 1.1rem;
+    }
+    .seg {
+      display: inline-flex; background: var(--surface-2);
+      border: 1px solid var(--border); border-radius: 999px; padding: 3px;
+    }
+    .seg button {
+      border: 0; background: transparent; color: var(--text-secondary);
+      font-size: .82rem; font-weight: 600; padding: .4rem .85rem; border-radius: 999px;
+    }
+    .seg button.active { background: var(--accent); color: var(--accent-contrast); }
+
+    .navbox { display: inline-flex; align-items: center; gap: .35rem; }
+    .navbox button {
+      width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border);
+      background: var(--surface-1); color: var(--text-primary); font-size: 1rem; line-height: 1;
+    }
+    .navbox .period {
+      min-width: 168px; text-align: center; font-weight: 600; font-size: .92rem;
+      text-transform: capitalize;
+    }
+    .today-btn {
+      border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+      font-size: .8rem; font-weight: 600; padding: .4rem .8rem; border-radius: 999px;
+    }
+    .spacer { flex: 1 1 auto; }
+    .ctl {
+      font-size: .8rem; color: var(--text-secondary); border: 1px solid var(--border);
+      background: var(--surface-1); border-radius: 999px; padding: .38rem .7rem;
+    }
+    select.ctl { appearance: none; padding-right: 1.6rem;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path d='M1 3l4 4 4-4' fill='none' stroke='%238a8984' stroke-width='1.5'/></svg>");
+      background-repeat: no-repeat; background-position: right .6rem center; }
+    .toggle { display: inline-flex; align-items: center; gap: .4rem; cursor: pointer; }
+    .toggle input { accent-color: var(--t-wiadomosc); }
+
+    .legend { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+      font-size: .74rem; color: var(--text-muted); margin: -.3rem 0 1rem; }
+    .legend .sw { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; }
+    .legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--overdue); }
+
+    /* ── Kafel case'a ─────────────────────────────────────────────── */
+    .case {
+      background: var(--surface-1); border: 1px solid var(--border);
+      border-left: 3px solid var(--t-lead); border-radius: 11px;
+      padding: .55rem .65rem; text-align: left; width: 100%; display: block;
+      transition: border-color .12s, transform .05s;
+    }
+    .case:hover { border-color: var(--border-strong); }
+    .case:active { transform: scale(.995); }
+    .case.t-wycena { border-left-color: var(--t-wycena); }
+    .case.t-lead { border-left-color: var(--t-lead); }
+    .case.t-wiadomosc { border-left-color: var(--t-wiadomosc); }
+    .case.overdue { border-left-color: var(--overdue); background:
+      linear-gradient(0deg, var(--overdue-soft), var(--overdue-soft)), var(--surface-1); }
+    .case-top { display: flex; align-items: center; gap: .4rem; margin-bottom: .25rem; }
+    .badge {
+      font-size: .64rem; font-weight: 700; letter-spacing: .02em; text-transform: uppercase;
+      padding: .1rem .38rem; border-radius: 5px; color: #fff; white-space: nowrap;
+    }
+    .badge.t-wycena { background: var(--t-wycena); }
+    .badge.t-lead { background: var(--t-lead); }
+    .badge.t-wiadomosc { background: var(--t-wiadomosc); }
+    .case-time { font-size: .72rem; color: var(--text-muted); font-weight: 600; }
+    .case-time.overdue { color: var(--overdue); }
+    .case-owner {
+      margin-left: auto; width: 19px; height: 19px; border-radius: 50%;
+      background: var(--accent-soft); color: var(--text-secondary);
+      font-size: .64rem; font-weight: 700; display: grid; place-items: center;
+    }
+    .case-name { font-weight: 600; font-size: .9rem; line-height: 1.2; }
+    .case-phone { display: inline-flex; align-items: center; gap: .3rem;
+      font-size: .78rem; color: var(--text-secondary); margin-top: .15rem; }
+    .case-phone .copy { border: 0; background: transparent; color: var(--text-muted);
+      padding: 0 2px; font-size: .8rem; line-height: 1; }
+    .case-bottom { display: flex; align-items: baseline; justify-content: space-between;
+      gap: .5rem; margin-top: .3rem; }
+    .case-kwota { font-weight: 700; font-size: .82rem; }
+    .case-id { font-size: .68rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+    /* ── Widok tygodnia ───────────────────────────────────────────── */
+    .week-scroll { overflow-x: auto; padding-bottom: .4rem; }
+    .week {
+      display: grid; grid-auto-flow: column; gap: .6rem;
+      grid-auto-columns: minmax(180px, 1fr); align-items: start;
+    }
+    .col {
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: 13px; padding: .5rem; min-height: 120px;
+      display: flex; flex-direction: column; gap: .5rem;
+    }
+    .col.overdue-col { border-color: rgba(181,67,63,.4); background: var(--overdue-soft); }
+    .col.today { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+    .col-head { display: flex; align-items: baseline; justify-content: space-between; gap: .3rem; padding: 0 .15rem; }
+    .col-day { font-weight: 700; font-size: .82rem; text-transform: capitalize; }
+    .col-date { font-size: .72rem; color: var(--text-muted); }
+    .col-count { font-size: .72rem; font-weight: 700; color: var(--text-secondary);
+      background: var(--surface-1); border: 1px solid var(--border); border-radius: 999px;
+      padding: .04rem .4rem; }
+    .col-empty { font-size: .74rem; color: var(--text-muted); text-align: center; padding: .6rem 0; }
+    .col-cases { display: flex; flex-direction: column; gap: .45rem; }
+
+    /* ── Widok miesiąca ───────────────────────────────────────────── */
+    .month-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: .35rem; }
+    .dow { text-align: center; font-size: .72rem; font-weight: 700; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: .04em; padding-bottom: .2rem; }
+    .cell {
+      position: relative; min-height: 78px; border: 1px solid var(--border);
+      border-radius: 10px; padding: .35rem .4rem; background: var(--surface-1);
+      text-align: left; display: flex; flex-direction: column; gap: .25rem;
+      color: var(--text-primary); transition: border-color .12s;
+    }
+    .cell:hover { border-color: var(--border-strong); }
+    .cell.other { opacity: .4; }
+    .cell.weekend { background: var(--surface-2); }
+    .cell.today { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+    .cell.overdue { border-color: rgba(181,67,63,.45); }
+    .cell-num { font-size: .78rem; font-weight: 600; }
+    .cell.today .cell-num { color: var(--accent); }
+    .heat-num { margin-top: auto; display: inline-flex; align-items: center; gap: .3rem;
+      font-size: .74rem; font-weight: 700; }
+    .heat-pill { display: inline-block; padding: .06rem .45rem; border-radius: 999px;
+      font-size: .74rem; font-weight: 700; }
+    .cell .over-dot { position: absolute; top: .4rem; right: .4rem; width: 8px; height: 8px;
+      border-radius: 50%; background: var(--overdue); }
+
+    /* ── Widok dnia ───────────────────────────────────────────────── */
+    .day-head { font-size: 1.05rem; font-weight: 700; text-transform: capitalize; margin-bottom: .1rem; }
+    .day-sub { font-size: .82rem; color: var(--text-muted); margin-bottom: 1rem; }
+    .day-section-title { font-size: .78rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .04em; color: var(--text-muted); margin: 1.2rem 0 .5rem; display: flex; gap: .4rem; align-items: center; }
+    .day-section-title.overdue { color: var(--overdue); }
+    .cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: .6rem; }
+
+    .empty { text-align: center; color: var(--text-muted); padding: 3rem 1rem; font-size: .9rem; }
+
+    /* ── Szuflada (slide-over z prawej) ───────────────────────────── */
+    .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.38); opacity: 0;
+      pointer-events: none; transition: opacity .18s; z-index: 40; }
+    .scrim.open { opacity: 1; pointer-events: auto; }
+    .drawer {
+      position: fixed; top: 0; right: 0; height: 100dvh; width: min(560px, 100vw);
+      background: var(--page); border-left: 1px solid var(--border);
+      transform: translateX(100%); transition: transform .2s ease; z-index: 41;
+      display: flex; flex-direction: column; box-shadow: -12px 0 34px rgba(0,0,0,.18);
+    }
+    .drawer.open { transform: translateX(0); }
+    .drawer-head { display: flex; align-items: center; gap: .6rem; padding: .9rem 1rem;
+      border-bottom: 1px solid var(--border); }
+    .drawer-title { font-weight: 700; font-size: 1rem; }
+    .drawer-sub { font-size: .76rem; color: var(--text-muted); }
+    .drawer-close { margin-left: auto; width: 34px; height: 34px; border-radius: 50%;
+      border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+      font-size: 1.2rem; line-height: 1; }
+    .drawer-body { flex: 1 1 auto; overflow-y: auto; padding: .8rem 1rem; }
+    .drawer-foot { padding: .8rem 1rem; border-top: 1px solid var(--border); }
+    .btn-done {
+      width: 100%; border: 0; border-radius: 11px; padding: .75rem; font-weight: 700; font-size: .9rem;
+      background: var(--good); color: #fff;
+    }
+    .btn-done:disabled { opacity: .55; }
+    .drawer-note { font-size: .82rem; color: var(--text-secondary); line-height: 1.5; }
+    .drawer-link { display: inline-block; margin-top: .6rem; font-weight: 600; color: var(--t-wiadomosc); }
+
+    @media (max-width: 640px) {
+      .navbox .period { min-width: 120px; font-size: .84rem; }
+      .cell { min-height: 60px; }
+      .month-grid { gap: .25rem; }
+    }
+  </style>
+</head>
+<body>
+  <header id="site-header"></header>
+  <div class="wrap">
+    <div class="toolbar">
+      <div class="seg" id="view-seg">
+        <button data-view="week" class="active">Tydzień</button>
+        <button data-view="month">Miesiąc</button>
+        <button data-view="day">Dzień</button>
+      </div>
+      <div class="navbox">
+        <button id="prev" title="Wstecz">‹</button>
+        <span class="period" id="period">—</span>
+        <button id="next" title="Dalej">›</button>
+      </div>
+      <button class="today-btn" id="today">Dziś</button>
+      <div class="spacer"></div>
+      <select class="ctl" id="owner-filter" hidden></select>
+      <label class="toggle ctl"><input type="checkbox" id="ai-toggle"> Pokaż też AI</label>
+      <button class="today-btn" id="refresh" title="Odśwież">↻</button>
+    </div>
+    <div class="legend" id="legend"></div>
+    <div id="calendar"><p class="empty">Wczytywanie…</p></div>
+  </div>
+
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer" aria-hidden="true">
+    <div class="drawer-head">
+      <div>
+        <div class="drawer-title" id="drawer-title">—</div>
+        <div class="drawer-sub" id="drawer-sub"></div>
+      </div>
+      <button class="drawer-close" id="drawer-close" title="Zamknij">×</button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+    <div class="drawer-foot" id="drawer-foot" hidden>
+      <button class="btn-done" id="btn-done">Zrobione — domknij feedback ✓</button>
+    </div>
+  </aside>
+
+  <script src="shared/topbar.js"></script>
+  <script src="shared/wycena-card.js"></script>
+  <script src="shared/wycena-editor.js"></script>
+  <script src="shared/lead-card.js"></script>
+  <script src="shared/kontakt-panel.js"></script>
+  <script>
+    const API_BASE = window.API_BASE || '';
+    const USER = window.LUMLUM_USER || { isAdmin: false, crmSheets: {} };
+    const LINKS = window.LUMLUM_LINKS || {};
+    LumTopbar.mount({ active: 'feedbacki', into: document.getElementById('site-header') });
+
+    const LEAD_READONLY = !(USER.isAdmin || (USER.crmSheets && USER.crmSheets['leady-b2c'] === 'edit'));
+
+    // ── Stan ──────────────────────────────────────────────────────
+    let view = 'week';
+    let anchor = startOfDay(new Date()); // środek widoku (dzień/tydzień/miesiąc)
+    let showAI = false;
+    let ownerFilter = '';
+    let cases = [];       // wszystkie otwarte feedbacki (po filtrze serwera)
+    let current = null;   // case otwarty w szufladzie
+
+    const TYPE_LABEL = { wycena: 'wycena', lead: 'lead', wiadomosc: 'wiadomość' };
+    const DOW = ['pon', 'wt', 'śr', 'czw', 'pt', 'sob', 'nie'];
+    const MONTHS = ['styczeń','luty','marzec','kwiecień','maj','czerwiec','lipiec','sierpień','wrzesień','październik','listopad','grudzień'];
+
+    // ── Pomocnicze daty (lokalna strefa przeglądarki = strefa użytkownika) ──
+    function startOfDay(d) { const x = new Date(d); x.setHours(0,0,0,0); return x; }
+    function ymd(d) {
+      const x = new Date(d);
+      return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`;
+    }
+    function dueDate(c) { return c.due_at ? new Date(c.due_at) : null; }
+    function dueYmd(c) { const d = dueDate(c); return d ? ymd(d) : null; }
+    function mondayOf(d) {
+      const x = startOfDay(d); const day = (x.getDay() + 6) % 7; // pon=0
+      x.setDate(x.getDate() - day); return x;
+    }
+    function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+    function addMonths(d, n) { const x = new Date(d); x.setDate(1); x.setMonth(x.getMonth() + n); return x; }
+    const TODAY_YMD = ymd(new Date());
+
+    function fmtPLN(v) {
+      if (v == null || v === '' || isNaN(Number(v))) return '';
+      return `${Math.round(Number(v)).toLocaleString('pl-PL')} zł`;
+    }
+    function fmtPhone(digits) {
+      const d = String(digits || '').replace(/\D/g, '').replace(/^48/, '');
+      if (!d) return '';
+      return `+48 ${d.replace(/(\d{3})(\d{3})(\d{3})/, '$1 $2 $3')}`.trim();
+    }
+    function fmtTime(c) {
+      const d = dueDate(c); if (!d) return '';
+      return d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+    }
+    function isOverdueCase(c) { const y = dueYmd(c); return y && y < TODAY_YMD; }
+
+    // ── Kafel ─────────────────────────────────────────────────────
+    function caseCard(c) {
+      const o = c._obiekt || {};
+      const overdue = isOverdueCase(c);
+      const card = document.createElement('button');
+      card.className = `case t-${c.object_type}` + (overdue ? ' overdue' : '');
+      card.type = 'button';
+
+      const top = document.createElement('div'); top.className = 'case-top';
+      const badge = document.createElement('span');
+      badge.className = `badge t-${c.object_type}`;
+      badge.textContent = TYPE_LABEL[c.object_type] || c.object_type;
+      const time = document.createElement('span');
+      time.className = 'case-time' + (overdue ? ' overdue' : '');
+      time.textContent = overdue ? `zaległe · ${fmtTime(c)}` : fmtTime(c);
+      top.append(badge, time);
+      if (c.owner) {
+        const own = document.createElement('span'); own.className = 'case-owner';
+        own.textContent = String(c.owner).trim().charAt(0).toUpperCase();
+        own.title = c.owner; top.append(own);
+      }
+
+      const name = document.createElement('div'); name.className = 'case-name';
+      name.textContent = o.imie_nazwisko || (o.telefon_digits ? fmtPhone(o.telefon_digits) : 'Bez nazwy');
+
+      card.append(top, name);
+
+      if (o.telefon_digits) {
+        const ph = document.createElement('div'); ph.className = 'case-phone';
+        const txt = document.createElement('span'); txt.textContent = fmtPhone(o.telefon_digits);
+        const copy = document.createElement('button'); copy.className = 'copy'; copy.type = 'button';
+        copy.textContent = '⧉'; copy.title = 'Kopiuj numer';
+        copy.addEventListener('click', (e) => {
+          e.stopPropagation();
+          navigator.clipboard?.writeText(fmtPhone(o.telefon_digits)).then(() => {
+            copy.textContent = '✓'; setTimeout(() => (copy.textContent = '⧉'), 1200);
+          });
+        });
+        ph.append(txt, copy); card.append(ph);
+      }
+
+      const bottom = document.createElement('div'); bottom.className = 'case-bottom';
+      const kwota = document.createElement('span'); kwota.className = 'case-kwota';
+      kwota.textContent = fmtPLN(o.kwota);
+      const id = document.createElement('span'); id.className = 'case-id';
+      id.textContent = o.id ? `#${o.id}` : '';
+      bottom.append(kwota, id); card.append(bottom);
+
+      card.addEventListener('click', () => openDrawer(c));
+      return card;
+    }
+
+    // ── Natężenie (heatmapa miesiąca) ─────────────────────────────
+    function heatStyle(n) {
+      let a = 0;
+      if (n >= 8) a = 0.66; else if (n >= 5) a = 0.45; else if (n >= 3) a = 0.28; else if (n >= 1) a = 0.14;
+      const strong = n >= 5;
+      return { bg: a ? `rgba(var(--heat), ${a})` : 'transparent', strong };
+    }
+
+    // ── Bucketowanie ──────────────────────────────────────────────
+    function visibleCases() {
+      return cases.filter((c) => !ownerFilter || String(c.owner || '').toLowerCase() === ownerFilter.toLowerCase());
+    }
+    function bucketByDay(list) {
+      const map = new Map();
+      list.forEach((c) => { const y = dueYmd(c); if (!y) return; if (!map.has(y)) map.set(y, []); map.get(y).push(c); });
+      map.forEach((arr) => arr.sort((a, b) => String(a.due_at).localeCompare(String(b.due_at))));
+      return map;
+    }
+    function overdueCases(list) {
+      return list.filter(isOverdueCase).sort((a, b) => String(a.due_at).localeCompare(String(b.due_at)));
+    }
+
+    // ── Render: przełącznik ───────────────────────────────────────
+    function render() {
+      document.querySelectorAll('#view-seg button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+      renderLegend();
+      renderPeriod();
+      const root = document.getElementById('calendar');
+      root.innerHTML = '';
+      if (view === 'week') root.appendChild(renderWeek());
+      else if (view === 'month') root.appendChild(renderMonth());
+      else root.appendChild(renderDay());
+    }
+
+    function renderLegend() {
+      const l = document.getElementById('legend');
+      if (view === 'month') {
+        l.innerHTML = 'Natężenie: '
+          + '<span><span class="sw" style="background:rgba(99,102,241,.14)"></span> 1-2</span>'
+          + '<span><span class="sw" style="background:rgba(99,102,241,.28)"></span> 3-4</span>'
+          + '<span><span class="sw" style="background:rgba(99,102,241,.45)"></span> 5-7</span>'
+          + '<span><span class="sw" style="background:rgba(99,102,241,.66)"></span> 8+</span>'
+          + '<span><span class="dot"></span> zaległe</span>';
+      } else {
+        l.innerHTML = '<span><span class="sw" style="background:var(--t-wycena)"></span> wycena</span>'
+          + '<span><span class="sw" style="background:var(--t-lead)"></span> lead</span>'
+          + '<span><span class="sw" style="background:var(--t-wiadomosc)"></span> wiadomość</span>'
+          + '<span><span class="dot"></span> zaległe</span>';
+      }
+    }
+
+    function renderPeriod() {
+      const p = document.getElementById('period');
+      if (view === 'month') p.textContent = `${MONTHS[anchor.getMonth()]} ${anchor.getFullYear()}`;
+      else if (view === 'day') p.textContent = anchor.toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' });
+      else {
+        const mon = mondayOf(anchor), fri = addDays(mon, 4);
+        const sameMonth = mon.getMonth() === fri.getMonth();
+        p.textContent = sameMonth
+          ? `${mon.getDate()}–${fri.getDate()} ${MONTHS[fri.getMonth()]}`
+          : `${mon.getDate()} ${MONTHS[mon.getMonth()].slice(0,3)} – ${fri.getDate()} ${MONTHS[fri.getMonth()].slice(0,3)}`;
+      }
+    }
+
+    // ── Widok tygodnia ────────────────────────────────────────────
+    function column({ dayLabel, dateLabel, list, today, overdueCol }) {
+      const col = document.createElement('div');
+      col.className = 'col' + (today ? ' today' : '') + (overdueCol ? ' overdue-col' : '');
+      const head = document.createElement('div'); head.className = 'col-head';
+      const left = document.createElement('div');
+      left.innerHTML = `<div class="col-day">${dayLabel}</div>` + (dateLabel ? `<div class="col-date">${dateLabel}</div>` : '');
+      const cnt = document.createElement('span'); cnt.className = 'col-count'; cnt.textContent = String(list.length);
+      head.append(left, cnt); col.append(head);
+      const body = document.createElement('div'); body.className = 'col-cases';
+      if (!list.length) body.innerHTML = '<div class="col-empty">—</div>';
+      else list.forEach((c) => body.appendChild(caseCard(c)));
+      col.append(body);
+      return col;
+    }
+
+    function renderWeek() {
+      const vis = visibleCases();
+      const byDay = bucketByDay(vis);
+      const wrap = document.createElement('div'); wrap.className = 'week-scroll';
+      const grid = document.createElement('div'); grid.className = 'week';
+
+      // Kolumna Zaległe (wszystkie przeterminowane, nie tylko z tego tygodnia) —
+      // przyklejona z lewej, żeby nic nie umknęło.
+      grid.appendChild(column({
+        dayLabel: 'Zaległe', dateLabel: '', list: overdueCases(vis), today: false, overdueCol: true,
+      }));
+
+      const mon = mondayOf(anchor);
+      for (let i = 0; i < 5; i++) {
+        const d = addDays(mon, i); const y = ymd(d);
+        grid.appendChild(column({
+          dayLabel: DOW[i], dateLabel: `${d.getDate()} ${MONTHS[d.getMonth()].slice(0,3)}`,
+          list: (byDay.get(y) || []).filter((c) => !isOverdueCase(c)), today: y === TODAY_YMD,
+        }));
+      }
+      // Weekend tego tygodnia pokazujemy tylko, gdy coś na nim jest (rzadkie).
+      const wknd = [ymd(addDays(mon,5)), ymd(addDays(mon,6))]
+        .flatMap((y) => (byDay.get(y) || []).filter((c) => !isOverdueCase(c)));
+      if (wknd.length) grid.appendChild(column({ dayLabel: 'sob/nie', dateLabel: 'weekend', list: wknd, today: false }));
+
+      wrap.appendChild(grid);
+      return wrap;
+    }
+
+    // ── Widok miesiąca ────────────────────────────────────────────
+    function renderMonth() {
+      const vis = visibleCases();
+      const byDay = bucketByDay(vis);
+      const frag = document.createElement('div');
+      const grid = document.createElement('div'); grid.className = 'month-grid';
+      DOW.forEach((d) => { const h = document.createElement('div'); h.className = 'dow'; h.textContent = d; grid.appendChild(h); });
+
+      const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+      const start = mondayOf(first);
+      const month = anchor.getMonth();
+      for (let i = 0; i < 42; i++) {
+        const d = addDays(start, i); const y = ymd(d);
+        const inMonth = d.getMonth() === month;
+        const isWknd = d.getDay() === 0 || d.getDay() === 6;
+        const list = byDay.get(y) || [];
+        const n = list.length;
+        const overdue = n > 0 && y < TODAY_YMD;
+        const cell = document.createElement('button'); cell.type = 'button';
+        cell.className = 'cell' + (inMonth ? '' : ' other') + (isWknd ? ' weekend' : '')
+          + (y === TODAY_YMD ? ' today' : '') + (overdue ? ' overdue' : '');
+        const num = document.createElement('span'); num.className = 'cell-num'; num.textContent = d.getDate();
+        cell.appendChild(num);
+        if (overdue) { const dot = document.createElement('span'); dot.className = 'over-dot'; cell.appendChild(dot); }
+        if (n > 0) {
+          const { bg, strong } = heatStyle(n);
+          const wrapN = document.createElement('span'); wrapN.className = 'heat-num';
+          const pill = document.createElement('span'); pill.className = 'heat-pill';
+          pill.style.background = bg;
+          pill.style.color = strong ? '#fff' : 'var(--text-primary)';
+          pill.textContent = n;
+          wrapN.appendChild(pill); cell.appendChild(wrapN);
+        }
+        cell.addEventListener('click', () => { anchor = startOfDay(d); view = 'day'; render(); });
+        grid.appendChild(cell);
+      }
+      frag.appendChild(grid);
+      return frag;
+    }
+
+    // ── Widok dnia ────────────────────────────────────────────────
+    function renderDay() {
+      const vis = visibleCases();
+      const y = ymd(anchor);
+      const list = (bucketByDay(vis).get(y) || []).slice();
+      const frag = document.createElement('div');
+      const head = document.createElement('div'); head.className = 'day-head';
+      head.textContent = anchor.toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+      const sub = document.createElement('div'); sub.className = 'day-sub';
+      sub.textContent = `${list.length} ${plural(list.length, 'feedback', 'feedbacki', 'feedbacków')} na ten dzień`;
+      frag.append(head, sub);
+
+      // Gdy patrzymy na dziś — sekcja zaległych na górze (żeby nie umknęły).
+      if (y === TODAY_YMD) {
+        const over = overdueCases(vis);
+        if (over.length) {
+          const t = document.createElement('div'); t.className = 'day-section-title overdue';
+          t.innerHTML = `<span class="dot"></span> Zaległe (${over.length})`;
+          const g = document.createElement('div'); g.className = 'cards-grid';
+          over.forEach((c) => g.appendChild(caseCard(c)));
+          frag.append(t, g);
+        }
+      }
+
+      if (!list.length) {
+        const e = document.createElement('p'); e.className = 'empty'; e.textContent = 'Brak feedbacków na ten dzień.';
+        frag.appendChild(e);
+      } else {
+        if (y === TODAY_YMD) { const t = document.createElement('div'); t.className = 'day-section-title'; t.textContent = 'Na dziś'; frag.appendChild(t); }
+        const g = document.createElement('div'); g.className = 'cards-grid';
+        list.forEach((c) => g.appendChild(caseCard(c)));
+        frag.appendChild(g);
+      }
+      return frag;
+    }
+    function plural(n, one, few, many) {
+      if (n === 1) return one;
+      const t = n % 10, h = n % 100;
+      return (t >= 2 && t <= 4 && (h < 10 || h >= 20)) ? few : many;
+    }
+
+    // ── Szuflada z pełną kartą klienta ────────────────────────────
+    const scrim = document.getElementById('scrim');
+    const drawer = document.getElementById('drawer');
+    const drawerBody = document.getElementById('drawer-body');
+    const drawerFoot = document.getElementById('drawer-foot');
+
+    function closeDrawer() {
+      drawer.classList.remove('open'); scrim.classList.remove('open');
+      drawer.setAttribute('aria-hidden', 'true'); current = null;
+    }
+    scrim.addEventListener('click', closeDrawer);
+    document.getElementById('drawer-close').addEventListener('click', closeDrawer);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
+
+    async function openDrawer(c) {
+      current = c;
+      const o = c._obiekt || {};
+      document.getElementById('drawer-title').textContent = o.imie_nazwisko || 'Bez nazwy';
+      document.getElementById('drawer-sub').textContent =
+        `${TYPE_LABEL[c.object_type] || c.object_type}${o.id ? ` #${o.id}` : ''}` +
+        `${c.due_at ? ` · termin ${dueDate(c).toLocaleDateString('pl-PL')} ${fmtTime(c)}` : ''}`;
+      drawerFoot.hidden = false;
+      drawerBody.innerHTML = '<p class="drawer-note">Wczytywanie karty…</p>';
+      drawer.classList.add('open'); scrim.classList.add('open'); drawer.setAttribute('aria-hidden', 'false');
+      drawerBody.scrollTop = 0;
+
+      // Wiadomość (obietnica z komunikatora) — brak leada; link do wątku.
+      if (c.object_type === 'wiadomosc') {
+        drawerBody.innerHTML = '';
+        const note = document.createElement('div'); note.className = 'drawer-note';
+        note.innerHTML = `Obietnica z komunikatora.<br>${c.reason ? `„${escapeHtml(c.reason)}"` : ''}`;
+        drawerBody.appendChild(note);
+        if (o.public_id) {
+          const a = document.createElement('a'); a.className = 'drawer-link';
+          a.href = `${LINKS.wiadomosci || '/wiadomosci/'}?klient=${encodeURIComponent(o.public_id)}`;
+          a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'Otwórz wątek w Wiadomościach →';
+          drawerBody.appendChild(a);
+        }
+        return;
+      }
+
+      // Wycena / lead — pełna karta CRM przez wspólną LeadKarta (po telefonie).
+      if (!o.telefon_digits) {
+        drawerBody.innerHTML = `<div class="drawer-note">Brak numeru telefonu przy tym feedbacku — nie mogę otworzyć pełnej karty.<br>ID: ${o.id ? `#${o.id}` : '—'}${o.kwota != null ? `, kwota ${fmtPLN(o.kwota)}` : ''}.</div>`;
+        return;
+      }
+      try {
+        const res = await fetch(`${API_BASE}/api/leady/pelny?telefon=${encodeURIComponent(o.telefon_digits)}`);
+        if (res.status === 401) { window.location.href = `${API_BASE}/login`; return; }
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || 'Błąd wczytywania karty');
+        const lead = body.data;
+        drawerBody.innerHTML = '';
+        const host = document.createElement('details'); host.open = true;
+        host.style.border = '0';
+        const { el } = LeadKarta.buildBody(lead, {
+          apiBase: API_BASE,
+          hostDetails: host,
+          readOnly: LEAD_READONLY,
+        });
+        host.appendChild(el);
+        drawerBody.appendChild(host);
+      } catch (err) {
+        drawerBody.innerHTML = `<div class="drawer-note">Nie udało się wczytać karty: ${escapeHtml(err.message)}.<br>` +
+          `${o.telefon_digits ? `Telefon: ${fmtPhone(o.telefon_digits)}. ` : ''}${o.kwota != null ? `Kwota: ${fmtPLN(o.kwota)}.` : ''}</div>`;
+      }
+    }
+
+    function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s || ''); return d.innerHTML; }
+
+    document.getElementById('btn-done').addEventListener('click', async () => {
+      if (!current) return;
+      const btn = document.getElementById('btn-done');
+      btn.disabled = true; btn.textContent = 'Zamykam…';
+      const url = current.object_type === 'wiadomosc'
+        ? `${API_BASE}/api/watchdog/obietnice/${encodeURIComponent(current.object_id)}/zamknij`
+        : `${API_BASE}/api/watchdog/alerty/${encodeURIComponent(current.id)}/zamknij`;
+      try {
+        const res = await fetch(url, { method: 'POST' });
+        if (res.status === 401) { window.location.href = `${API_BASE}/login`; return; }
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || 'Nie udało się domknąć');
+        cases = cases.filter((c) => c.id !== current.id);
+        closeDrawer();
+        render();
+      } catch (err) {
+        alert(`Błąd: ${err.message}`);
+      } finally {
+        btn.disabled = false; btn.textContent = 'Zrobione — domknij feedback ✓';
+      }
+    });
+
+    // ── Filtr właściciela (admin) ─────────────────────────────────
+    function buildOwnerFilter() {
+      if (!USER.isAdmin) return;
+      const sel = document.getElementById('owner-filter');
+      const owners = [...new Set(cases.map((c) => String(c.owner || '').trim()).filter(Boolean))].sort();
+      sel.innerHTML = '<option value="">Wszyscy</option>' + owners.map((o) => `<option value="${escapeHtml(o)}"${o.toLowerCase() === ownerFilter.toLowerCase() ? ' selected' : ''}>${escapeHtml(o)}</option>`).join('');
+      sel.hidden = false;
+      sel.onchange = () => { ownerFilter = sel.value; render(); };
+    }
+
+    // ── Ładowanie danych ──────────────────────────────────────────
+    async function load() {
+      document.getElementById('calendar').innerHTML = '<p class="empty">Wczytywanie…</p>';
+      try {
+        const res = await fetch(`${API_BASE}/api/feedbacki/kalendarz?ai=${showAI ? 1 : 0}`);
+        if (res.status === 401) { window.location.href = `${API_BASE}/login`; return; }
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || 'Błąd wczytywania');
+        cases = body.data || [];
+        buildOwnerFilter();
+        render();
+      } catch (err) {
+        document.getElementById('calendar').innerHTML = `<p class="empty">Błąd wczytywania: ${escapeHtml(err.message)}</p>`;
+      }
+    }
+
+    // ── Nawigacja ─────────────────────────────────────────────────
+    document.getElementById('view-seg').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-view]'); if (!b) return;
+      view = b.dataset.view; render();
+    });
+    document.getElementById('prev').addEventListener('click', () => { anchor = step(-1); render(); });
+    document.getElementById('next').addEventListener('click', () => { anchor = step(1); render(); });
+    document.getElementById('today').addEventListener('click', () => { anchor = startOfDay(new Date()); render(); });
+    document.getElementById('refresh').addEventListener('click', load);
+    document.getElementById('ai-toggle').addEventListener('change', (e) => { showAI = e.target.checked; load(); });
+    function step(dir) {
+      if (view === 'month') return startOfDay(addMonths(anchor, dir));
+      if (view === 'day') return startOfDay(addDays(anchor, dir));
+      return startOfDay(addDays(mondayOf(anchor), dir * 7));
+    }
+
+    load();
+  </script>
+</body>
+</html>

@@ -137,6 +137,7 @@ window.LumTopbar = (() => {
     { key: 'wiedza', label: 'Wiedza' },
     { key: 'doradca', label: 'Doradca', adminOnly: true },
     { key: 'kampanie', label: 'Kampanie' },
+    { key: 'feedbacki', label: 'Feedbacki' },
     { key: 'pozwolenia', label: 'Pozwolenia', adminOnly: true },
   ];
 
