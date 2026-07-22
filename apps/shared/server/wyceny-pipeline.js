@@ -544,7 +544,7 @@ async function startPipeline(db, wycenaId) {
     let paymentLink = null;
     if (proformaRow.infakt_uuid) {
       try {
-        paymentLink = await infakt.createQuickPayment(proformaRow.infakt_uuid);
+        paymentLink = await infakt.getPaymentLink(proformaRow.infakt_uuid);
         if (paymentLink) {
           await db.from('wyceny_invoices').update({ quick_payment_url: paymentLink, updated_at: new Date().toISOString() })
             .eq('id', proformaRow.id);

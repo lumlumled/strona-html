@@ -61,11 +61,17 @@ async function sendToKsef(uuid) {
   return infaktFetch(`/invoices/${uuid}/send_to_ksef.json`, { method: 'post' });
 }
 
-// Szybkie płatności: POST tworzy, GET oddaje payment_link.
-async function createQuickPayment(uuid) {
-  await infaktFetch(`/invoices/${uuid}/quick_payments.json`, { method: 'post' });
-  const data = await infaktFetch(`/invoices/${uuid}/quick_payments.json`);
-  return data.payment_link || data?.quick_payment?.payment_link || null;
+// Link szybkiej płatności (Autopay). WAŻNE: inFakt rejestruje transakcję Autopay
+// SAM przy tworzeniu faktury przelewowej (globalne Szybkie Płatności = ON) i
+// wystawia gotowy link w extensions.payments.link. NIE WOLNO wołać
+// POST /quick_payments — to nadpisuje dobrą transakcję zepsutą i link od razu
+// jest "wygasł lub jest niepoprawny" (UI i Make nigdy tego nie wołały;
+// potwierdzone testami na żywym koncie 2026-07-22: async/sync + quick_payments
+// = martwy, oba warianty BEZ quick_payments = działa). Bierzemy link z faktury.
+async function getPaymentLink(uuid) {
+  const inv = await infaktFetch(`/invoices/${uuid}.json`);
+  const p = inv && inv.extensions && inv.extensions.payments;
+  return p && p.available && p.link ? p.link : null;
 }
 
 // PDF faktury (bajty) — do załącznika maila i proxy w panelu.
@@ -207,7 +213,7 @@ module.exports = {
   getInvoice,
   deleteInvoice,
   sendToKsef,
-  createQuickPayment,
+  getPaymentLink,
   downloadPdf,
   buildServices,
   shippingSurchargePLN,
