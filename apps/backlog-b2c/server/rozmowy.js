@@ -13,7 +13,7 @@
 // Moduł jest dependency-injected (deps z server.js: findLeadByPhone, sync
 // Umowy, helpery dat) — bez cyklicznego require i testowalny na atrapie.
 
-const { analyzeCall, statusRank, NO_ANSWER_ALLOWED_FROM, parseKwotaZlotych } = require('../../shared/server/call-analysis');
+const { analyzeCall, statusRank, NO_ANSWER_ALLOWED_FROM, parseKwotaZlotych, isPlDateDue } = require('../../shared/server/call-analysis');
 
 const LEADY_B2C_TABLE = 'Leady B2C';
 const LOG_ZMIAN_TABLE = 'Log zmian';
@@ -198,7 +198,13 @@ function registerRozmowyEndpoints(app, deps) {
         if (!leadClosed && analysis?.status && statusRank(analysis.status) >= statusRank(statusBefore)) {
           statusAfter = analysis.status;
         }
-        const feedbackAfter = analysis?.data_feedbacku || lead['Data Feedbacku'];
+        // Data feedbacku po ręcznej rozmowie (zawsze "odebrana" → tylko Reguła
+        // A). Nowy termin z AI → bierzemy; brak nowego, a stary PRZETERMINOWANY
+        // (≤ dziś) → czyścimy (rozmowa go "zużyła", myląca data znika, dalej
+        // pilnuje miękki watchdog); przyszły umówiony termin → zostaje.
+        const dzisFeedback = warsawDateStr(receivedAt);
+        const feedbackAfter = analysis?.data_feedbacku
+          || (isPlDateDue(lead['Data Feedbacku'], dzisFeedback) ? null : lead['Data Feedbacku']);
         const historiaEntry = `${whenText} - ${opis}`;
         const setAkcja = Boolean(analysis);
         const akcjaPoRozmowie = (!['Sprzedane', 'Stracony'].includes(statusAfter) && analysis?.najblizsza_akcja) || null;

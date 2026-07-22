@@ -5,11 +5,12 @@ const express = require('express');
 const cors = require('cors');
 const { getClient } = require('./supabase');
 const { registerLeadyEndpoints, NIE_TELEFON_ZRODLA } = require('../../shared/server/leady-endpoints');
-const { analyzeCall, statusRank, NO_ANSWER_ALLOWED_FROM, parseKwotaZlotych } = require('../../shared/server/call-analysis');
+const { analyzeCall, statusRank, NO_ANSWER_ALLOWED_FROM, parseKwotaZlotych, isPlDateDue, addPlDays } = require('../../shared/server/call-analysis');
 const rozmowy = require('./rozmowy');
 const { registerWycenyEndpoints } = require('../../shared/server/wyceny-endpoints');
 const { createAuth, clientPayload, panelLinks, isAdmin } = require('../../shared/server/auth');
 const { servePushWorker, registerPushEndpoints, notifyUser } = require('../../shared/server/push');
+const { recordInboundSms } = require('../../shared/server/kontakt-send');
 
 const app = express();
 app.use(cors());
@@ -773,7 +774,34 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
         statusAfter = analysis.status;
       }
     }
-    const feedbackAfter = (lead && analysis?.data_feedbacku) ? analysis.data_feedbacku : feedbackBefore;
+    // ── Data feedbacku po rozmowie (decyzja Antoniego 2026-07-22) ──────────
+    // Kolejność decyzji:
+    //  1. AI dało nowy konkretny termin → bierzemy go (jak dotąd).
+    //  2. ODEBRANA rozmowa, brak nowego terminu, a stary jest PRZETERMINOWANY
+    //     (≤ dziś) → czyścimy: rozmowa "zużyła" ten termin, myląca data nie ma
+    //     dłużej wisieć jako "następny kontakt". Pustą datą zaopiekuje się
+    //     miękki watchdog (feedback_watch), proponując re-kontakt w metadanych.
+    //  3. NIEODEBRANA (w tym poczta głosowa), stary termin przeterminowany
+    //     (≤ dziś) → przesuwamy na jutro (dzień rozmowy +1), zachowując godzinę
+    //     — żeby nie osunęło się w tył i wróciło jutro na radar.
+    //  4. Reszta (m.in. PRZYSZŁY, umówiony termin) → bez zmian.
+    // p_godzina_feedbacku dla RPC: null = "rozstrzygnij godzinę wg zmiany daty"
+    // (add-godzina-feedbacku.js). Jawnie ustawiamy ją tylko przy nowym terminie
+    // z AI oraz przy przesuwce nieodebranej (żeby godzina nie zniknęła).
+    const dzisFeedback = warsawDateStr(receivedAt);
+    let feedbackAfter = feedbackBefore;
+    let godzinaFeedbackuParam = null;
+    if (lead && analysis?.data_feedbacku) {
+      feedbackAfter = analysis.data_feedbacku;
+      godzinaFeedbackuParam = analysis.godzina_feedbacku || null;
+    } else if (lead && isPlDateDue(feedbackBefore, dzisFeedback)) {
+      if (answered) {
+        feedbackAfter = null; // Reguła A: rozmowa zużyła przeterminowany termin
+      } else {
+        feedbackAfter = addPlDays(dzisFeedback, 1) || feedbackBefore; // Reguła B: jutro
+        godzinaFeedbackuParam = lead['Godzina Feedbacku'] || null;
+      }
+    }
 
     // Najbliższa akcja: odebrana rozmowa z analizą zawsze REEWALUUJE pole —
     // w odróżnieniu od produktów/kwoty/oceny AI (tam pusty wynik analizy nie
@@ -950,11 +978,12 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
         p_akcja: akcjaPoRozmowie,
         p_akcja_termin: akcjaTermin,
         p_akcja_owner: akcjaOwner,
-        // Tylko NOWA godzina z tej rozmowy — zachowanie/czyszczenie starej
-        // rozstrzyga RPC względem zmiany daty (add-godzina-feedbacku.js):
-        // nowa data bez godziny czyści starą godzinę, brak nowej daty nie
-        // dotyka jej wcale.
-        p_godzina_feedbacku: analysis?.data_feedbacku ? (analysis.godzina_feedbacku || null) : null,
+        // Godzina wyliczona razem z feedbackAfter wyżej: nowa z AI, stara
+        // zachowana przy przesuwce nieodebranej (Reguła B), inaczej null →
+        // RPC rozstrzyga ją względem zmiany daty (add-godzina-feedbacku.js):
+        // nowa/wyczyszczona data bez godziny czyści starą, brak zmiany daty
+        // nie dotyka jej wcale.
+        p_godzina_feedbacku: godzinaFeedbackuParam,
       });
       if (updateErr) console.error('Błąd update Leady B2C:', updateErr.message);
 
@@ -1020,6 +1049,89 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     } catch { /* best-effort */ }
     await logOperation(supabase, 'zadarma_webhook', 'error', { message: err.message, body: req.body });
     handleError(res, err, 502);
+  }
+});
+
+// ── Webhook: przychodzący SMS (Zadarma → Make → tu), jak rozmowy ─────────────
+// Zadarma NIE udostępnia odebranych SMS-ów przez API — przychodzą tylko push-em.
+// Idziemy tą samą drogą co telefony: automatyzacja w Make łapie SMS i POST-uje
+// tu czysty payload (autoryzacja tym samym ZADARMA_WEBHOOK_TOKEN co rozmowy).
+//
+// Kontrakt Make → nasz endpoint (Make mapuje pola Zadarmy na te nazwy; parser
+// jest tolerancyjny na kilka wariantów). Make owija bundle w tablicę - bierzemy
+// pierwszy element. Zawsze zapisujemy surowy payload (siatka bezpieczeństwa),
+// zawsze zwracamy 200 (żeby Make nie retryował w kółko).
+//
+// Przepływ: 1) ślad w kom_messages 'in' (auto-stop follow-upów kampanii),
+// 2) analyzeCall na treści SMS → gdy pada termin ("jutro o 14:30"), ustawiamy
+// leadowi Data/Godzina Feedbacku + Najbliższą akcję TĄ SAMĄ RPC co analiza
+// rozmów (app_update_leady_notatka, z bypassem triggera Log zmian). Gdy AI nie
+// znajdzie terminu - niczego nie nadpisujemy (null = no-op w RPC).
+app.all('/api/webhooks/zadarma-sms', async (req, res) => {
+  // Handshake gdyby kiedyś podpiąć natywny webhook Zadarmy zamiast Make.
+  if (req.query.zd_echo) return res.status(200).send(String(req.query.zd_echo));
+  if (req.query.token !== process.env.ZADARMA_WEBHOOK_TOKEN) {
+    return res.status(403).json({ error: 'Nieprawidłowy token' });
+  }
+  const supabase = getClient();
+  const raw = { method: req.method, query: req.query, body: req.body };
+  console.log('ZADARMA_SMS_INBOUND ' + JSON.stringify(raw));
+  await logOperation(supabase, 'zadarma_sms_inbound', 'received', raw).catch(() => {});
+
+  try {
+    const p = Array.isArray(req.body) ? (req.body[0] || {}) : (req.body || {});
+    const fromDigits = normalizePhoneDigits(p.caller_id || p.from || p.nadawca || p.numer_klienta || '');
+    const tresc = String(p.text || p.message || p.tresc || p.sms || p.body || '').trim();
+    if (!fromDigits || fromDigits.length < 9 || !tresc) {
+      return res.status(200).json({ status: 'ignored', reason: 'brak nadawcy lub treści w znanych polach' });
+    }
+
+    // Lead po numerze nadawcy (może nie istnieć - wtedy zapisujemy sam ślad).
+    const lead = await findLeadByPhone(supabase, fromDigits);
+
+    // 1) Ślad przychodzącego SMS-a w komunikatorze (włącza auto-stop kampanii).
+    let threadId = null;
+    try {
+      const info = await recordInboundSms(supabase, {
+        fromDigits, tresc, lead, metaExtra: { message_id: p.message_id || null, zadarma_sms: true },
+      });
+      threadId = info.threadId;
+    } catch (e) {
+      console.warn('zadarma-sms: recordInboundSms:', e.message);
+    }
+
+    // 2) Ekstrakcja terminu + akcja - tylko gdy mamy leada do zaktualizowania.
+    let feedback = null;
+    if (lead) {
+      const analysis = await analyzeCall(tresc, {
+        kierunek: 'przychodzące',
+        dzisiaj: warsawDateStr(new Date()),
+        poprzedniOpis: lead['Ocena AI kontaktu'] || null,
+        poprzedniaAkcja: lead['Najbliższa akcja'] || null,
+      }).catch((e) => { console.warn('zadarma-sms: analyzeCall:', e.message); return null; });
+
+      const dataFeedbacku = analysis?.data_feedbacku || null;
+      const godzina = dataFeedbacku ? (analysis?.godzina_feedbacku || null) : null;
+      const akcja = analysis?.najblizsza_akcja || null;
+      const linia = `${warsawDateTimeStr(new Date())} - [SMS←] ${tresc.replace(/\s+/g, ' ').slice(0, 200)}`;
+      const { error: rpcErr } = await supabase.rpc('app_update_leady_notatka', {
+        p_phone: lead['Phone number'],
+        p_historia: lead['Historia rozmów'] ? `${linia}\n${lead['Historia rozmów']}` : linia,
+        p_set_akcja: Boolean(akcja),
+        p_akcja: akcja,
+        p_akcja_termin: akcja ? (analysis?.najblizsza_akcja_termin || null) : null,
+        p_akcja_owner: null,
+        p_data_feedbacku: dataFeedbacku,
+        p_godzina_feedbacku: godzina,
+      });
+      if (rpcErr) console.warn('zadarma-sms: app_update_leady_notatka:', rpcErr.message);
+      feedback = { data_feedbacku: dataFeedbacku, godzina_feedbacku: godzina, najblizsza_akcja: akcja };
+    }
+
+    return res.json({ status: 'ok', lead: Boolean(lead), threadId, feedback });
+  } catch (err) {
+    console.error('zadarma-sms webhook:', err.message);
+    return res.status(200).json({ status: 'error', error: err.message });
   }
 });
 

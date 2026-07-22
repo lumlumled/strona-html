@@ -372,6 +372,52 @@ function parseKwotaZlotych(str) {
   return digits ? Number(digits) : null;
 }
 
+// ── Data feedbacku: reguły "nie myl handlowca starą datą" ───────────────────
+// (docs/plan-watchdog-feedback.md; decyzja Antoniego 2026-07-22). "Data
+// Feedbacku" w Leady B2C to "DD.MM.YYYY" w kalendarzu Europe/Warsaw (patrz
+// warsawDateStr). Poniższe helpery liczą WYŁĄCZNIE na dacie kalendarzowej —
+// północ UTC jako nośnik, bez wpływu DST — i są używane przez webhook Zadarmy
+// oraz ręczny panel /rozmowa do:
+//   • wyczyszczenia PRZETERMINOWANEGO terminu po ODEBRANEJ rozmowie bez nowego
+//     ustalenia (rozmowa "zużyła" termin; pustą datą zaopiekuje się miękki
+//     watchdog / feedback_watch, proponując re-kontakt w metadanych);
+//   • przesunięcia terminu NIEODEBRANEJ rozmowy na jutro (nigdy w tył).
+function parsePlDate(value) {
+  const m = String(value || '').trim().match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (!m) return null;
+  const d = Number(m[1]);
+  const mo = Number(m[2]);
+  const y = Number(m[3]);
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  // Odrzuć śmieciowe daty ("32.13.2026") — Date przewinęłoby je na inny dzień.
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+  return dt;
+}
+
+function formatPlDate(dt) {
+  const d = String(dt.getUTCDate()).padStart(2, '0');
+  const mo = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  return `${d}.${mo}.${dt.getUTCFullYear()}`;
+}
+
+// Termin "wymagalny" = niepusty i wypadający najpóźniej w dniu rozmowy
+// (todayStr też "DD.MM.YYYY"). Przyszły, umówiony termin → false (zostaje).
+// Pusta/niepoprawna data → false (nie ma czego czyścić ani przesuwać).
+function isPlDateDue(value, todayStr) {
+  const dt = parsePlDate(value);
+  const today = parsePlDate(todayStr);
+  if (!dt || !today) return false;
+  return dt.getTime() <= today.getTime();
+}
+
+// "DD.MM.YYYY" + n dni → "DD.MM.YYYY" (null przy niepoprawnej dacie wejściowej).
+function addPlDays(value, n) {
+  const dt = parsePlDate(value);
+  if (!dt) return null;
+  dt.setUTCDate(dt.getUTCDate() + n);
+  return formatPlDate(dt);
+}
+
 module.exports = {
   buildCallAnalysisPrompt,
   analyzeCall,
@@ -379,4 +425,7 @@ module.exports = {
   statusRank,
   NO_ANSWER_ALLOWED_FROM,
   parseKwotaZlotych,
+  parsePlDate,
+  isPlDateDue,
+  addPlDays,
 };

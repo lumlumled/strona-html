@@ -235,6 +235,33 @@ async function sendMailAndLog(db, { email, temat, tresc, senderUserId, senderNam
   return { ok: true, tryb: wWatku ? 'watek' : 'nowy', temat: subjectUsed, skrzynka: userBox.email, threadId: threadRow.id };
 }
 
+// Zapis PRZYCHODZĄCEGO SMS-a (Zadarma → Make → webhook). Lustro sendSmsAndLog,
+// tylko direction 'in': wątek klienta w komunikatorze + wiadomość, dzięki czemu
+// worker kampanii (odpowiedzialSmsem czyta kom_messages 'in') sam zatrzymuje
+// follow-upy po odpowiedzi. NIE dotyka feedbacku/akcji leada - to robi warstwa
+// wyżej (webhook) po analizie AI. Zwraca { threadId, customerId }.
+async function recordInboundSms(db, { fromDigits, tresc, lead = null, displayName = null, metaExtra = {} }) {
+  const digits = normalizePhoneDigits(fromDigits);
+  const body = String(tresc || '').trim();
+  if (!digits || digits.length < 9) throw new Error('Brak poprawnego numeru nadawcy SMS');
+  if (!body) throw new Error('Pusta treść SMS-a');
+  const komPhone = identity.normalize('phone', digits);
+  const customer = await resolveCustomerForLead(db, {
+    digits, email: null, displayName: (lead && lead['Name']) || displayName || null,
+  });
+  const { thread } = await identity.attachThread(db, customer, 'sms', komPhone);
+  const { error: msgErr } = await db.from('kom_messages').insert({
+    thread_id: thread.id,
+    direction: 'in',
+    body,
+    sent_by: null,
+    meta: { sms: { nadawca: komPhone }, zrodlo: 'zadarma_sms', ...metaExtra },
+  });
+  if (msgErr) console.warn('kontakt: zapis kom_messages (sms in):', msgErr.message);
+  await db.from('kom_threads').update({ last_message_at: new Date().toISOString() }).eq('id', thread.id);
+  return { threadId: thread.id, customerId: customer.id };
+}
+
 module.exports = {
   normalizePhoneDigits,
   warsawDateTimeStr,
@@ -245,4 +272,5 @@ module.exports = {
   resolveSmsCaller,
   sendSmsAndLog,
   sendMailAndLog,
+  recordInboundSms,
 };
