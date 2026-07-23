@@ -44,6 +44,9 @@ Prosi o kontakt w terminie → "Zadzwonić jeszcze raz" + data_feedbacku.
 Handlowiec FAKTYCZNIE wysłał wycenę (padł link do wyceny, potwierdzenie że PDF/oferta już poszła na maila, klient potwierdza że dostał) → "Wycena wysłana".
 SAMA zapowiedź/obietnica wysłania wyceny w przyszłości ("wyślę panu ofertę", "przygotuję wycenę i prześlę", "dostanie pan wycenę") to NIE jest "Wycena wysłana" — zostaje "Po pierwszym tel" albo "Zadzwonić jeszcze raz" (jeśli padła data kolejnego kontaktu).
 Klient zamówił → "Sprzedane".
+Klient odsyła temat w NIEOKREŚLONĄ przyszłość, bez daty kolejnego kontaktu — "to jeszcze nie ten etap", "sam zadzwonię, jak zacznę remont", "odezwę się, jak przygotuję projekt", "wrócę do tematu po wykończeniu", "najpierw muszę kupić dom" → "Przyszłościowy". Klient jest realny, ale na dziś nie ma czego domykać i nikt nie umówił konkretnego terminu.
+Klient rozmawia, ale nie ma projektu ani żadnych konkretów i nie ustalono następnego kroku → "Lekko zainteresowany".
+Klient JEDNOZNACZNIE odmawia: rezygnuje, cena za wysoka i nie chce negocjować, wybrał konkurencję, "nie jestem zainteresowany" → "Stracony". Sama zwłoka, brak decyzji albo odesłanie tematu w przyszłość to NIE jest "Stracony".
 Niepewny → "Po pierwszym tel".
 Jeśli pasuje kilka statusów → wybierz najdalej zaawansowany wg powyższej logiki.
 
@@ -136,25 +139,21 @@ umówionym terminie, termin = data_feedbacku (spójnie).
 
 ===== ZASADY zamkniete_dzis =====
 To NIE jest "zamknięty case" (sprzedany/stracony na zawsze) — to informacja czy
-z tym tematem trzeba jeszcze coś zrobić DZISIAJ, czy nie. Liczy się WYŁĄCZNIE
-konkretność ustalenia, NIE odległość w czasie do kolejnego kontaktu — "proszę
-zadzwonić jutro" to TAK, jest zaopiekowany na dziś (bo dzisiejsze zadanie z tym
-tematem jest zrobione, kolejny krok jest zaplanowany na inny, konkretny dzień).
+z tym tematem trzeba jeszcze coś zrobić DZISIAJ, czy nie.
 
-true gdy:
-- status = "Sprzedane"
-- status = "Stracony"
-- klient jednoznacznie odmówił ("nie jestem zainteresowany", "rezygnuję")
-- padła data_feedbacku — KONKRETNY termin kolejnego kontaktu, niezależnie jak
-  blisko (nawet "jutro") — bo skoro termin jest ustalony na inny dzień, na dziś
-  nic więcej nie trzeba robić
-- handlowiec faktycznie wysłał wycenę i klient powiedział że odezwie się sam
+DOMYŚLNIE true. Sam fakt, że ta rozmowa się odbyła, domyka temat na dziś —
+także wtedy, gdy nic konkretnego nie ustalono ("klient sam się odezwie", "to
+jeszcze nie ten etap", klient odmówił, umówiono kontakt na inny dzień). Liczy
+się WYŁĄCZNIE to, czy zostało zadanie DO WYKONANIA JESZCZE DZIŚ — NIE to, jak
+konkretne były ustalenia ani jak daleko jest kolejny kontakt.
 
-false gdy:
-- klient prosi o kontakt "później"/"jeszcze dziś" BEZ konkretnej daty czy pory —
-  niejednoznaczne, może oznaczać że jeszcze dziś coś z tym tematem się zdarzy
-- klient "zastanawia się" bez konkretnej daty
-- rozmowa urwana, niejasna, bez konkluzji
+false TYLKO wtedy, gdy z rozmowy wynika konkretne zadanie na DZIŚ:
+- handlowiec obiecał wysłać wycenę/ofertę/link jeszcze dzisiaj
+- klient prosi o telefon jeszcze dziś ("proszę zadzwonić po 17", "oddzwonię za godzinę")
+- klient czeka dziś na konkretną informację od handlowca (dostępność, cena, termin dostawy)
+- rozmowa urwała się w połowie (zerwane połączenie) i trzeba oddzwonić od razu
+
+W każdym innym przypadku true.
 
 ===== TYP KLIENTA B2B / B2C =====
 Oceń czy klient jest B2B czy B2C na podstawie faktów z rozmowy.
@@ -308,7 +307,12 @@ Pole typ_klienta: jeśli brak sygnałów B2B → zawsze "B2C".`;
 // rozmowy (status/data_feedbacku/produkty/kwota/jakość leada/zamknięcie na
 // dziś), przeniesiona z promptu, który wcześniej żył w scenariuszu Make.
 async function analyzeCall(transcript, { kierunek, dzisiaj, poprzedniOpis, poprzedniaAkcja }) {
-  const fallback = { status: null, data_feedbacku: null, godzina_feedbacku: null, opis: transcript ? transcript.slice(0, 200) : null, skrocony_opis: null, produkty: '', cena_zaproponowana: null, jakosc_leada: null, uzasadnienie_jakosci: '', zamkniete_dzis: false, najblizsza_akcja: null, najblizsza_akcja_termin: null, poczta_glosowa: false };
+  // zamkniete_dzis: null (nie false) — "nie wiem", bo analiza się nie odbyła.
+  // Odhaczenie case'a w planie dnia liczy czyZaopiekowaneDzis, dla którego
+  // false znaczy "AI stwierdziła, że coś zostało na dziś"; padnięta analiza
+  // nie może udawać takiego stwierdzenia. Boolean(...) w Log zmian daje z tego
+  // false jak dotąd, więc kolumna boolean nie zobaczy różnicy.
+  const fallback = { status: null, data_feedbacku: null, godzina_feedbacku: null, opis: transcript ? transcript.slice(0, 200) : null, skrocony_opis: null, produkty: '', cena_zaproponowana: null, jakosc_leada: null, uzasadnienie_jakosci: '', zamkniete_dzis: null, najblizsza_akcja: null, najblizsza_akcja_termin: null, poczta_glosowa: false };
   if (!OPENAI_API_KEY || !transcript) return fallback;
   try {
     const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -418,9 +422,50 @@ function addPlDays(value, n) {
   return formatPlDate(dt);
 }
 
+// ── Odhaczenie case'a w planie dnia ("zaopiekowane dziś") ───────────────────
+// Decyzja Antoniego 2026-07-23, na przykładzie trzech rozmów z tego dnia:
+// lead 13 (Kamil, "za drogo, mam ofertę od elektryka") odhaczył się sam, bo AI
+// dała status "Stracony", ale leady 14 (Wiktor, "sam zadzwonię jak zacznę
+// remont") i 4 (Rafał, "jak przygotuję projekt, to podeślę") zostały w planie
+// jako NIEzrobione — mimo że handlowiec do nich zadzwonił i temat na dziś był
+// skończony. Powód: odhaczenie wisiało na ocenie AI, która wymagała twardej
+// kotwicy (Sprzedane/Stracony/konkretna data feedbacku/jawna odmowa).
+//
+// Teraz odhacza FAKT odbytej rozmowy, a AI może to tylko COFNĄĆ, gdy zostało
+// konkretne zadanie na dziś (zamkniete_dzis === false — patrz ZASADY
+// zamkniete_dzis w prompcie). Brak analizy (transkrypcja/AI padła →
+// zamkniete_dzis null) nie blokuje: rozmowa i tak się odbyła. Nieodebrane i
+// poczta głosowa (answered=false) nie odhaczają nigdy — próba kontaktu to nie
+// kontakt.
+function czyZaopiekowaneDzis(answered, analysis) {
+  if (!answered) return false;
+  return analysis?.zamkniete_dzis !== false;
+}
+
+// ── "Przyszłościowy nie może zniknąć" ───────────────────────────────────────
+// Odebrana rozmowa "zużywa" przeterminowaną Datę Feedbacku (Reguła A w
+// webhooku), a klient odsyłający temat w nieokreśloną przyszłość nowej nie
+// daje. Bez tego lead zostawał bez terminu, bez akcji i bez statusu wzywającego
+// do działania — czyli wypadał z planu dnia na zawsze (dokładnie to stało się
+// leadom 14 i 4 dnia 23.07.2026: Data Feedbacku i Najbliższa akcja = null).
+// Decyzja Antoniego: taki temat nie jest stracony, tylko wraca kontrolnie za 30
+// dni. Zwraca null, gdy reguła nie ma zastosowania (inny status albo termin już
+// jest — wtedy niczego nie nadpisujemy).
+const PRZYSZLOSCIOWY_RECALL_DNI = 30;
+
+function przyszlosciowyRecall(statusAfter, feedbackAfter, dzisiaj) {
+  if (statusAfter !== 'Przyszłościowy' || feedbackAfter) return null;
+  const data = addPlDays(dzisiaj, PRZYSZLOSCIOWY_RECALL_DNI);
+  if (!data) return null;
+  return { data_feedbacku: data, akcja: `Kontrolny telefon ${data}`, termin: data };
+}
+
 module.exports = {
   buildCallAnalysisPrompt,
   analyzeCall,
+  czyZaopiekowaneDzis,
+  przyszlosciowyRecall,
+  PRZYSZLOSCIOWY_RECALL_DNI,
   STATUS_RANK,
   statusRank,
   NO_ANSWER_ALLOWED_FROM,

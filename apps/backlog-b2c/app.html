@@ -2545,6 +2545,28 @@
       } catch { /* pigułki zostają na migawce z dokumentu */ }
     }
 
+    // Odhaczenia "zaopiekowane dziś" zrobione automatem — webhook rozmowy
+    // zapisuje flagę prosto do Supabase (markZamknieteInUmowa), a dokument w
+    // panelu to migawka z rana, więc bez tego case odhaczony po odłożeniu
+    // słuchawki wisiał na górze listy do F5 i automat wyglądał na zepsuty.
+    // Tylko DOKŁADAMY odhaczenia, nigdy nie odznaczamy: gdyby handlowiec
+    // właśnie ręcznie odznaczył case'a, wyścig z tym pollem cofnąłby mu
+    // decyzję (odznaczenie i tak leci do Supabase i wróci prawdziwe po
+    // przeładowaniu).
+    async function refreshZamkniete() {
+      if (activeDoc !== 'umowa' || !currentRow) return;
+      try {
+        const params = new URLSearchParams({ dataValue: currentRow['Data'], state: activeState || '' });
+        const res = await fetch(`${API_BASE}/api/umowa/zamkniete?${params}`);
+        if (!res.ok) return;
+        const body = await res.json();
+        (body.lp || []).forEach((lp) => {
+          const instances = leadInstancesByLp.get(Number(lp));
+          if (instances && instances.some(({ checkbox }) => !checkbox.checked)) setLeadClosed(Number(lp), true);
+        });
+      } catch { /* case'y zostają na stanie z migawki */ }
+    }
+
     // Spinner "rozmowa w analizie" — adaptacyjny poll GET /api/rozmowy/w-toku:
     // szybki gdy coś się analizuje (handlowiec właśnie skończył rozmawiać i
     // patrzy w panel), wolny gdy cisza, wcale gdy karta schowana. Żadnego
@@ -2575,7 +2597,9 @@
           const union = new Set([...rozmowyWTokuActive, ...now]);
           rozmowyWTokuActive = now;
           union.forEach((p) => applySpinnerToPhone(p, now.has(p)));
-          if (anyCleared) refreshAkcje();
+          // Analiza rozmowy skończona → status/akcja ORAZ odhaczenie case'a
+          // (webhook mógł właśnie zamknąć go w planie dnia).
+          if (anyCleared) { refreshAkcje(); refreshZamkniete(); }
         }
       } catch { /* spinner zostaje na dotychczasowym stanie */ }
       finally {
@@ -2585,7 +2609,10 @@
     }
 
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') pollRozmowyWToku();
+      // Rozmowa mogła zacząć się i skończyć przy schowanej karcie — wtedy
+      // spinner nigdy nie mrugnął, więc anyCleared nie odpali refreshZamkniete.
+      // Powrót do panelu musi pokazać aktualny stan odhaczeń.
+      if (document.visibilityState === 'visible') { pollRozmowyWToku(); refreshZamkniete(); }
     });
 
     function toIsoDate(str) {
@@ -2915,10 +2942,22 @@
       checkbox.type = 'checkbox';
       checkbox.className = 'close-checkbox';
       checkbox.checked = Boolean(c.zamkniete);
-      checkbox.title = 'Zamknięte (tylko lokalnie, nie zapisuje się do Supabase)';
+      checkbox.title = c.lp !== undefined
+        ? 'Zaopiekowane dziś — case spada na dół listy (zapisuje się)'
+        : 'Zaopiekowane dziś (case spoza planu — tylko lokalnie)';
       checkbox.addEventListener('click', (e) => e.stopPropagation());
       checkbox.addEventListener('change', () => {
-        setLeadClosed(c.lp, checkbox.checked);
+        const closed = checkbox.checked;
+        setLeadClosed(c.lp, closed);
+        // Ptaszek musi przeżyć odświeżenie i wejść do podsumowania dnia
+        // (plan.priorytet_zamkniete liczy tę flagę z dokumentu w Supabase) —
+        // wcześniej żył tylko w DOM. Case spoza wygenerowanej Umowy nie ma lp,
+        // więc nie ma czego zapisać: zostaje lokalny, jak dotąd.
+        if (c.lp === undefined) return;
+        saveLeadField(c.lp, 'zamkniete', closed ? 1 : 0).catch((err) => {
+          setLeadClosed(c.lp, !closed); // cofnij, żeby ekran nie kłamał
+          alert(`Nie zapisano odhaczenia: ${err.message}`);
+        });
       });
       summary.appendChild(checkbox);
 
@@ -3698,6 +3737,10 @@
       if (activeDoc === 'umowa') {
         caseByPhone = buildCaseByPhone(draft);
         if (lastPolaczeniaRows) renderPolaczenia(lastPolaczeniaRows);
+        // Dokument mógł zostać wczytany do allRows wcześniej (przełączanie
+        // dni nie odpytuje serwera) — dociągnij odhaczenia zrobione w
+        // międzyczasie, po tym jak render zarejestrował case'y po lp.
+        refreshZamkniete();
       }
     }
 

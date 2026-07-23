@@ -13,7 +13,7 @@
 // Moduł jest dependency-injected (deps z server.js: findLeadByPhone, sync
 // Umowy, helpery dat) — bez cyklicznego require i testowalny na atrapie.
 
-const { analyzeCall, statusRank, NO_ANSWER_ALLOWED_FROM, parseKwotaZlotych, isPlDateDue } = require('../../shared/server/call-analysis');
+const { analyzeCall, statusRank, NO_ANSWER_ALLOWED_FROM, parseKwotaZlotych, isPlDateDue, czyZaopiekowaneDzis, przyszlosciowyRecall } = require('../../shared/server/call-analysis');
 const { normalizeTemperatura } = require('./scoring');
 
 const LEADY_B2C_TABLE = 'Leady B2C';
@@ -190,6 +190,10 @@ function registerRozmowyEndpoints(app, deps) {
         poprzedniaAkcja: lead ? lead['Najbliższa akcja'] : (kontakt ? kontakt.najblizsza_akcja : null),
       });
       const opis = analysis?.opis || tresc.slice(0, 200);
+      // Wklejona transkrypcja to z definicji rozmowa, która się ODBYŁA
+      // (disposition 'answered' niżej) — więc case jest zaopiekowany na dziś,
+      // chyba że GPT wskazał konkretne zadanie na dziś. Patrz czyZaopiekowaneDzis.
+      const zaopiekowaneDzis = czyZaopiekowaneDzis(true, analysis);
 
       // ── Ścieżka 1: lead — pełny pipeline jak webhook Zadarmy ──
       if (lead) {
@@ -204,13 +208,27 @@ function registerRozmowyEndpoints(app, deps) {
         // (≤ dziś) → czyścimy (rozmowa go "zużyła", myląca data znika, dalej
         // pilnuje miękki watchdog); przyszły umówiony termin → zostaje.
         const dzisFeedback = warsawDateStr(receivedAt);
-        const feedbackAfter = analysis?.data_feedbacku
+        let feedbackAfter = analysis?.data_feedbacku
           || (isPlDateDue(lead['Data Feedbacku'], dzisFeedback) ? null : lead['Data Feedbacku']);
         const historiaEntry = `${whenText} - ${opis}`;
-        const setAkcja = Boolean(analysis);
-        const akcjaPoRozmowie = (!['Sprzedane', 'Stracony'].includes(statusAfter) && analysis?.najblizsza_akcja) || null;
-        const akcjaTermin = akcjaPoRozmowie ? (analysis?.najblizsza_akcja_termin || null) : null;
-        const akcjaOwner = akcjaPoRozmowie ? handlowiec : null;
+        let setAkcja = Boolean(analysis);
+        let akcjaPoRozmowie = (!['Sprzedane', 'Stracony'].includes(statusAfter) && analysis?.najblizsza_akcja) || null;
+        let akcjaTermin = akcjaPoRozmowie ? (analysis?.najblizsza_akcja_termin || null) : null;
+        let akcjaOwner = akcjaPoRozmowie ? handlowiec : null;
+
+        // Ten sam wyjątek co w webhooku Zadarmy: lead odesłany w nieokreśloną
+        // przyszłość wraca kontrolnie za 30 dni, zamiast zniknąć bez terminu
+        // i bez akcji (patrz przyszlosciowyRecall).
+        const recall = przyszlosciowyRecall(statusAfter, feedbackAfter, dzisFeedback);
+        if (recall) {
+          feedbackAfter = recall.data_feedbacku;
+          if (!akcjaPoRozmowie) {
+            setAkcja = true;
+            akcjaPoRozmowie = recall.akcja;
+            akcjaTermin = recall.termin;
+            akcjaOwner = handlowiec || null;
+          }
+        }
 
         const { error: insertErr } = await supabase.from(LOG_ZMIAN_TABLE).insert({
           zrodlo: 'rozmowa_reczna',
@@ -221,7 +239,7 @@ function registerRozmowyEndpoints(app, deps) {
           data_feedbacku_przed: lead['Data Feedbacku'],
           data_feedbacku_po: feedbackAfter,
           kierunek,
-          zamkniete_dzis: Boolean(analysis?.zamkniete_dzis),
+          zamkniete_dzis: zaopiekowaneDzis,
           transkrypcja: tresc,
           handlowiec,
           // Brak czas_trwania_s (null, nie 0) — ręczna wklejka nie zna czasu
@@ -258,7 +276,7 @@ function registerRozmowyEndpoints(app, deps) {
         // (commit f580f96) — kategoria zostaje, status się aktualizuje.
         if (statusAfter) await updateStatusInUmowa(supabase, digits, statusAfter);
         if (temperaturaPoRozmowie && patchScoreInUmowa) await patchScoreInUmowa(supabase, digits, temperaturaPoRozmowie);
-        if (analysis?.zamkniete_dzis) await markZamknieteInUmowa(supabase, digits);
+        if (zaopiekowaneDzis) await markZamknieteInUmowa(supabase, digits);
 
         return res.json({
           dopasowanie: 'lead',
@@ -281,7 +299,7 @@ function registerRozmowyEndpoints(app, deps) {
           status_po: wynik.statusAfter,
           opis: wynik.opis,
           kierunek,
-          zamkniete_dzis: Boolean(analysis?.zamkniete_dzis),
+          zamkniete_dzis: zaopiekowaneDzis,
           transkrypcja: tresc,
           handlowiec,
           disposition: 'answered',
@@ -319,7 +337,7 @@ function registerRozmowyEndpoints(app, deps) {
         status_po: wynik.statusAfter,
         opis: wynik.opis,
         kierunek,
-        zamkniete_dzis: Boolean(analysis?.zamkniete_dzis),
+        zamkniete_dzis: zaopiekowaneDzis,
         transkrypcja: tresc,
         handlowiec,
         disposition: 'answered',

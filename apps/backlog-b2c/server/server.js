@@ -5,7 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const { getClient } = require('./supabase');
 const { registerLeadyEndpoints, NIE_TELEFON_ZRODLA } = require('../../shared/server/leady-endpoints');
-const { analyzeCall, statusRank, NO_ANSWER_ALLOWED_FROM, parseKwotaZlotych, isPlDateDue, addPlDays } = require('../../shared/server/call-analysis');
+const { analyzeCall, statusRank, NO_ANSWER_ALLOWED_FROM, parseKwotaZlotych, isPlDateDue, addPlDays, czyZaopiekowaneDzis, przyszlosciowyRecall } = require('../../shared/server/call-analysis');
 const rozmowy = require('./rozmowy');
 const { registerWycenyEndpoints } = require('../../shared/server/wyceny-endpoints');
 const { createAuth, clientPayload, panelLinks, isAdmin } = require('../../shared/server/auth');
@@ -375,7 +375,12 @@ app.post('/api/approve', async (req, res) => {
 // Ręczna edycja pojedynczego pola case'a (status / data feedbacku) z listy —
 // bez AI, zapisuje się od razu do tej wersji dokumentu, którą aktualnie widać
 // (draft / poprawka / final), niezależnie od przepływu draft→poprawka→final.
-const LEAD_FIELD_ALLOWLIST = ['status', 'data_feedbacku'];
+// 'zamkniete' = ręczne odhaczenie "zaopiekowane dziś" z listy. Wcześniej
+// ptaszek żył wyłącznie w DOM ("tylko lokalnie" w app.html), więc znikał przy
+// F5 i NIE liczył się do podsumowania dnia (plan.priorytet_zamkniete czyta tę
+// flagę z dokumentu) — handlowiec odklikiwał case'y, a raport pokazywał je
+// jako nierobione. Teraz idzie tą samą drogą co ręczna zmiana statusu.
+const LEAD_FIELD_ALLOWLIST = ['status', 'data_feedbacku', 'zamkniete'];
 
 function updateLeadInJson(json, lp, field, value) {
   let updated = false;
@@ -417,6 +422,40 @@ app.post('/api/lead-field', async (req, res) => {
 
     await updateRowByData(supabase, dataValue, { [column]: json });
     res.json({ json });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// GET /api/umowa/zamkniete?dataValue=&state= — lp case'ów odhaczonych jako
+// "zaopiekowane dziś" w planie dnia. Panel renderuje dokument RAZ (migawka z
+// rana), a odhaczenia dopisuje w ciągu dnia webhook rozmowy prosto do Supabase
+// (markZamknieteInUmowa) — bez tego endpointu case zamknięty automatem po
+// odłożeniu słuchawki wisiał na górze listy z pustym ptaszkiem aż do F5, przez
+// co automat wyglądał, jakby nie działał. Front dociąga to po każdej
+// zakończonej analizie rozmowy (patrz refreshZamkniete w app.html).
+app.get('/api/umowa/zamkniete', async (req, res) => {
+  try {
+    const { dataValue, state } = req.query;
+    if (!dataValue) return res.status(400).json({ error: 'Brak daty dokumentu' });
+    const supabase = getClient();
+    const row = await getRowByData(supabase, dataValue);
+    if (!row) return res.json({ lp: [] });
+    // Wersja, którą panel aktualnie pokazuje; gdy jej brak — najświeższa
+    // istniejąca (automat i tak pisze flagę do wszystkich naraz).
+    const json = (state && DOCS.umowa[state] && row[DOCS.umowa[state]])
+      || row[DOCS.umowa.final] || row[DOCS.umowa.poprawka] || row[DOCS.umowa.draft];
+    if (!json) return res.json({ lp: [] });
+    const lp = new Set();
+    const collect = (arr) => {
+      if (!Array.isArray(arr)) return;
+      arr.forEach((item) => {
+        if (item && Number(item.zamkniete) === 1 && item.lp !== undefined) lp.add(Number(item.lp));
+      });
+    };
+    collect(json.priorytet_dzis);
+    if (json.kategorie && typeof json.kategorie === 'object') Object.values(json.kategorie).forEach(collect);
+    res.json({ lp: [...lp] });
   } catch (err) {
     handleError(res, err, 502);
   }
@@ -855,10 +894,31 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     // umówiono" i świadomie nadpisujemy nim kolumnę. Nieodebrane
     // (analysis=null → setAkcja=false) nie dotykają pola wcale. Status
     // zamykający lejek czyści akcję niezależnie od odpowiedzi GPT.
-    const setAkcja = Boolean(analysis);
-    const akcjaPoRozmowie = (!['Sprzedane', 'Stracony'].includes(statusAfter) && analysis?.najblizsza_akcja) || null;
-    const akcjaTermin = akcjaPoRozmowie ? (analysis?.najblizsza_akcja_termin || null) : null;
-    const akcjaOwner = akcjaPoRozmowie ? (call.pracownik || process.env.DEFAULT_HANDLOWIEC || null) : null;
+    let setAkcja = Boolean(analysis);
+    let akcjaPoRozmowie = (!['Sprzedane', 'Stracony'].includes(statusAfter) && analysis?.najblizsza_akcja) || null;
+    let akcjaTermin = akcjaPoRozmowie ? (analysis?.najblizsza_akcja_termin || null) : null;
+    let akcjaOwner = akcjaPoRozmowie ? (call.pracownik || process.env.DEFAULT_HANDLOWIEC || null) : null;
+
+    // Lead odesłany w nieokreśloną przyszłość ("sam zadzwonię") nie ma terminu
+    // ani akcji — bez tego wypadłby z planu na zawsze. Patrz przyszlosciowyRecall.
+    // Tylko dla ODEBRANYCH: nieodebranym termin przesuwa już Reguła B wyżej.
+    const recall = lead && answered ? przyszlosciowyRecall(statusAfter, feedbackAfter, dzisFeedback) : null;
+    if (recall) {
+      feedbackAfter = recall.data_feedbacku;
+      // Bez godziny — to kontrolny telefon "kiedyś tego dnia", nie umówiona pora.
+      godzinaFeedbackuParam = null;
+      if (!akcjaPoRozmowie) {
+        setAkcja = true;
+        akcjaPoRozmowie = recall.akcja;
+        akcjaTermin = recall.termin;
+        akcjaOwner = call.pracownik || process.env.DEFAULT_HANDLOWIEC || null;
+      }
+    }
+
+    // Czy case jest zaopiekowany na dziś — z FAKTU odbytej rozmowy, nie z
+    // oceny AI (patrz czyZaopiekowaneDzis). Steruje odhaczeniem case'a w planie
+    // dnia oraz badge'em "✓ zaopiekowane dziś" w widoku Połączenia.
+    const zaopiekowaneDzis = czyZaopiekowaneDzis(answered, analysis);
 
     // Telefon bez dopasowania w Leady B2C/Wyceny B2C — bez tego rozmowa
     // zostawałaby tylko w Log zmian, niewidoczna w panelu i "gubiona" przez
@@ -955,11 +1015,12 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       data_feedbacku_przed: feedbackBefore,
       data_feedbacku_po: feedbackAfter,
       kierunek,
-      // Czy z tym tematem trzeba jeszcze coś zrobić DZISIAJ, wg oceny GPT
-      // (patrz ZASADY zamkniete_dzis w buildCallAnalysisPrompt) — pokazywane
-      // w widoku "Połączenia" (app.html), żeby było widać co się dziś fizycznie
-      // wydarzyło bez klikania w każdy case osobno.
-      zamkniete_dzis: Boolean(analysis?.zamkniete_dzis),
+      // Czy temat jest zaopiekowany na dziś: odebrana rozmowa domyślnie tak,
+      // chyba że GPT wskazał konkretne zadanie na dziś (patrz
+      // czyZaopiekowaneDzis + ZASADY zamkniete_dzis w buildCallAnalysisPrompt)
+      // — pokazywane w widoku "Połączenia" (app.html), żeby było widać co się
+      // dziś fizycznie wydarzyło bez klikania w każdy case osobno.
+      zamkniete_dzis: zaopiekowaneDzis,
       transkrypcja: transcript || null,
       // Atrybucja handlowca policzona wyżej: call.pracownik (Make) → numer
       // Lorenza (LORENZO_ZADARMA_NUMBER) → DEFAULT_HANDLOWIEC → null.
@@ -1056,11 +1117,11 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
         await patchScoreInUmowa(supabase, customerDigits, temperaturaPoRozmowie);
       }
 
-      // Jeśli GPT ocenił, że temat jest zaopiekowany na dziś — oznacz ten
+      // Temat zaopiekowany na dziś (domyślnie: rozmowa się odbyła) — oznacz
       // case jako zamknięty (ta sama flaga co lokalny checkbox po lewej w
       // liście, ale tu zapisana do Supabase) w dzisiejszej Umowie, żeby
       // spadł na dół listy automatycznie, bez ręcznego klikania.
-      if (analysis?.zamkniete_dzis && customerDigits) {
+      if (zaopiekowaneDzis && customerDigits) {
         await markZamknieteInUmowa(supabase, customerDigits);
       }
     } else if (kontaktOrganic) {
@@ -1092,7 +1153,7 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       dopasowano_kontakt_organic: Boolean(kontaktOrganic),
       nowy_lead_bez_dopasowania: Boolean(createdLead),
       transkrypcja: Boolean(transcript),
-      zamkniete_dzis: Boolean(analysis?.zamkniete_dzis),
+      zamkniete_dzis: zaopiekowaneDzis,
     });
     res.json({ status: 'ok' });
   } catch (err) {
