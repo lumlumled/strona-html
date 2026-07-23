@@ -27,6 +27,27 @@ window.WycenaEditor = (() => {
     return `${money(v).toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} zł`;
   }
 
+  // Scalanie pozycji o tym samym SKU w jedną (sumuje ilość). To samo SKU = ten
+  // sam produkt, więc "4× zasilacz 24 V" ma być 1 wierszem × 4 szt., a nie
+  // czterema wierszami × 1. Pozycje bez SKU ("spoza oferty") NIE łączymy — dwa
+  // różne produkty indywidualne mają puste SKU i muszą zostać osobno.
+  function mergeBySku(list) {
+    const out = [];
+    const bySku = new Map();
+    (list || []).forEach((raw) => {
+      const p = { ...raw };
+      const sku = String(p.SKU || p.sku || '').trim();
+      if (sku && bySku.has(sku)) {
+        const ex = bySku.get(sku);
+        ex.quantity = (money(ex.quantity) || 0) + (money(p.quantity) || 0);
+        return;
+      }
+      if (sku) bySku.set(sku, p);
+      out.push(p);
+    });
+    return out;
+  }
+
   let cennikCache = null;
   async function fetchCennik(apiBase) {
     if (cennikCache) return cennikCache;
@@ -437,7 +458,9 @@ window.WycenaEditor = (() => {
   // widoczne read-only z możliwością zmiany ilości i usunięcia.
   function buildItemsEditor(items, catalog, onChange) {
     const wrap = h('div', 'wk-edit-items');
-    const state = { items: (items || []).map((p) => ({ ...p })) };
+    // Scal duplikaty SKU już na wejściu — istniejące "rozbite" wyceny (albo
+    // sparsowane z tekstu) skonsolidują się przy otwarciu edytora.
+    const state = { items: mergeBySku(items || []) };
     // Pierwszy render NIE woła onChange (refreshTotals sięga po itemsEd/sumaVal
     // jeszcze nieistniejące — TDZ). Caller woła refreshTotals() jawnie później.
     let ready = false;
@@ -552,7 +575,16 @@ window.WycenaEditor = (() => {
           VAT: String(p.VAT || '23'),
           image_url: p.image_url || '',
         })),
-      addItem: (p) => { state.items.push({ ...p }); render(); if (ready) onChange(); },
+      addItem: (p) => {
+        // To samo SKU co pozycja już na liście → dolicz ilość zamiast nowego
+        // wiersza. Bez SKU (spoza oferty) zawsze osobno.
+        const sku = String((p && (p.SKU || p.sku)) || '').trim();
+        const ex = sku ? state.items.find((x) => String(x.SKU || x.sku || '').trim() === sku) : null;
+        if (ex) ex.quantity = (money(ex.quantity) || 0) + (money(p.quantity) || 1);
+        else state.items.push({ ...p });
+        render();
+        if (ready) onChange();
+      },
       suma: () => state.items.reduce((a, p) => a + money(p.price) * (money(p.quantity) || 0), 0),
     };
   }
@@ -928,6 +960,9 @@ window.WycenaEditor = (() => {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
         lastRow = body.row;
+        // Scal duplikaty SKU z parsera zanim pokażemy podgląd/zapiszemy — ten
+        // sam zasilacz z dwóch linii ma być 1 pozycją × ilość, nie kilkoma.
+        if (lastRow && Array.isArray(lastRow.items)) lastRow.items = mergeBySku(lastRow.items);
         lastMatch = body.match || null;
 
         previewBox.hidden = false;
