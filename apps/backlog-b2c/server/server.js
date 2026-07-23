@@ -2224,6 +2224,29 @@ function applyWycenyDoDomkniecia(parsed, wycenyCases, phoneToLp, nextLp) {
   return next;
 }
 
+// Scala inne_z_feedbackiem + nieodebrane + rozmowy_spoza_bazy w jeden kubełek
+// "reszta_lejka" (Reżim B). Zachowuje lp i wszystkie pola case'a; dedup po
+// telefonie (kategorie źródłowe są rozłączne po statusie — to siatka
+// bezpieczeństwa). Kolejność ustala applyScoring niżej (default = pilność/score;
+// front daje jeszcze suwak cena). Uruchamiane po wszystkich apply*, przed
+// postProcessCounts/Status.
+function mergeRestaLejka(parsed) {
+  const kat = parsed.kategorie || {};
+  const seen = new Set();
+  const reszta = [];
+  ['inne_z_feedbackiem', 'nieodebrane', 'rozmowy_spoza_bazy'].forEach((key) => {
+    (Array.isArray(kat[key]) ? kat[key] : []).forEach((c) => {
+      const d = c && c.telefon ? normalizePhoneDigits(c.telefon) : '';
+      if (d && seen.has(d)) return;
+      if (d) seen.add(d);
+      reszta.push(c);
+    });
+    delete kat[key];
+  });
+  kat.reszta_lejka = reszta;
+  parsed.kategorie = kat;
+}
+
 // Alerty watchdoga "temat ucieka" (docs/plan-watchdog-feedback.md §8) —
 // otwarte, zaalertowane watche (backlog_target=b2c) z danymi wyceny do
 // renderu. Kategoria w pełni deterministyczna, jak zalegle_feedbacki.
@@ -2366,7 +2389,7 @@ function applyZalegleFeedbacki(parsed, zalegleRaw, phoneToLp, nextLp) {
 // wyceny_historyczne/zalegle_feedbacki to z definicji otwarte, ciągłe listy
 // (nie "dzisiejszy plan"), więc oznaczanie ich jako na_jutro nic by nie
 // wnosiło.
-const NA_JUTRO_KATEGORIE = ['nowe', 'wyceny_do_domkniecia', 'inne_z_feedbackiem', 'nieodebrane'];
+const NA_JUTRO_KATEGORIE = ['nowe', 'wyceny_do_domkniecia', 'reszta_lejka'];
 
 // Telefony niezamkniętych case'ów we wczorajszej Umowie (priorytet_dzis + 4
 // kategorie wyżej) — dostają dziś widoczną flagę na_jutro (patrz
@@ -2449,8 +2472,7 @@ function postProcessStatus(parsed, leadyStatusByPhone) {
   if (parsed.kategorie && typeof parsed.kategorie === 'object') {
     patchWith(parsed.kategorie.nowe, leadyStatusByPhone);
     patchWith(parsed.kategorie.wyceny_do_domkniecia, leadyStatusByPhone);
-    patchWith(parsed.kategorie.inne_z_feedbackiem, leadyStatusByPhone);
-    patchWith(parsed.kategorie.nieodebrane, leadyStatusByPhone);
+    patchWith(parsed.kategorie.reszta_lejka, leadyStatusByPhone);
   }
 }
 
@@ -2470,8 +2492,7 @@ function postProcessCallCounts(parsed, callCountByPhone) {
   if (parsed.kategorie && typeof parsed.kategorie === 'object') {
     patch(parsed.kategorie.nowe);
     patch(parsed.kategorie.wyceny_do_domkniecia);
-    patch(parsed.kategorie.inne_z_feedbackiem);
-    patch(parsed.kategorie.nieodebrane);
+    patch(parsed.kategorie.reszta_lejka);
   }
 }
 
@@ -2482,24 +2503,19 @@ function postProcessCallCounts(parsed, callCountByPhone) {
 // liczymy backlog z odciętej reszty, zamiast ufać, że model sam przyciął.
 function postProcessCounts(parsed) {
   const kat = parsed.kategorie || {};
-  const capWithBacklog = (key, cap) => {
-    const arr = Array.isArray(kat[key]) ? kat[key] : [];
-    const backlog = Math.max(0, arr.length - cap);
-    if (arr.length > cap) kat[key] = arr.slice(0, cap);
-    return { count: Math.min(arr.length, cap), backlog };
-  };
-  const inf = capWithBacklog('inne_z_feedbackiem', 8);
-
+  const len = (key) => (Array.isArray(kat[key]) ? kat[key].length : 0);
   parsed.plan = parsed.plan || {};
-  parsed.plan.nowe_count = Array.isArray(kat.nowe) ? kat.nowe.length : 0;
+  parsed.plan.nowe_count = len('nowe');
   // wyceny_do_domkniecia: count z długości kategorii, backlog wstrzykiwany w
   // orkiestracji (zna total wszystkich otwartych wycen, nie tylko top-N w planie).
-  parsed.plan.wyceny_domkniecia_count = Array.isArray(kat.wyceny_do_domkniecia) ? kat.wyceny_do_domkniecia.length : 0;
-  parsed.plan.inne_feedback_count = inf.count;
-  parsed.plan.inne_feedback_backlog = inf.backlog;
-  parsed.plan.nieodebrane_count = Array.isArray(kat.nieodebrane) ? kat.nieodebrane.length : 0;
-  parsed.plan.zalegle_feedbacki_count = Array.isArray(kat.zalegle_feedbacki) ? kat.zalegle_feedbacki.length : 0;
+  parsed.plan.wyceny_domkniecia_count = len('wyceny_do_domkniecia');
+  // reszta_lejka = scalone inne+nieodebrane+spoza bazy, bez capa (to główny lejek).
+  parsed.plan.reszta_lejka_count = len('reszta_lejka');
+  parsed.plan.zalegle_feedbacki_count = len('zalegle_feedbacki');
   parsed.plan.priorytet_dzis_count = Array.isArray(parsed.priorytet_dzis) ? parsed.priorytet_dzis.length : 0;
+  // Osierocone liczniki sprzed scalenia (model bywa je emituje z pamięci
+  // schematu) — usuwamy, żeby front nie zrobił z nich lewych kafelków.
+  ['inne_feedback_count', 'inne_feedback_backlog', 'nieodebrane_count', 'wyceny_feedback_count', 'wyceny_feedback_backlog', 'wyceny_historyczne_count'].forEach((k) => delete parsed.plan[k]);
 }
 
 function buildUmowaSystemPrompt(dzisiaj, godzina) {
@@ -2535,7 +2551,7 @@ Pola każdego leada: \`id\`, \`id_wyceny\`, \`data_dolaczenia\`, \`imie\`, \`tel
 ### Numeracja LP
 Przydziel \`lp\` ciągle przez wszystkie kategorie od 1 do N, unikalnie — dwa różne case'y NIGDY nie mogą mieć tego samego lp (lp identyfikuje case'a jednoznacznie, edycja po lp dotyka wszystkiego co je współdzieli). Case'y w sekcji "priorytet_dzis" mają ten sam lp co w swojej kategorii źródłowej — nie tworzą osobnej puli numerów. To pole i tak zostanie zweryfikowane i w razie kolizji poprawione po twojej odpowiedzi, ale rób to poprawnie od razu.
 
-### Priorytet dziś (max 5) — czytaj jak doświadczony analityk CRM, nie jak wyszukiwarka słów kluczowych
+### Priorytet dziś (5-7 kluczowych case'ów) — czytaj jak doświadczony analityk CRM, nie jak wyszukiwarka słów kluczowych
 
 Zanim wybierzesz, PRZECZYTAJ dokładnie pole \`opis\` każdego case'a ze wszystkich zestawów danych (włącznie z próbką NAJBARDZIEJ PRZETERMINOWANE FEEDBACKI) — to prawdziwe notatki handlowca: co ustalono, co obiecano, na czym stanęło. Nie szukaj samych fraz-kluczy, zrozum na jakim etapie faktycznie jest sprawa.
 
@@ -2548,7 +2564,7 @@ Zanim wybierzesz, PRZECZYTAJ dokładnie pole \`opis\` każdego case'a ze wszystk
 5. Zaległy feedback, ale TYLKO gdy opis daje jasny, wykonalny następny krok — samo "stary case, dawno feedback" bez kontekstu w opisie to za mało.
 6. Wyższa kwota jako tiebreaker przy remisie.
 
-Nie wrzucaj case'a do priorytetu tylko po to, żeby wypełnić limit 5 — jeśli opis pokazuje sprawę martwą/w zawieszeniu bez konkretnego triggera ("zastanawia się", "nic więcej nie wiadomo", brak odpowiedzi bez deklaracji terminu), zostaw ją poza priorytetem. Lepiej 3-4 dobre case'y niż 5 na siłę.
+Nie wrzucaj case'a do priorytetu tylko po to, żeby wypełnić limit — jeśli opis pokazuje sprawę martwą/w zawieszeniu bez konkretnego triggera ("zastanawia się", "nic więcej nie wiadomo", brak odpowiedzi bez deklaracji terminu), zostaw ją poza priorytetem. Lepiej 4-5 mocnych case'ów niż 7 na siłę.
 
 ### Kategorie w wyjściu — max do wyświetlenia
 **nowe** — wszystkie z LEADY NOWE.
@@ -2595,9 +2611,6 @@ Ton: bezpośredni, jakbyś był doświadczonym sprzedawcą który mówi co robi�
   "plan": {
     "priorytet_dzis_count": 0,
     "nowe_count": 0,
-    "inne_feedback_count": 0,
-    "inne_feedback_backlog": 0,
-    "nieodebrane_count": 0,
     "zalegle_feedbacki_count": 0,
     "zadzwoniono_dzis": 0
   },
@@ -2786,6 +2799,9 @@ app.all('/api/cron/umowa-draft', async (req, res) => {
     const nextLpPoBazie = applyRozmowySpozaBazy(parsed, rozmowySpozaBazyRaw, phoneToLp, nextLpPoWyceny);
     const nextLpPoZaleglych = applyZalegleFeedbacki(parsed, zalegleRaw, phoneToLp, nextLpPoBazie);
     applyAlertyWatchdoga(parsed, alertyWatchdogaRaw, phoneToLp, nextLpPoZaleglych);
+    // Scal inne_z_feedbackiem + nieodebrane + rozmowy_spoza_bazy w reszta_lejka
+    // (przed licznikami/statusami, żeby liczyły już scalony kubełek).
+    mergeRestaLejka(parsed);
     fixLpMentionsInComment(parsed);
     postProcessCalledToday(parsed, calledSet);
     postProcessCounts(parsed);

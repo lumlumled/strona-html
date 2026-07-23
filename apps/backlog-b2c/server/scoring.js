@@ -13,7 +13,7 @@ const DZIEN_MS = 24 * 60 * 60 * 1000;
 // Kategorie planu dnia, które faktycznie scorujemy i sortujemy po wyniku.
 // Reszta (alerty_watchdoga, leady_do_odswiezenia, rozmowy_spoza_bazy,
 // dodane_recznie) ma własną semantykę — nie dotykamy jej kolejności.
-const SCORED_CATEGORIES = ['nowe', 'wyceny_do_domkniecia', 'inne_z_feedbackiem', 'nieodebrane', 'zalegle_feedbacki'];
+const SCORED_CATEGORIES = ['nowe', 'wyceny_do_domkniecia', 'reszta_lejka', 'zalegle_feedbacki'];
 
 // Progi tiera (hot/warm/cold → 🔴/🟠/⚪) — startowe, do dostrojenia z Lorenzo.
 // Skalują dwa reżimy na jedną oś "jak pilny": świeży lead z dziś (Reżim B = 22)

@@ -731,6 +731,32 @@
     }
     .lead.zamkniete summary .score-dot { opacity: 0.4; }
 
+    /* Suwak sortowania nad „Resztą lejka" (Pilność | Cena). */
+    .reszta-sort {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.4rem 0.9rem 0.1rem;
+    }
+    .reszta-sort-label {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+    .reszta-sort-btn {
+      font-size: 0.72rem;
+      padding: 0.15rem 0.6rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+    .reszta-sort-btn.active {
+      background: var(--text-secondary);
+      color: var(--surface-1);
+      border-color: var(--text-secondary);
+    }
+
     .copy-btn {
       flex: 0 0 auto;
       display: inline-flex;
@@ -2221,19 +2247,20 @@
       leady_do_odswiezenia: '🌡️ Leady do odświeżenia (cisza po rozmowie)',
       nowe: 'Nowe',
       wyceny_do_domkniecia: '💰 Wyceny do domknięcia',
-      inne_z_feedbackiem: 'Inne z feedbackiem (ostatnie 3 dni)',
-      nieodebrane: 'Nieodebrane',
+      reszta_lejka: '📞 Reszta lejka',
       zalegle_feedbacki: 'Zaległe feedbacki',
-      rozmowy_spoza_bazy: 'Rozmowy spoza bazy',
       dodane_recznie: 'Dodane ręcznie',
     };
 
-    const KATEGORIA_ORDER = ['alerty_watchdoga', 'leady_do_odswiezenia', 'nowe', 'wyceny_do_domkniecia', 'inne_z_feedbackiem', 'nieodebrane', 'zalegle_feedbacki', 'rozmowy_spoza_bazy', 'dodane_recznie'];
+    // Kolejność 3 głównych kategorii (Priorytet dziś to osobna sekcja WYŻEJ):
+    // Nowe → Wyceny do domknięcia → Reszta lejka; Zaległe feedbacki na samym
+    // dole (siatka bezpieczeństwa, zwinięte).
+    const KATEGORIA_ORDER = ['nowe', 'wyceny_do_domkniecia', 'reszta_lejka', 'zalegle_feedbacki', 'dodane_recznie'];
 
     // Kategorie ukryte w widoku Backlog B2C (nadal budowane po stronie serwera,
-    // po prostu nie renderowane). „Alerty — temat ucieka" (watchdog) chowamy na
-    // prośbę Antoniego — za dużo szumu w planie dnia.
-    const HIDDEN_KATEGORIE = new Set(['alerty_watchdoga']);
+    // po prostu nie renderowane) — oba warianty watchdoga chowamy na prośbę
+    // Antoniego (za dużo szumu w planie dnia).
+    const HIDDEN_KATEGORIE = new Set(['alerty_watchdoga', 'leady_do_odswiezenia']);
 
     // Kolory statusów odwzorowane z CRM-u (Google Sheets) — przybliżone,
     // nie muszą być piksel w piksel identyczne.
@@ -2350,8 +2377,7 @@
     const PLAN_TILE_LABELS = {
       nowe_count: 'Nowe',
       wyceny_domkniecia_count: '💰 Wyceny do domknięcia',
-      inne_feedback_count: 'Inne z feedbackiem',
-      nieodebrane_count: 'Nieodebrane',
+      reszta_lejka_count: '📞 Reszta lejka',
       zalegle_feedbacki_count: 'Zaległe feedbacki',
       zadzwoniono_dzis: 'Zadzwoniono dziś',
       wykonane_telefony: 'Wykonane telefony',
@@ -2841,6 +2867,9 @@
       const lead = document.createElement('details');
       lead.className = 'lead' + (c.zamkniete ? ' zamkniete' : '');
       lead.dataset.order = orderIndex || 0;
+      // Pod suwak sortowania w „Reszcie lejka" (cena vs pilność/score).
+      lead.dataset.kwota = Number(c.kwota) || 0;
+      lead.dataset.score = Number(c.score) || 0;
 
       const summary = document.createElement('summary');
 
@@ -3382,6 +3411,44 @@
       resortContainer(container);
     }
 
+    // Sortuje listę case'ów wg trybu: 'cena' (kwota malejąco) albo 'pilnosc'
+    // (score malejąco = domyślny porządek z serwera). Zamknięte zawsze na dole.
+    function sortLeadList(list, mode) {
+      const items = Array.from(list.children).filter((el) => el.classList && el.classList.contains('lead'));
+      items.sort((a, b) => {
+        const az = a.classList.contains('zamkniete') ? 1 : 0;
+        const bz = b.classList.contains('zamkniete') ? 1 : 0;
+        if (az !== bz) return az - bz;
+        if (mode === 'cena') return (Number(b.dataset.kwota) || 0) - (Number(a.dataset.kwota) || 0);
+        return (Number(b.dataset.score) || 0) - (Number(a.dataset.score) || 0);
+      });
+      items.forEach((el, i) => { el.dataset.order = i; list.appendChild(el); });
+    }
+
+    // Pasek „Sortuj: Pilność | Cena" nad listą Reszty lejka.
+    function buildResztaSortBar(list) {
+      const bar = document.createElement('div');
+      bar.className = 'reszta-sort';
+      const label = document.createElement('span');
+      label.className = 'reszta-sort-label';
+      label.textContent = 'Sortuj:';
+      bar.appendChild(label);
+      [['pilnosc', 'Pilność'], ['cena', 'Cena']].forEach(([mode, txt], idx) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'reszta-sort-btn' + (idx === 0 ? ' active' : '');
+        btn.textContent = txt;
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          bar.querySelectorAll('.reszta-sort-btn').forEach((b) => b.classList.remove('active'));
+          btn.classList.add('active');
+          sortLeadList(list, mode);
+        });
+        bar.appendChild(btn);
+      });
+      return bar;
+    }
+
     function renderKategorie(kategorie) {
       if (!kategorie) return;
       // Najpierw znana kolejność, potem wszystko, czego w niej nie ma (np.
@@ -3412,6 +3479,9 @@
         list.className = 'cases';
         arr.forEach((c, i) => list.appendChild(leadItem(c, i, key)));
         resortContainer(list);
+        // „Reszta lejka" dostaje suwak sortowania Pilność (score, default) / Cena
+        // (kwota malejąco) — reszta kategorii zostaje przy kolejności serwera.
+        if (key === 'reszta_lejka') details.appendChild(buildResztaSortBar(list));
         details.appendChild(list);
 
         // Zwinięcie kategorii porządkuje wszystko w niej: każdy case i jego

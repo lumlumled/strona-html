@@ -1,5 +1,7 @@
 # Spec: priorytetyzacja lidów w Backlog B2C (do wdrożenia ~po tygodniu sprzedaży)
 
+> UKŁAD (iteracja 2026-07-23 popołudniu, NA PRODZIE): finalnie **3 kategorie** zamiast „zostaw kafelki": **Priorytet dziś (5-7, pick AI, na górze) → Nowe → 💰 Wyceny do domknięcia → 📞 Reszta lejka → Zaległe feedbacki (dół, zwinięte)**. „Reszta lejka" = scalone inne_z_feedbackiem + nieodebrane + rozmowy_spoza_bazy (serwer: `mergeRestaLejka`), z suwakiem sortowania **Pilność (score) / Cena (kwota)** na froncie. Ukryte w widoku: 🚨 Alerty (temat ucieka) + 🌡️ Leady do odświeżenia (nadal budowane serwerowo, hub ich używa).
+>
 > Status: **PHASE 1 ZBUDOWANE 2026-07-23, czeka na deploy.** Kod na branchu (niezacommitowany): moduł `apps/backlog-b2c/server/scoring.js`, kubełek „Wyceny do domknięcia" z kanonicznej `wyceny`, dedup, tier UI 🔴🟠⚪+💎+„dlaczego", re-scoring temperatury po rozmowie (RPC `app_update_leady_after_call` + `p_temperatura`). Przetestowane E2E na prod-danych (read-only). ZOSTAŁO do wdrożenia: (1) `node scripts/add-temperatura-po-rozmowie.js` (migracja RPC), (2) commit + deploy Vercel. Phase 2 (auto-SMS po 5-6 nieodebranych, real-time push, pełna żywa lista 268k) — nietknięte. Cel: żeby Lorenzo dostawał lidy w kolejności potencjalnego zwrotu.
 
 ## AKTUALIZACJA 2026-07-22 — decyzje dopięte (NADPISUJĄ poniższe, gdzie się różnią)
