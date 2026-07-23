@@ -104,6 +104,14 @@
       border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
       font-size: .8rem; font-weight: 600; padding: .4rem .8rem; border-radius: 999px;
     }
+    /* Zaległe = osobny przycisk-panel, celowo ODDZIELONY od Tydzień/Miesiąc/Dzień
+       (nie zaśmieca głównego widoku tygodnia). Czerwienieje, gdy coś zalega. */
+    .overdue-btn {
+      border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+      font-size: .8rem; font-weight: 700; padding: .4rem .85rem; border-radius: 999px;
+    }
+    .overdue-btn.has-overdue { border-color: var(--overdue); color: var(--overdue); background: var(--overdue-soft); }
+    .overdue-btn.active { background: var(--overdue); color: #fff; border-color: var(--overdue); }
     .spacer { flex: 1 1 auto; }
     .ctl {
       font-size: .8rem; color: var(--text-secondary); border: 1px solid var(--border);
@@ -254,19 +262,23 @@
   <header id="site-header"></header>
   <div class="wrap">
     <div class="toolbar">
+      <div class="seg" id="persona-seg" style="display:none">
+        <button data-persona="lorenzo" class="active">Lorenzo · leady</button>
+        <button data-persona="antoni">Antoni · organiczne</button>
+      </div>
       <div class="seg" id="view-seg">
         <button data-view="week" class="active">Tydzień</button>
         <button data-view="month">Miesiąc</button>
         <button data-view="day">Dzień</button>
       </div>
-      <div class="navbox">
+      <div class="navbox" id="navbox">
         <button id="prev" title="Wstecz">‹</button>
         <span class="period" id="period">—</span>
         <button id="next" title="Dalej">›</button>
       </div>
       <button class="today-btn" id="today">Dziś</button>
       <div class="spacer"></div>
-      <select class="ctl" id="owner-filter" hidden></select>
+      <button class="overdue-btn" id="overdue-btn" title="Osobny panel zaległych (od najnowszych)">Zaległe</button>
       <label class="toggle ctl"><input type="checkbox" id="ai-toggle"> Pokaż też AI</label>
       <button class="today-btn" id="refresh" title="Odśwież">↻</button>
     </div>
@@ -303,10 +315,19 @@
     const LEAD_READONLY = !(USER.isAdmin || (USER.crmSheets && USER.crmSheets['leady-b2c'] === 'edit'));
 
     // ── Stan ──────────────────────────────────────────────────────
+    // Widok persony (decyzja Antoniego 2026-07-22): Lorenzo = leady B2C,
+    // Antoni = "organiczne" (wyceny + wiadomości, BEZ leadów B2C). Admin
+    // przełącza między nimi; przy własnym logowaniu każdy startuje na swojej.
+    function personaForName(name) {
+      const n = String(name || '').trim().toLowerCase();
+      if (n === 'lorenzo') return 'lorenzo';
+      if (n === 'antoni') return 'antoni';
+      return null;
+    }
     let view = 'week';
     let anchor = startOfDay(new Date()); // środek widoku (dzień/tydzień/miesiąc)
     let showAI = false;
-    let ownerFilter = '';
+    let persona = USER.isAdmin ? 'lorenzo' : personaForName(USER.name);
     let cases = [];       // wszystkie otwarte feedbacki (po filtrze serwera)
     let current = null;   // case otwarty w szufladzie
 
@@ -407,7 +428,13 @@
 
     // ── Bucketowanie ──────────────────────────────────────────────
     function visibleCases() {
-      return cases.filter((c) => !ownerFilter || String(c.owner || '').toLowerCase() === ownerFilter.toLowerCase());
+      // Persona filtruje po TYPIE: Lorenzo = leady B2C, Antoni = reszta
+      // (wyceny + wiadomości). null (użytkownik spoza pary) = bez filtra.
+      return cases.filter((c) => {
+        if (persona === 'lorenzo') return c.object_type === 'lead';
+        if (persona === 'antoni') return c.object_type !== 'lead';
+        return true;
+      });
     }
     function bucketByDay(list) {
       const map = new Map();
@@ -422,13 +449,28 @@
     // ── Render: przełącznik ───────────────────────────────────────
     function render() {
       document.querySelectorAll('#view-seg button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+      document.getElementById('overdue-btn').classList.toggle('active', view === 'overdue');
+      updateOverdueBadge();
       renderLegend();
       renderPeriod();
+      // Zaległe to płaska lista (nie okres) — chowamy nawigację ‹ › i "Dziś".
+      const flat = view === 'overdue';
+      document.getElementById('navbox').style.display = flat ? 'none' : '';
+      document.getElementById('today').style.display = flat ? 'none' : '';
       const root = document.getElementById('calendar');
       root.innerHTML = '';
       if (view === 'week') root.appendChild(renderWeek());
       else if (view === 'month') root.appendChild(renderMonth());
+      else if (view === 'overdue') root.appendChild(renderOverdue());
       else root.appendChild(renderDay());
+    }
+
+    // Licznik zaległych (dla bieżącej persony) na osobnym przycisku "Zaległe".
+    function updateOverdueBadge() {
+      const n = overdueCases(visibleCases()).length;
+      const btn = document.getElementById('overdue-btn');
+      btn.textContent = n ? `Zaległe (${n})` : 'Zaległe';
+      btn.classList.toggle('has-overdue', n > 0);
     }
 
     function renderLegend() {
@@ -483,12 +525,9 @@
       const wrap = document.createElement('div'); wrap.className = 'week-scroll';
       const grid = document.createElement('div'); grid.className = 'week';
 
-      // Kolumna Zaległe (wszystkie przeterminowane, nie tylko z tego tygodnia) —
-      // przyklejona z lewej, żeby nic nie umknęło.
-      grid.appendChild(column({
-        dayLabel: 'Zaległe', dateLabel: '', list: overdueCases(vis), today: false, overdueCol: true,
-      }));
-
+      // Zaległe NIE są tu — mają osobną zakładkę "Zaległe" (decyzja Antoniego
+      // 2026-07-22: kolumna zaległych w tygodniu zaśmiecała widok). Tydzień
+      // pokazuje wyłącznie dni robocze Pon-Pt (+ weekend gdy coś na nim jest).
       const mon = mondayOf(anchor);
       for (let i = 0; i < 5; i++) {
         const d = addDays(mon, i); const y = ymd(d);
@@ -558,25 +597,33 @@
       sub.textContent = `${list.length} ${plural(list.length, 'feedback', 'feedbacki', 'feedbacków')} na ten dzień`;
       frag.append(head, sub);
 
-      // Gdy patrzymy na dziś — sekcja zaległych na górze (żeby nie umknęły).
-      if (y === TODAY_YMD) {
-        const over = overdueCases(vis);
-        if (over.length) {
-          const t = document.createElement('div'); t.className = 'day-section-title overdue';
-          t.innerHTML = `<span class="dot"></span> Zaległe (${over.length})`;
-          const g = document.createElement('div'); g.className = 'cards-grid';
-          over.forEach((c) => g.appendChild(caseCard(c)));
-          frag.append(t, g);
-        }
-      }
-
       if (!list.length) {
         const e = document.createElement('p'); e.className = 'empty'; e.textContent = 'Brak feedbacków na ten dzień.';
         frag.appendChild(e);
       } else {
-        if (y === TODAY_YMD) { const t = document.createElement('div'); t.className = 'day-section-title'; t.textContent = 'Na dziś'; frag.appendChild(t); }
         const g = document.createElement('div'); g.className = 'cards-grid';
         list.forEach((c) => g.appendChild(caseCard(c)));
+        frag.appendChild(g);
+      }
+      return frag;
+    }
+
+    // ── Widok Zaległe (osobna zakładka, płaska lista wszystkich minionych) ──
+    function renderOverdue() {
+      // Sort od najnowszych do najstarszych (decyzja Antoniego): due_at malejąco.
+      const over = [...overdueCases(visibleCases())].sort((a, b) => String(b.due_at).localeCompare(String(a.due_at)));
+      const frag = document.createElement('div');
+      const head = document.createElement('div'); head.className = 'day-head';
+      head.textContent = `Zaległe (${over.length})`;
+      const sub = document.createElement('div'); sub.className = 'day-sub';
+      sub.textContent = over.length ? 'Od najnowszych do najstarszych - klik otwiera kartę po prawej.' : '';
+      frag.append(head, sub);
+      if (!over.length) {
+        const e = document.createElement('p'); e.className = 'empty'; e.textContent = 'Brak zaległych. Czysto!';
+        frag.appendChild(e);
+      } else {
+        const g = document.createElement('div'); g.className = 'cards-grid';
+        over.forEach((c) => g.appendChild(caseCard(c)));
         frag.appendChild(g);
       }
       return frag;
@@ -679,15 +726,19 @@
       }
     });
 
-    // ── Filtr właściciela (admin) ─────────────────────────────────
-    function buildOwnerFilter() {
+    // ── Przełącznik person (Lorenzo / Antoni) — tylko admin ───────
+    function buildPersonaToggle() {
+      const seg = document.getElementById('persona-seg');
+      seg.style.display = USER.isAdmin ? '' : 'none';
       if (!USER.isAdmin) return;
-      const sel = document.getElementById('owner-filter');
-      const owners = [...new Set(cases.map((c) => String(c.owner || '').trim()).filter(Boolean))].sort();
-      sel.innerHTML = '<option value="">Wszyscy</option>' + owners.map((o) => `<option value="${escapeHtml(o)}"${o.toLowerCase() === ownerFilter.toLowerCase() ? ' selected' : ''}>${escapeHtml(o)}</option>`).join('');
-      sel.hidden = false;
-      sel.onchange = () => { ownerFilter = sel.value; render(); };
+      seg.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.persona === persona));
     }
+    document.getElementById('persona-seg').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-persona]'); if (!b) return;
+      persona = b.dataset.persona;
+      buildPersonaToggle();
+      render();
+    });
 
     // ── Ładowanie danych ──────────────────────────────────────────
     async function load() {
@@ -698,7 +749,7 @@
         const body = await res.json();
         if (!res.ok) throw new Error(body.error || 'Błąd wczytywania');
         cases = body.data || [];
-        buildOwnerFilter();
+        buildPersonaToggle();
         render();
       } catch (err) {
         document.getElementById('calendar').innerHTML = `<p class="empty">Błąd wczytywania: ${escapeHtml(err.message)}</p>`;
@@ -710,6 +761,7 @@
       const b = e.target.closest('button[data-view]'); if (!b) return;
       view = b.dataset.view; render();
     });
+    document.getElementById('overdue-btn').addEventListener('click', () => { view = 'overdue'; render(); });
     document.getElementById('prev').addEventListener('click', () => { anchor = step(-1); render(); });
     document.getElementById('next').addEventListener('click', () => { anchor = step(1); render(); });
     document.getElementById('today').addEventListener('click', () => { anchor = startOfDay(new Date()); render(); });
