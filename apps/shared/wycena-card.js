@@ -543,29 +543,119 @@ window.WycenaKarta = (() => {
     }
 
     // "Zamów kuriera ponownie" — dosyłka/reklamacja na te same dane, bez
-    // faktury i bez zmiany statusów (panel Sprzedaże; endpoint w pipeline).
+    // faktury i bez zmiany statusów. Otwiera panel z parametrami przesyłki
+    // (pobranie + e-mail) wypełnionymi jak w oryginale — handlowiec zmienia
+    // tylko to, co trzeba (np. odznacza pobranie). Panel w openReshipModal.
     if (opts.mode === 'sprzedaze' && !opts.readOnly && (wycena._shipments || []).length) {
       const actions = el('div', 'wk-actions');
       const btn = el('button', 'wk-btn', 'Zamów kuriera ponownie');
       btn.type = 'button';
-      btn.addEventListener('click', async () => {
-        if (!confirm(`Utworzyć NOWĄ przesyłkę na te same dane dla zamówienia #${wycena.id}? (bez faktury, bez zmiany statusów)`)) return;
-        btn.disabled = true;
-        try {
-          const res = await fetch(`${opts.apiBase}/api/wyceny/${wycena.id}/reship`, { method: 'POST' });
-          const body = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
-          if (opts.onChanged) opts.onChanged();
-        } catch (err) {
-          alert(`Nie udało się: ${err.message}`);
-        } finally {
-          btn.disabled = false;
-        }
-      });
+      btn.addEventListener('click', () => openReshipModal(wycena, opts));
       actions.appendChild(btn);
       wrap.appendChild(actions);
     }
     return wrap;
+  }
+
+  // Panel "Zamów kuriera ponownie" — nowa przesyłka na te same dane, ale z
+  // możliwością edycji poszczególnych parametrów przed nadaniem. Domyślnie
+  // WSZYSTKO jak w oryginale: pobranie i kwota podstawiane z poprzedniej
+  // przesyłki (max cod_amount) albo — gdy tamta była bez pobrania — z kwoty
+  // „Do zapłaty"; e-mail z danych zamówienia. Typowy przypadek: paczka była
+  // pobraniowa, dosyłka ma być bez pobrania — wystarczy odznaczyć checkbox.
+  function openReshipModal(wycena, opts) {
+    const prevCod = Math.max(0, ...(wycena._shipments || []).map((s) => Number(s.cod_amount) || 0), 0);
+    const fallbackKwota = Number(wycena._cena_finalna ?? wycena.kwota_proponowana_brutto ?? wycena._suma_pozycji) || 0;
+    const defaultCod = prevCod > 0 ? prevCod : fallbackKwota;
+
+    const backdrop = el('div', 'wk-modal-backdrop');
+    const modal = el('div', 'wk-modal');
+    const head = el('div', 'wk-modal-head');
+    head.appendChild(el('h3', '', `Zamów kuriera ponownie — #${wycena.id}`));
+    const close = el('button', 'wk-modal-close', '✕');
+    close.type = 'button';
+    head.appendChild(close);
+    modal.appendChild(head);
+
+    const hint = el('div', 'wk-pipe-sub', 'Nowa przesyłka na te same dane (bez faktury, bez zmiany statusów). Zmień tylko to, co trzeba.');
+    hint.style.marginBottom = '0.75rem';
+    modal.appendChild(hint);
+
+    // Pobranie (COD) — checkbox + kwota. Odznaczenie = przesyłka bez pobrania.
+    const codRow = el('label', '');
+    codRow.style.cssText = 'display:flex;align-items:center;gap:0.5rem;font-size:0.85rem;font-weight:600;cursor:pointer;';
+    const codCheck = document.createElement('input');
+    codCheck.type = 'checkbox';
+    codCheck.checked = prevCod > 0;
+    codRow.append(codCheck, el('span', '', 'Za pobraniem (COD)'));
+    modal.appendChild(codRow);
+
+    const codField = el('div', 'wk-field');
+    codField.style.margin = '0.4rem 0 0.75rem';
+    const codAmountInput = document.createElement('input');
+    codAmountInput.type = 'number';
+    codAmountInput.step = '0.01';
+    codAmountInput.min = '0';
+    codAmountInput.value = defaultCod ? String(defaultCod) : '';
+    codAmountInput.placeholder = 'Kwota pobrania (zł)';
+    codField.appendChild(codAmountInput);
+    modal.appendChild(codField);
+    const syncCod = () => { codField.style.display = codCheck.checked ? '' : 'none'; };
+    codCheck.addEventListener('change', syncCod);
+    syncCod();
+
+    // E-mail odbiorcy — na wypadek błędnego/zmienionego adresu przy dosyłce.
+    const emailField = el('div', 'wk-field');
+    emailField.appendChild(el('label', '', 'E-mail odbiorcy'));
+    const emailInput = document.createElement('input');
+    emailInput.type = 'email';
+    emailInput.value = wycena.email || '';
+    emailInput.placeholder = 'adres e-mail';
+    emailField.appendChild(emailInput);
+    modal.appendChild(emailField);
+
+    const actionsRow = el('div', 'wk-modal-actions');
+    const err = el('span', 'wk-error');
+    const cancel = el('button', 'wk-btn', 'Anuluj');
+    cancel.type = 'button';
+    const submit = el('button', 'wk-btn primary', 'Zamów kuriera');
+    submit.type = 'button';
+    actionsRow.append(err, cancel, submit);
+    modal.appendChild(actionsRow);
+
+    backdrop.appendChild(modal);
+    document.body.appendChild(backdrop);
+    const destroy = () => backdrop.remove();
+    close.addEventListener('click', destroy);
+    cancel.addEventListener('click', destroy);
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) destroy(); });
+
+    submit.addEventListener('click', async () => {
+      const cod = codCheck.checked;
+      const amount = Number(String(codAmountInput.value).replace(',', '.'));
+      if (cod && !(amount > 0)) { err.textContent = 'Podaj kwotę pobrania (lub odznacz „Za pobraniem").'; return; }
+      err.textContent = '';
+      submit.disabled = true;
+      submit.textContent = 'Zamawiam…';
+      try {
+        const res = await fetch(`${opts.apiBase}/api/wyceny/${wycena.id}/reship`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            codAmount: cod ? amount : null,
+            email: emailInput.value.trim() || null,
+          }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+        destroy();
+        if (opts.onChanged) opts.onChanged();
+      } catch (e) {
+        err.textContent = e.message;
+        submit.disabled = false;
+        submit.textContent = 'Zamów kuriera';
+      }
+    });
   }
 
   // ── Sekcja: historia (events + history_log z arkusza) ──────────────────────

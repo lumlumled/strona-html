@@ -828,15 +828,24 @@ async function onDelivered(db, shipment) {
 }
 
 // "Zamów kuriera ponownie" — nowa przesyłka na te same dane, bez faktury
-// i bez zmiany statusów (dosyłka/reklamacja).
-async function reship(db, wycenaId) {
+// i bez zmiany statusów (dosyłka/reklamacja). overrides z panelu:
+//   codAmount: number|null  — kwota pobrania (null = bez pobrania),
+//   email:     string|null  — nadpisany e-mail odbiorcy.
+// Klonujemy wycenę z podmienionym e-mailem (createShipment czyta wycena.email),
+// żeby NIE ruszać rekordu zamówienia — dosyłka nie zmienia danych w bazie.
+async function reship(db, wycenaId, overrides = {}) {
   const wycena = await loadWycena(db, wycenaId);
   if (!wycena) throw new Error('Nie znaleziono wyceny');
-  if (jestFurgonetka(wycena)) {
-    if (wymagaCla(wycena)) throw new Error('Dosyłka poza UE wymaga danych celnych — zamów ręcznie w panelu Furgonetki.');
-    return krokPrzesylkaFurgonetka(db, wycena, { kind: 'reship' });
+  const w = overrides.email ? { ...wycena, email: overrides.email } : wycena;
+  const codAmount = (overrides.codAmount != null && Number.isFinite(Number(overrides.codAmount)))
+    ? Number(overrides.codAmount) : null;
+  if (jestFurgonetka(w)) {
+    if (wymagaCla(w)) throw new Error('Dosyłka poza UE wymaga danych celnych — zamów ręcznie w panelu Furgonetki.');
+    return krokPrzesylkaFurgonetka(db, w, { kind: 'reship' });
   }
-  return krokPrzesylka(db, wycena, { codAmount: null, insuranceAmount: null, kind: 'reship' });
+  // Ubezpieczenie jak w głównym pipeline COD (cod == insurance == kwota);
+  // bez pobrania — bez ubezpieczenia, jak dawniej.
+  return krokPrzesylka(db, w, { codAmount, insuranceAmount: codAmount, kind: 'reship' });
 }
 
 // ── Worker (pg_cron -> POST /formularz/api/cron/worker) ─────────────────────

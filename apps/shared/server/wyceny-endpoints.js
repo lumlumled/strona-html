@@ -898,6 +898,9 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
 
   // POST /api/wyceny/:id/reship — "Zamów kuriera ponownie": nowa przesyłka
   // ShipX na te same dane, BEZ faktury i bez zmiany statusów (kind 'reship').
+  // Body (opcjonalne, z panelu): { codAmount: number|null, email: string|null }
+  // — nadpisania parametrów paczki. Brak body => zachowanie jak dawniej
+  // (bez pobrania, e-mail z zamówienia).
   app.post('/api/wyceny/:id(\\d+)/reship', requireEdit, async (req, res) => {
     try {
       const id = Number(req.params.id);
@@ -905,8 +908,17 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       const { data, error } = await scoped(supabase.from('wyceny').select('id'), req).eq('id', id).limit(1);
       if (error) throw error;
       if (!data || !data.length) return res.status(404).json({ error: 'Nie znaleziono wyceny' });
+      const body = req.body || {};
+      let codAmount = null;
+      if (body.codAmount != null && body.codAmount !== '') {
+        codAmount = Number(String(body.codAmount).replace(',', '.'));
+        if (!Number.isFinite(codAmount) || codAmount <= 0) {
+          return res.status(400).json({ error: 'Kwota pobrania musi być liczbą > 0' });
+        }
+      }
+      const overrides = { codAmount, email: body.email ? String(body.email).trim() : null };
       const { reship } = require('./wyceny-pipeline');
-      const shipment = await reship(supabase, id);
+      const shipment = await reship(supabase, id, overrides);
       res.json({ data: shipment });
     } catch (err) {
       handleError(res, err, 502);
