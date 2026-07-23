@@ -15,6 +15,7 @@
 
 const { analyzeCall, statusRank, NO_ANSWER_ALLOWED_FROM, parseKwotaZlotych, isPlDateDue, czyZaopiekowaneDzis, przyszlosciowyRecall } = require('../../shared/server/call-analysis');
 const { normalizeTemperatura } = require('./scoring');
+const { zamknijWycenyStraconego } = require('../../shared/server/wyceny-sync');
 
 const LEADY_B2C_TABLE = 'Leady B2C';
 const LOG_ZMIAN_TABLE = 'Log zmian';
@@ -274,6 +275,12 @@ function registerRozmowyEndpoints(app, deps) {
 
         // Plan dnia: status case'a dociąga się jak po telefonie z Zadarmy
         // (commit f580f96) — kategoria zostaje, status się aktualizuje.
+        // Ta sama reguła co w webhooku Zadarmy: odmowa klienta domyka też jego
+        // otwartą wycenę, żeby nie wisiała w Backlogu jako żywy temat.
+        if (statusAfter === 'Stracony' && statusBefore !== 'Stracony') {
+          await zamknijWycenyStraconego(supabase, { leadId: lead['ID Leada'], telefon: digits });
+        }
+
         if (statusAfter) await updateStatusInUmowa(supabase, digits, statusAfter);
         if (temperaturaPoRozmowie && patchScoreInUmowa) await patchScoreInUmowa(supabase, digits, temperaturaPoRozmowie);
         if (zaopiekowaneDzis) await markZamknieteInUmowa(supabase, digits);

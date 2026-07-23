@@ -6,6 +6,7 @@ const cors = require('cors');
 const { getClient } = require('./supabase');
 const { registerLeadyEndpoints, NIE_TELEFON_ZRODLA } = require('../../shared/server/leady-endpoints');
 const { analyzeCall, statusRank, NO_ANSWER_ALLOWED_FROM, parseKwotaZlotych, isPlDateDue, addPlDays, czyZaopiekowaneDzis, przyszlosciowyRecall } = require('../../shared/server/call-analysis');
+const { zamknijWycenyStraconego } = require('../../shared/server/wyceny-sync');
 const rozmowy = require('./rozmowy');
 const { registerWycenyEndpoints } = require('../../shared/server/wyceny-endpoints');
 const { createAuth, clientPayload, panelLinks, isAdmin } = require('../../shared/server/auth');
@@ -1115,6 +1116,19 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       // Umowie i przelicz score/tier (case może zmienić kolejność w kubełku).
       if (customerDigits && temperaturaPoRozmowie) {
         await patchScoreInUmowa(supabase, customerDigits, temperaturaPoRozmowie);
+      }
+
+      // Klient odmówił → jego otwarta wycena też jest stracona. Bez tego lead
+      // znikał z lejka, a wycena wisiała dalej w kubełku "Wyceny do domknięcia"
+      // jako żywy temat (lead 467 Kamil, 6027,50 zł — patrz wyceny-sync.js).
+      // Tylko przy PRZEJŚCIU na "Stracony": lead już wcześniej stracony nie ma
+      // po co znów przeorywać wycen przy każdym kolejnym telefonie.
+      if (statusAfter === 'Stracony' && statusBefore !== 'Stracony') {
+        const { ids } = await zamknijWycenyStraconego(supabase, {
+          leadId: lead['ID Leada'],
+          telefon: customerDigits,
+        });
+        if (ids.length) console.log(`Domknięto wyceny straconego leada: ${ids.join(', ')}`);
       }
 
       // Temat zaopiekowany na dziś (domyślnie: rozmowa się odbyła) — oznacz
@@ -2320,18 +2334,34 @@ async function fetchAlertyWatchdoga(supabase) {
     .eq('backlog_target', 'b2c')
     .order('due_at', { ascending: true });
   if (error) throw error;
-  const rows = data || [];
+  let rows = data || [];
   const wycenaIds = rows.filter((r) => r.object_type === 'wycena').map((r) => Number(r.object_id));
   const leadIds = rows.filter((r) => r.object_type === 'lead').map((r) => Number(r.object_id)).filter(Number.isFinite);
   const wycenaById = new Map();
+  // Statusy, po których temat jest domknięty i NIE ma prawa wrócić do planu
+  // dnia (decyzja Antoniego 2026-07-23: "stracone nie pokazują się w Backlogu
+  // nigdy więcej"). Watch bywa starszy niż domknięcie wyceny — zamykamy go
+  // przy zmianie statusu (wyceny-sync.js), ale to jest druga siatka: gdyby
+  // jakiś watch przeżył (ręczna zmiana statusu w panelu Wyceny, import,
+  // wyścig), alert i tak się nie pokaże.
+  const ZAMKNIETE_STATUSY = new Set(['Stracone', 'Closed', 'Fulfilled']);
+  const domknieteWyceny = new Set();
   if (wycenaIds.length) {
     const { data: wyceny, error: wErr } = await supabase
       .from('wyceny')
-      .select('id,imie_nazwisko,telefon_e164,telefon_digits,kwota_proponowana_brutto')
+      .select('id,imie_nazwisko,telefon_e164,telefon_digits,kwota_proponowana_brutto,status')
       .in('id', wycenaIds);
     if (wErr) throw wErr;
-    (wyceny || []).forEach((w) => wycenaById.set(String(w.id), w));
+    (wyceny || []).forEach((w) => {
+      if (ZAMKNIETE_STATUSY.has(w.status)) domknieteWyceny.add(String(w.id));
+      else wycenaById.set(String(w.id), w);
+    });
   }
+  // Odsiewamy CAŁY alert, nie tylko jego dane — sam brak wyceny w mapie
+  // zostawiłby pusty wiersz "Wycena #id" bez telefonu i kwoty. Wycena, której
+  // w ogóle nie ma w bazie, zachowuje dotychczasowe zachowanie (widoczny alert
+  // z samym numerem) — to inny przypadek niż temat świadomie domknięty.
+  rows = rows.filter((r) => !(r.object_type === 'wycena' && domknieteWyceny.has(String(r.object_id))));
   const leadById = new Map();
   if (leadIds.length) {
     const { data: leady, error: lErr } = await supabase

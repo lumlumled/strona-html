@@ -7,6 +7,8 @@
 // Vercel dociąga ten plik automatycznie przez trace require() — nie trzeba
 // go dopisywać do includeFiles.
 
+const { zamknijWycenyStraconego } = require('./wyceny-sync');
+
 const LEADY_B2C_TABLE = 'Leady B2C';
 const WYCENY_B2C_TABLE = 'Wyceny B2C';
 const LOG_ZMIAN_TABLE = 'Log zmian';
@@ -342,13 +344,25 @@ function registerLeadyEndpoints(app, { getClient, requireView, requireEdit }) {
         .from(LEADY_B2C_TABLE)
         .update({ [field]: value === '' ? null : value })
         .eq('ID Leada', idLeada)
-        .select('"ID Leada"');
+        .select('"ID Leada","Phone number"');
       if (updateErr) throw updateErr;
       if (!updated || !updated.length) {
         return res.status(404).json({ error: 'Nie znaleziono leada o tym ID Leada' });
       }
 
-      res.json({ ok: true });
+      // Ręczne przestawienie leada na "Stracony" domyka jego otwarte wyceny —
+      // ta sama reguła co po rozmowie (patrz wyceny-sync.js), żeby nie zależała
+      // od tego, którą drogą handlowiec zamknął temat.
+      let wyceny_zamkniete;
+      if (field === 'Deal stage' && value === 'Stracony') {
+        const { ids } = await zamknijWycenyStraconego(supabase, {
+          leadId: idLeada,
+          telefon: updated[0]['Phone number'],
+        });
+        if (ids.length) wyceny_zamkniete = ids;
+      }
+
+      res.json({ ok: true, ...(wyceny_zamkniete ? { wyceny_zamkniete } : {}) });
     } catch (err) {
       handleError(res, err, 502);
     }
