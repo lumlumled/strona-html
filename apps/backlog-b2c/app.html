@@ -1188,6 +1188,17 @@
       color: var(--text-primary);
     }
 
+    .wycena-baner {
+      margin: 0 0 0.5rem;
+      padding: 0.55rem 0.7rem;
+      font-size: 0.8rem;
+      line-height: 1.4;
+      color: var(--text-muted);
+      background: var(--accent-soft);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
     .historia-rozmow {
       margin-top: 0.5rem;
     }
@@ -2687,11 +2698,15 @@
               apiBase: API_BASE,
               hostDetails: details,
               onAkcjaChange: (digits, a) => applyAkcjaToPhone(digits, a),
+              // Case bez leada, oparty na samej wycenie (_zrodlo_wycena) —
+              // karta read-only, bo nie ma leada do edycji; dane z wyceny.
+              readOnly: Boolean(resBody.data._zrodlo_wycena),
             });
             // Karta ma własny border-top/padding (.lk-lead-body) — czyścimy
             // klasę wrappera, żeby nie dublować ramki (jak w leadItem).
             body.className = '';
             body.innerHTML = '';
+            appendWycenaBaner(body, resBody.data);
             body.appendChild(karta.el);
           } catch (err) {
             body.innerHTML = `<p class="lk-empty-note">Nie udało się wczytać leada: ${err.message}</p>`;
@@ -2762,6 +2777,18 @@
         });
       });
       return copyBtn;
+    }
+
+    // Baner nad kartą case'a, który jest samą wyceną bez leada (_zrodlo_wycena
+    // z /api/leady/pelny) — mówi wprost, skąd dane i co odblokowuje telefon
+    // (założenie kontaktu + historii). Bez leada karta jest read-only.
+    function appendWycenaBaner(container, data) {
+      if (!data || !data._zrodlo_wycena) return;
+      const baner = document.createElement('p');
+      baner.className = 'wycena-baner';
+      const idtxt = data._wycena_id ? ` #${data._wycena_id}` : '';
+      baner.textContent = `Wycena bez leada${idtxt} — dane z wyceny. Zadzwoń albo dodaj rozmowę, żeby założyć kontakt i budować historię.`;
+      container.appendChild(baner);
     }
 
     // Zamiast jednej zbitej linijki tekstu ("? m - Cyfrowa taśma COB IP20 ? szt -
@@ -3330,6 +3357,9 @@
               // Edycja/odhaczenie akcji w karcie → odśwież pigułki tego
               // telefonu na wszystkich zwiniętych case'ach.
               onAkcjaChange: (digits, a) => applyAkcjaToPhone(digits, a),
+              // Case bez leada, oparty na samej wycenie (_zrodlo_wycena) —
+              // karta read-only, bo nie ma leada do edycji; dane z wyceny.
+              readOnly: Boolean(resBody.data._zrodlo_wycena),
               onFeedbackDate: (stored) => {
                 c.data_feedbacku = stored;
                 const input = lead.querySelector('summary .feedback-date-input');
@@ -3340,6 +3370,7 @@
             // przestaje być .lead-body, żeby nie dublować ramki.
             body.className = '';
             body.innerHTML = '';
+            appendWycenaBaner(body, resBody.data);
             body.appendChild(karta.el);
             // Odwrotny kierunek: edycja akcji z pigułki → odśwież kartę.
             const phoneKey = normalizePhone(c.telefon);

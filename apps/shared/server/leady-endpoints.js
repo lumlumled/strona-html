@@ -114,6 +114,59 @@ async function findWycenaByPhoneScan(supabase, phoneDigits) {
   return (data || []).find((r) => normalizePhoneDigits(r['Telefon']) === phoneDigits) || null;
 }
 
+// Warianty numeru do dopasowania w KANONICZNEJ tabeli `wyceny`: telefon_digits
+// jest zapisywany raz jako 9 cyfr bez prefiksu (apps/formularz), a bywa też z
+// "48" — dopasowujemy pod oba, plus e164, żeby nie zależeć od tego, jak numer
+// wpadł. phoneDigits wchodzi po normalizePhoneDigits (może być 9 albo 48+9).
+function phoneVariants(phoneDigits) {
+  const d = String(phoneDigits || '').replace(/\D/g, '');
+  if (!d) return [];
+  const d9 = d.replace(/^48/, '');
+  return [...new Set([d, d9, `48${d9}`])].filter(Boolean);
+}
+
+// Najnowsza REALNA, otwarta wycena danego numeru z NOWEJ tabeli `wyceny`
+// (koszyk pozycji + kwota — to samo rozróżnienie, którego pilnuje kubełek
+// "Wyceny do domknięcia" w Backlogu). Zasila kartę leada dla numerów, które
+// mają wycenę, ale NIE mają jeszcze wiersza w Leady B2C (87 "sierocych" wycen
+// na 2026-07-23) — bez tego rozwinięcie takiego case'a w Backlogu strzelało w
+// 404 i pokazywało "Nie udało się wczytać leada". Zwraca surowy wiersz albo null.
+async function findWycenaNowaByPhone(supabase, phoneDigits) {
+  const variants = phoneVariants(phoneDigits);
+  if (!variants.length) return null;
+  const ors = variants.map((v) => `telefon_digits.eq.${v}`).concat(`telefon_e164.eq.48${variants[variants.length - 1]}`);
+  const { data, error } = await supabase
+    .from('wyceny')
+    .select('id,typ,status,imie_nazwisko,telefon_digits,telefon_e164,email,lead_id,items,kwota_proponowana_brutto,komentarz,created_at')
+    .in('typ', ['WYCENA', 'ZAMÓWIENIE'])
+    .eq('status', 'Open')
+    .or(ors.join(','))
+    .order('id', { ascending: false });
+  if (error) throw error;
+  return (data || []).find((w) => Array.isArray(w.items) && w.items.length > 0 && w.kwota_proponowana_brutto != null) || null;
+}
+
+// Kontakt "z ulicy" (kontakty_organic) po numerze — jedyne miejsce, gdzie dla
+// numeru bez leada narasta historia rozmów (POST /api/rozmowy/reczna kieruje
+// wycenowe telefony właśnie tu). Miękko: brak tabeli/wiersza → null, karta i
+// tak działa na samych danych wyceny.
+async function findKontaktOrganicByPhone(supabase, phoneDigits) {
+  const variants = phoneVariants(phoneDigits);
+  if (!variants.length) return null;
+  try {
+    const { data, error } = await supabase
+      .from('kontakty_organic')
+      .select('*')
+      .or(variants.map((v) => `telefon.eq.${v}`).join(','))
+      .order('updated_at', { ascending: false })
+      .limit(1);
+    if (error) return null;
+    return (data && data[0]) || null;
+  } catch {
+    return null;
+  }
+}
+
 // Czy lead ma wycenę w NOWEJ tabeli `wyceny` (nie legacy "Wyceny B2C"). Steruje
 // tylko flagą _ma_wycene na karcie (etykiety "Kwota"/"Proponowana kwota" i
 // chowanie pól legacy) — dlatego wystarczy istnienie choćby jednego wiersza.
@@ -332,21 +385,13 @@ function registerLeadyEndpoints(app, { getClient, requireView, requireEdit }) {
       const digits = normalizePhoneDigits(req.query.telefon);
       if (!digits) return res.status(400).json({ error: 'Brak parametru telefon' });
 
-      const lead = await findLeadByPhone(supabase, digits);
-      if (!lead) return res.status(404).json({ error: 'Nie znaleziono leada o tym numerze' });
-
-      // _ma_wycene liczymy z NOWEJ tabeli `wyceny` (lead_id/telefon), nie z
-      // legacy "Wyceny B2C" — inaczej wyceny z nowego systemu dawały false
-      // i karta pokazywała "Proponowana kwota"/pola legacy zamiast "Kwota".
-      const [maWycene, logRows] = await Promise.all([
-        hasWycenaNowa(supabase, digits.replace(/^48/, ''), lead['ID Leada']),
-        supabase.from(LOG_ZMIAN_TABLE).select('data_zmiany,zrodlo').eq('telefon', digits)
-          .then(({ data, error }) => {
-            if (error) throw error;
-            return data || [];
-          }),
-      ]);
-
+      // Log zmian po numerze — licznik połączeń + "skontaktowane dziś", wspólne
+      // dla obu ścieżek (lead / sam telefon z wyceną).
+      const logRows = await supabase.from(LOG_ZMIAN_TABLE).select('data_zmiany,zrodlo').eq('telefon', digits)
+        .then(({ data, error }) => {
+          if (error) throw error;
+          return data || [];
+        });
       const todayKey = new Date().toISOString().slice(0, 10);
       let count = 0;
       let dzisiaj = false;
@@ -355,6 +400,60 @@ function registerLeadyEndpoints(app, { getClient, requireView, requireEdit }) {
         count += 1;
         if (row.data_zmiany && String(row.data_zmiany).slice(0, 10) === todayKey) dzisiaj = true;
       });
+
+      const lead = await findLeadByPhone(supabase, digits);
+      if (!lead) {
+        // Brak leada, ale numer ma realną, otwartą wycenę (87 "sierocych" wycen
+        // na 2026-07-23) — zamiast 404 budujemy kartę Z WYCENY, w kształcie
+        // wiersza Leady B2C, żeby wspólna LeadKarta wyrenderowała się normalnie
+        // (dane tożsamościowe + sekcja "Wycena" po telefonie). Historia i status
+        // dociągane z kontakty_organic, jeśli ktoś już dzwonił (POST
+        // /api/rozmowy/reczna kieruje wycenowe telefony właśnie tam). Karta
+        // renderuje się read-only (front: _zrodlo_wycena) — nie ma czego edytować
+        // po stronie leada, bo leada nie ma; edycja wyceny idzie z panelu Wyceny.
+        const wyc = await findWycenaNowaByPhone(supabase, digits);
+        if (!wyc) return res.status(404).json({ error: 'Nie znaleziono leada o tym numerze' });
+        const kontakt = await findKontaktOrganicByPhone(supabase, digits);
+        const d9 = digits.replace(/^48/, '');
+        res.json({
+          data: {
+            'ID Leada': null,
+            ID: null,
+            Name: (kontakt && kontakt.imie) || wyc.imie_nazwisko || '',
+            'Phone number': d9,
+            Email: (kontakt && kontakt.email) || wyc.email || '',
+            'Deal stage': (kontakt && kontakt.status) || 'Wycena',
+            Notes: '',
+            'Ocena AI kontaktu': (kontakt && kontakt.ocena_ai) || wyc.komentarz || '',
+            'Historia rozmów': (kontakt && kontakt.historia_rozmow) || '',
+            'Najbliższa akcja': (kontakt && kontakt.najblizsza_akcja) || '',
+            'Najbliższa akcja termin': (kontakt && kontakt.najblizsza_akcja_termin) || '',
+            'Najbliższa akcja owner': (kontakt && kontakt.najblizsza_akcja_owner) || '',
+            'Ostatni kontakt': (kontakt && kontakt.ostatni_kontakt) || '',
+            Temperatura: '',
+            'Data Feedbacku': '',
+            'Godzina Feedbacku': '',
+            Date: String(wyc.created_at || '').slice(0, 10),
+            Źródło: 'wycena',
+            Owner: (kontakt && kontakt.owner) || null,
+            _telefon_digits: digits,
+            _telefon_formatted: formatPhonePlus(d9),
+            _ma_wycene: true,
+            _ilosc_polaczen: count,
+            _kontakt_dzisiaj: dzisiaj,
+            // Sygnał dla frontu: karta bez leada, oparta na wycenie → read-only
+            // + baner. _wycena_id do etykiety.
+            _zrodlo_wycena: true,
+            _wycena_id: wyc.id,
+          },
+        });
+        return;
+      }
+
+      // _ma_wycene liczymy z NOWEJ tabeli `wyceny` (lead_id/telefon), nie z
+      // legacy "Wyceny B2C" — inaczej wyceny z nowego systemu dawały false
+      // i karta pokazywała "Proponowana kwota"/pola legacy zamiast "Kwota".
+      const maWycene = await hasWycenaNowa(supabase, digits.replace(/^48/, ''), lead['ID Leada']);
 
       res.json({
         data: {
