@@ -16,6 +16,7 @@
 const { analyzeCall, statusRank, NO_ANSWER_ALLOWED_FROM, parseKwotaZlotych, isPlDateDue, czyZaopiekowaneDzis, przyszlosciowyRecall } = require('../../shared/server/call-analysis');
 const { normalizeTemperatura } = require('./scoring');
 const { zamknijWycenyStraconego } = require('../../shared/server/wyceny-sync');
+const { powodZRozmowy } = require('../../shared/server/stracony');
 
 const LEADY_B2C_TABLE = 'Leady B2C';
 const LOG_ZMIAN_TABLE = 'Log zmian';
@@ -83,6 +84,11 @@ async function applyRozmowaDoKontaktu(supabase, kontakt, { analysis, transcript,
     updated_at: new Date().toISOString(),
   };
   if (analysis?.skrocony_opis) patch.ocena_ai = analysis.skrocony_opis;
+  // Ten sam ślad co na leadzie: skoro rozmowa domknęła temat, zapisz dlaczego.
+  if (statusAfter === 'Stracony' && kontakt.status !== 'Stracony') {
+    const powod = powodZRozmowy(analysis && analysis.powod_straty);
+    if (powod) patch.powod_straty = powod;
+  }
   if (setAkcja) {
     patch.najblizsza_akcja = akcja;
     patch.najblizsza_akcja_termin = akcja ? (analysis?.najblizsza_akcja_termin || null) : null;
@@ -278,7 +284,20 @@ function registerRozmowyEndpoints(app, deps) {
         // Ta sama reguła co w webhooku Zadarmy: odmowa klienta domyka też jego
         // otwartą wycenę, żeby nie wisiała w Backlogu jako żywy temat.
         if (statusAfter === 'Stracony' && statusBefore !== 'Stracony') {
-          await zamknijWycenyStraconego(supabase, { leadId: lead['ID Leada'], telefon: digits });
+          // Powód straty wyłapany przez AI z rozmowy — ta sama kolumna, którą
+          // wypełnia ręczne domknięcie (POST /api/leady/stracony), żeby raport
+          // "z czego tracimy" czytał jedno pole niezależnie od drogi.
+          const powod = powodZRozmowy(analysis && analysis.powod_straty);
+          if (powod) {
+            // Zwykły update (nie RPC): dotyka wyłącznie "Powód stracenia",
+            // więc trigger log_zmian_from_leady (Deal stage/Notes/Data
+            // Feedbacku) nie ma na co zareagować i nie zdubluje wpisu.
+            const { error: powodErr } = await supabase.from(LEADY_B2C_TABLE)
+              .update({ 'Powód stracenia': powod })
+              .eq('ID Leada', lead['ID Leada']);
+            if (powodErr) console.error('Nie zapisano powodu straty:', powodErr.message);
+          }
+          await zamknijWycenyStraconego(supabase, { leadId: lead['ID Leada'], telefon: digits, powod });
         }
 
         if (statusAfter) await updateStatusInUmowa(supabase, digits, statusAfter);

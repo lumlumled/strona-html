@@ -48,6 +48,20 @@ test('domyka tylko otwarte wyceny, nigdy zamówień ani płatności w toku', asy
   assert.deepEqual(sb.calls.updateIds, [1974]);        // update po id, nie po filtrze
 });
 
+test('powód straty wędruje na wycenę razem ze statusem', async () => {
+  const sb = fakeSupabase({ rows: [{ id: 1974 }] });
+  await zamknijWycenyStraconego(sb, { leadId: 467, telefon: '518337069', powod: 'Nierokujący - buja mnie' });
+  assert.deepEqual(sb.calls.updated, { status: 'Stracone', powod_straty: 'Nierokujący - buja mnie' });
+});
+
+test('brak powodu nie nadpisuje kolumny pustką', async () => {
+  const sb = fakeSupabase({ rows: [{ id: 1974 }] });
+  // Automat z rozmowy bywa bez powodu (AI nic nie wyłapała) — wtedy wycena
+  // dostaje sam status, a wcześniejszy powód (jeśli był) zostaje.
+  await zamknijWycenyStraconego(sb, { leadId: 467, telefon: '518337069', powod: null });
+  assert.deepEqual(sb.calls.updated, { status: 'Stracone' });
+});
+
 test('zamyka też watcha wyceny — inaczej alert "temat ucieka" wraca do planu', async () => {
   const sb = fakeSupabase({ rows: [{ id: 1974 }] });
   await zamknijWycenyStraconego(sb, { leadId: 467, telefon: '518337069' });

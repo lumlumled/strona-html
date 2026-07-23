@@ -44,7 +44,9 @@ function warsawDateTimeStr(date) {
 // czego domykać). Nie rzuca: to efekt uboczny zmiany statusu leada i nie może
 // wywrócić głównej operacji (rozmowy, edycji karty). Błąd ląduje w polu error
 // i w logu, żeby dało się go zauważyć.
-async function zamknijWycenyStraconego(supabase, { leadId, telefon } = {}) {
+// `powod` (opcjonalny) wędruje na wycenę razem ze statusem — bez niego wycena
+// wyglądała jak domknięta "z automatu", bez śladu dlaczego (patrz stracony.js).
+async function zamknijWycenyStraconego(supabase, { leadId, telefon, powod } = {}) {
   const d9 = nine(telefon);
   const idNum = Number(leadId);
   const maLead = Number.isFinite(idNum) && idNum > 0;
@@ -68,7 +70,7 @@ async function zamknijWycenyStraconego(supabase, { leadId, telefon } = {}) {
 
     const { error: updErr } = await supabase
       .from(WYCENY_TABLE)
-      .update({ status: 'Stracone' })
+      .update({ status: 'Stracone', ...(powod ? { powod_straty: powod } : {}) })
       .in('id', ids);
     if (updErr) throw updErr;
 
@@ -97,10 +99,11 @@ async function zamknijWycenyStraconego(supabase, { leadId, telefon } = {}) {
 // nie może zostawiać drugiej jako żywej, bo backlog zaraz pokaże ją jako
 // otwarty case do dzwonienia.
 //
-// Zapis idzie RPC app_lead_stracony: jedna transakcja ustawia status + powód,
-// czyści feedback i akcję (inaczej lead wracałby alertem watchdoga) i wyłącza
-// trigger log_zmian_from_leady, bo własny, bogatszy wiersz do "Log zmian"
-// wstawiamy tutaj — bez bypassu jedno domknięcie logowałoby się dwa razy.
+// Zapis idzie tym samym RPC co ręczne domknięcie z karty (app_lead_stracony,
+// migracja 013): jedna transakcja ustawia status + powód, czyści feedback i
+// akcję (inaczej lead wracałby alertem watchdoga) i wyłącza trigger
+// log_zmian_from_leady, bo własny, bogatszy wiersz do "Log zmian" wstawiamy
+// tutaj — bez bypassu jedno domknięcie logowałoby się dwa razy.
 //
 // Nie rzuca — jak zamknijWycenyStraconego. Zwraca { leadId, statusPrzed } albo
 // null, gdy nie było czego domykać (brak leada / lead już stracony).

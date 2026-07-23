@@ -8,6 +8,7 @@
 // go dopisywać do includeFiles.
 
 const { zamknijWycenyStraconego } = require('./wyceny-sync');
+const { POWODY_STRATY, formatPowod } = require('./stracony');
 
 const LEADY_B2C_TABLE = 'Leady B2C';
 const WYCENY_B2C_TABLE = 'Wyceny B2C';
@@ -59,7 +60,10 @@ const EDITABLE_LEAD_FIELDS = [
 // wpadnięcia nowego leada z Facebook Lead Ads — to zdarzenie "powstał lead",
 // nie połączenie; bez tego świeży lead fałszywie liczył się jako "zadzwoniono
 // dziś" i pokazywał się w Połączeniach jako 0-sekundowa rozmowa handlowca).
-const NIE_TELEFON_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'facebook_lead_webhook']);
+// 'manual_stracony' też tu jest: ręczne domknięcie tematu to decyzja, nie
+// połączenie — bez tego samo kliknięcie "Stracony" doliczałoby leadowi telefon
+// i fałszywie oznaczało go jako "skontaktowany dziś".
+const NIE_TELEFON_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'manual_stracony', 'wycena_stracona', 'facebook_lead_webhook']);
 
 function normalizePhoneDigits(v) {
   return String(v || '').replace(/\D/g, '');
@@ -321,7 +325,11 @@ async function analyzeNotatka(tresc, { dzisiaj, poprzedniaAkcja }) {
 // requireView/requireEdit — opcjonalne middleware uprawnień (CRM egzekwuje
 // nimi dostęp per arkusz: podgląd dla odczytów, edycja dla zapisów). Backlog
 // ich nie przekazuje — dostęp do panelu Backlog = pełny dzienny workflow.
-function registerLeadyEndpoints(app, { getClient, requireView, requireEdit }) {
+// onStracony — opcjonalny hook hosta, wołany PO domknięciu tematu
+// ({ telefon, status }). Backlog podpina pod niego synchronizację planu dnia
+// (Umowa to migawka z rana, więc case musi dostać nowy status i ptaszek
+// "zaopiekowane"); CRM/Feedbacki nie mają czego synchronizować i go nie dają.
+function registerLeadyEndpoints(app, { getClient, requireView, requireEdit, onStracony }) {
   const passthrough = (req, res, next) => next();
   const view = requireView || passthrough;
   const edit = requireEdit || passthrough;
@@ -363,6 +371,118 @@ function registerLeadyEndpoints(app, { getClient, requireView, requireEdit }) {
       }
 
       res.json({ ok: true, ...(wyceny_zamkniete ? { wyceny_zamkniete } : {}) });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
+  // GET /api/leady/powody-straty — słownik powodów do kafelków w popupie
+  // (apps/shared/lead-card.js). Jedno źródło prawdy: etykieta na przycisku i
+  // tekst zapisany w bazie pochodzą z tej samej listy (patrz stracony.js).
+  app.get('/api/leady/powody-straty', view, (req, res) => {
+    res.json({ data: POWODY_STRATY });
+  });
+
+  // POST /api/leady/stracony — ręczne domknięcie nierokującego tematu.
+  // Body: { telefon | idLeada, powod_kod, komentarz? }.
+  //
+  // Osobny endpoint zamiast PUT pola "Deal stage", bo to nie jest edycja
+  // jednego pola tylko jedna decyzja o wielu skutkach, które muszą wydarzyć
+  // się razem albo wcale: status + powód + wpis w historii + wiersz w Log
+  // zmian + domknięcie wyceny i jej watcha + wyczyszczenie feedbacku/akcji.
+  // Rozłożone na osobne zapisy z frontu zostawiałyby stany-zombie (lead
+  // "Stracony", ale z żywą datą feedbacku wracającą alertem — dokładnie ten
+  // błąd załatał commit 0c8dda4).
+  app.post('/api/leady/stracony', edit, async (req, res) => {
+    try {
+      const { telefon, idLeada, powod_kod: powodKod, komentarz } = req.body || {};
+      const powod = formatPowod(powodKod, komentarz);
+      if (!powod) {
+        return res.status(400).json({ error: 'Brak powodu — domknięcie tematu wymaga powodu' });
+      }
+
+      const supabase = getClient();
+      const digits = normalizePhoneDigits(telefon);
+      const idNum = Number(idLeada);
+      let lead = null;
+      if (Number.isFinite(idNum) && idNum > 0) {
+        const { data, error } = await supabase
+          .from(LEADY_B2C_TABLE).select('*').eq('ID Leada', idNum).limit(1);
+        if (error) throw error;
+        lead = data[0] || null;
+      }
+      if (!lead && digits) lead = await findLeadByPhone(supabase, digits);
+
+      const telefonDigits = digits || normalizePhoneDigits(lead && lead['Phone number']);
+      const handlowiec = (req.user && req.user.name) || null;
+      const historiaEntry = `${warsawDateTimeStr(new Date())} - [Stracony] ${powod}`;
+      // Wspólny opis dla Log zmian — ten sam prefiks co w historii, żeby jedno
+      // domknięcie dawało się znaleźć w obu miejscach tym samym szukaniem.
+      const opisLogu = `[Stracony] ${powod}`;
+      let cel = null;
+      let statusPrzed = null;
+
+      if (lead) {
+        statusPrzed = lead['Deal stage'] || null;
+        cel = 'lead';
+        const { error: rpcErr } = await supabase.rpc('app_lead_stracony', {
+          p_id_leada: Number(lead['ID Leada']),
+          p_powod: powod,
+          p_historia: lead['Historia rozmów'] ? `${historiaEntry}\n${lead['Historia rozmów']}` : historiaEntry,
+        });
+        if (rpcErr) throw rpcErr;
+      } else if (telefonDigits) {
+        // Numer bez leada: albo znany z rozmów (kontakty_organic), albo czysta
+        // "sierota" z wyceną (87 takich na 2026-07-23) — wtedy jedynym nośnikiem
+        // decyzji jest sama wycena, domykana niżej.
+        const kontakt = await findKontaktOrganicByPhone(supabase, telefonDigits);
+        if (kontakt) {
+          statusPrzed = kontakt.status || null;
+          cel = 'organic';
+          const { error: kErr } = await supabase.from('kontakty_organic').update({
+            status: 'Stracony',
+            powod_straty: powod,
+            historia_rozmow: kontakt.historia_rozmow ? `${historiaEntry}\n${kontakt.historia_rozmow}` : historiaEntry,
+            najblizsza_akcja: null,
+            najblizsza_akcja_termin: null,
+            najblizsza_akcja_owner: null,
+            updated_at: new Date().toISOString(),
+          }).eq('id', kontakt.id);
+          if (kErr) throw kErr;
+        }
+      }
+
+      // Wycena tego numeru idzie na "Stracone" z tym samym powodem — także gdy
+      // leada w ogóle nie ma (wtedy to jedyny ślad decyzji).
+      const { ids: wycenyZamkniete } = await zamknijWycenyStraconego(supabase, {
+        leadId: lead && lead['ID Leada'],
+        telefon: telefonDigits,
+        powod,
+      });
+      if (!cel && wycenyZamkniete.length) cel = 'wycena';
+      if (!cel) return res.status(404).json({ error: 'Nie znaleziono leada, kontaktu ani otwartej wyceny dla tego numeru' });
+
+      const { error: logErr } = await supabase.from(LOG_ZMIAN_TABLE).insert({
+        zrodlo: 'manual_stracony',
+        telefon: telefonDigits || null,
+        status_przed: statusPrzed,
+        status_po: 'Stracony',
+        opis: opisLogu,
+        handlowiec,
+        dopasowano_tabela: cel === 'lead' ? LEADY_B2C_TABLE : cel === 'organic' ? 'kontakty_organic' : 'wyceny',
+        dopasowano_id: cel === 'lead' ? String(lead['ID'] ?? '') : (wycenyZamkniete[0] != null ? String(wycenyZamkniete[0]) : null),
+      });
+      if (logErr) console.error('Nie zapisano domknięcia do Log zmian:', logErr.message);
+
+      if (onStracony && telefonDigits) {
+        try {
+          await onStracony(supabase, { telefon: telefonDigits, status: 'Stracony' });
+        } catch (err) {
+          console.error('Sync planu dnia po domknięciu tematu:', err.message);
+        }
+      }
+
+      res.json({ ok: true, cel, powod, status: 'Stracony', wyceny_zamkniete: wycenyZamkniete });
     } catch (err) {
       handleError(res, err, 502);
     }

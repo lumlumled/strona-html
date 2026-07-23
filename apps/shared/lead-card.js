@@ -23,6 +23,12 @@
 window.LeadKarta = (() => {
   'use strict';
 
+  // Wiersze "Log zmian", które NIE są rozmową telefoniczną — w osi czasu
+  // renderują się jak notatka (etykieta zamiast czasu połączenia). Kopia
+  // zbioru z apps/shared/server/leady-endpoints.js (NIE_TELEFON_ZRODLA) bez
+  // 'facebook_lead_webhook', który ma własną etykietę "nowy lead".
+  const NIE_ROZMOWA_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'manual_stracony', 'wycena_stracona']);
+
   // ── Daty / formatowanie (1:1 z CRM) ───────────────────────────────────────
 
   function parseAnyDate(value) {
@@ -555,7 +561,7 @@ window.LeadKarta = (() => {
       list.className = 'lk-historia-rozmow-list';
       // Najnowsze na górze (endpoint sortuje rosnąco dla innych konsumentów).
       [...rows].reverse().forEach((row) => {
-        const jestNotatka = row.zrodlo === 'notatka_handlowca' || row.zrodlo === 'manual_akcja';
+        const jestNotatka = NIE_ROZMOWA_ZRODLA.has(row.zrodlo);
         const nieodebrane = row.disposition === 'no_answer';
         const entry = document.createElement('div');
         entry.className = 'lk-historia-rozmow-entry' + (nieodebrane ? ' nieodebrane' : '');
@@ -994,6 +1000,166 @@ window.LeadKarta = (() => {
     return details;
   }
 
+  // ── Domknięcie tematu: "Stracony" + powód ─────────────────────────────────
+  // Decyzja Antoniego 2026-07-23: analiza rozmowy celowo NIE zamyka klienta,
+  // który gra na zwłokę ("muszę się jeszcze zastanowić", "oddzwonię") — a to
+  // właśnie takie tematy handlowiec słyszy jako martwe. Stąd ręczne wejście:
+  // status "Stracony" ZAWSZE z powodem, bo bez niego po pół roku nie da się
+  // odpowiedzieć, czy tracimy przez cenę, czy przez bujanie.
+  // Wspólne dla CRM-u i Backlogu — obie pigułki statusu wołają to samo.
+
+  // Słownik powodów z serwera (apps/shared/server/stracony.js) — jedno
+  // pobranie na stronę; błąd nie blokuje domknięcia, zostaje sam opis własny.
+  let powodyPromise = null;
+  function fetchPowodyStraty(apiBase) {
+    if (!powodyPromise) {
+      powodyPromise = fetch(`${apiBase}/api/leady/powody-straty`)
+        .then((res) => res.json())
+        .then((body) => body.data || [])
+        .catch(() => {
+          powodyPromise = null;
+          return [];
+        });
+    }
+    return powodyPromise;
+  }
+
+  const POWOD_FALLBACK = [{ kod: 'inny', emoji: '✍️', label: 'Inny powód', opis: 'Opisz własnymi słowami' }];
+
+  // Zwraca { kod, komentarz } albo null (anulowane). Sam nic nie zapisuje.
+  async function zapytajOPowodStraty(apiBase, { imie } = {}) {
+    const powody = await fetchPowodyStraty(apiBase);
+    const lista = powody.length ? powody : POWOD_FALLBACK;
+
+    return new Promise((resolve) => {
+      let wybrany = null;
+
+      const overlay = document.createElement('div');
+      overlay.className = 'lk-modal-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'lk-modal';
+      // Karta leada mieszka w <details> i w klikalnych wierszach — bez tego
+      // każdy klik w popupie zwijałby/rozwijał case pod spodem.
+      overlay.addEventListener('click', (e) => { e.stopPropagation(); if (e.target === overlay) zamknij(null); });
+      modal.addEventListener('click', (e) => e.stopPropagation());
+
+      const tytul = document.createElement('h3');
+      tytul.className = 'lk-modal-title';
+      tytul.textContent = imie ? `Zamykasz temat: ${imie}` : 'Zamykasz temat';
+      const sub = document.createElement('p');
+      sub.className = 'lk-modal-sub';
+      sub.textContent = 'Status idzie na „Stracony", wycena na „Stracone", temat znika z planu dnia i z alertów. Dlaczego?';
+
+      const grid = document.createElement('div');
+      grid.className = 'lk-powody';
+      const komentarz = document.createElement('textarea');
+      const ok = document.createElement('button');
+
+      const przelicz = () => {
+        // "Inny powód" bez treści nie niesie żadnej informacji — wtedy blokada.
+        ok.disabled = !wybrany || (wybrany.kod === 'inny' && !komentarz.value.trim());
+      };
+
+      lista.forEach((p) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'lk-powod';
+        const emoji = document.createElement('span');
+        emoji.className = 'lk-powod-emoji';
+        emoji.textContent = p.emoji || '•';
+        const tekst = document.createElement('span');
+        tekst.className = 'lk-powod-tekst';
+        const label = document.createElement('span');
+        label.className = 'lk-powod-label';
+        label.textContent = p.label;
+        tekst.appendChild(label);
+        if (p.opis) {
+          const opis = document.createElement('span');
+          opis.className = 'lk-powod-opis';
+          opis.textContent = p.opis;
+          tekst.appendChild(opis);
+        }
+        btn.append(emoji, tekst);
+        btn.addEventListener('click', () => {
+          wybrany = p;
+          grid.querySelectorAll('.lk-powod').forEach((el) => el.classList.toggle('is-selected', el === btn));
+          if (p.kod === 'inny') komentarz.focus();
+          przelicz();
+        });
+        grid.appendChild(btn);
+      });
+
+      komentarz.className = 'lk-powod-komentarz';
+      komentarz.rows = 2;
+      komentarz.placeholder = 'Komentarz (opcjonalnie) — np. „4. raz wysyłam wycenę i za każdym razem nie może otworzyć”';
+      komentarz.addEventListener('input', przelicz);
+
+      const mic = document.createElement('button');
+      mic.type = 'button';
+      mic.className = 'lk-notatka-mic';
+      mic.title = 'Dyktuj (kliknij, mów, kliknij ponownie)';
+      mic.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/><path d="M19 11a1 1 0 0 0-2 0 5 5 0 0 1-10 0 1 1 0 0 0-2 0 7 7 0 0 0 6 6.92V20H9a1 1 0 0 0 0 2h6a1 1 0 0 0 0-2h-2v-2.08A7 7 0 0 0 19 11z"/></svg>';
+      const msg = document.createElement('span');
+      msg.className = 'lk-notatka-msg';
+      attachDictation(mic, komentarz, (text, isErr) => {
+        msg.textContent = text || '';
+        msg.classList.toggle('err', Boolean(isErr));
+        przelicz();
+      }, apiBase);
+
+      const komentarzRow = document.createElement('div');
+      komentarzRow.className = 'lk-powod-komentarz-row';
+      komentarzRow.append(komentarz, mic);
+
+      const actions = document.createElement('div');
+      actions.className = 'lk-modal-actions';
+      const anuluj = document.createElement('button');
+      anuluj.type = 'button';
+      anuluj.className = 'lk-modal-cancel';
+      anuluj.textContent = 'Anuluj';
+      ok.type = 'button';
+      ok.className = 'lk-modal-ok';
+      ok.textContent = 'Zamknij temat';
+      ok.disabled = true;
+      actions.append(msg, anuluj, ok);
+
+      modal.append(tytul, sub, grid, komentarzRow, actions);
+      overlay.appendChild(modal);
+
+      function zamknij(wynik) {
+        document.removeEventListener('keydown', onKey, true);
+        overlay.remove();
+        resolve(wynik);
+      }
+      function onKey(e) {
+        if (e.key === 'Escape') { e.stopPropagation(); zamknij(null); }
+      }
+      anuluj.addEventListener('click', () => zamknij(null));
+      ok.addEventListener('click', () => {
+        if (ok.disabled) return;
+        zamknij({ kod: wybrany.kod, komentarz: komentarz.value.trim() });
+      });
+      document.addEventListener('keydown', onKey, true);
+      document.body.appendChild(overlay);
+    });
+  }
+
+  // Pełna ścieżka: popup → POST /api/leady/stracony. Zwraca odpowiedź serwera
+  // ({ powod, wyceny_zamkniete, ... }) albo null, gdy handlowiec anulował.
+  // Rzuca przy błędzie zapisu — host pokazuje komunikat i cofa optymistyczny UI.
+  async function zamknijJakoStracony(apiBase, { telefon, idLeada, imie } = {}) {
+    const wybor = await zapytajOPowodStraty(apiBase, { imie });
+    if (!wybor) return null;
+    const res = await fetch(`${apiBase}/api/leady/stracony`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ telefon, idLeada, powod_kod: wybor.kod, komentarz: wybor.komentarz }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Błąd zapisu');
+    return body;
+  }
+
   // ── Cała karta ────────────────────────────────────────────────────────────
 
   // opts:
@@ -1005,6 +1171,8 @@ window.LeadKarta = (() => {
   //                    aktualizuje tym pigułki na zwiniętych case'ach
   //   onFeedbackDate — (stored "DD.MM.YYYY") po zmianie daty feedbacku —
   //                    host aktualizuje swój nagłówek wiersza
+  //   onStracony     — (telefonDigits, odpowiedź serwera) po domknięciu tematu
+  //                    z karty — host przestawia pigułkę statusu i wygasza case
   // Zwraca { el, setAkcja } — setAkcja pozwala hostowi wepchnąć zewnętrzną
   // zmianę akcji (np. edycję z pigułki) do już wyrenderowanej karty.
   function buildBody(lead, opts = {}) {
@@ -1094,6 +1262,23 @@ window.LeadKarta = (() => {
 
     ownerWrap.append(ownerBtn, ownerMenu);
     body.appendChild(ownerWrap);
+
+    // ── Baner "temat domknięty" (status Stracony + powód) ──
+    // Powód jest na samej górze karty, bo to pierwsza rzecz, którą trzeba
+    // wiedzieć przy oddzwonieniu do takiego numeru ("już go odpuściliśmy, bo…").
+    const straconyBaner = document.createElement('div');
+    straconyBaner.className = 'lk-stracony-baner';
+    const renderStraconyBaner = () => {
+      const jestStracony = String(lead['Deal stage'] || '').trim() === 'Stracony';
+      straconyBaner.hidden = !jestStracony;
+      if (!jestStracony) return;
+      const powod = String(lead['Powód stracenia'] || '').trim();
+      straconyBaner.textContent = powod
+        ? `🚫 Temat domknięty jako stracony — ${powod}`
+        : '🚫 Temat domknięty jako stracony (bez zapisanego powodu)';
+    };
+    renderStraconyBaner();
+    body.appendChild(straconyBaner);
 
     // ── Najbliższa akcja (z ptaszkiem "zrobione dziś") ──
     let currentAkcja = {
@@ -1368,8 +1553,53 @@ window.LeadKarta = (() => {
     const kontaktGrid = buildGrid(KONTAKT_FIELDS);
     const transakcjaGrid = buildGrid(TRANSAKCJA_FIELDS);
 
+    // ── "Zamknij temat" — ręczne domknięcie nierokującego klienta ──
+    // Osobny przycisk, a nie kolejna pozycja w rozwijanym statusie: to jedyna
+    // zmiana statusu, która czyści feedback, gasi watcha i domyka wycenę, więc
+    // ma wyglądać na decyzję, a nie na przestawienie pola.
+    const domknijSekcja = document.createElement('div');
+    domknijSekcja.className = 'lk-domknij-sekcja';
+    if (digits && !readOnly) {
+      const domknijBtn = document.createElement('button');
+      domknijBtn.type = 'button';
+      domknijBtn.className = 'lk-domknij-btn';
+      domknijBtn.textContent = '🚫 Zamknij temat (stracony)';
+      domknijBtn.title = 'Klient nierokujący — domknij z powodem';
+      domknijBtn.hidden = String(lead['Deal stage'] || '').trim() === 'Stracony';
+      domknijBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        domknijBtn.disabled = true;
+        try {
+          const wynik = await zamknijJakoStracony(apiBase, {
+            telefon: digits,
+            idLeada: lead['ID Leada'],
+            imie: lead['Name'] || '',
+          });
+          if (!wynik) return; // anulowane w popupie
+          lead['Deal stage'] = 'Stracony';
+          lead['Powód stracenia'] = wynik.powod;
+          lead['Data Feedbacku'] = null;
+          lead['Godzina Feedbacku'] = null;
+          renderStraconyBaner();
+          domknijBtn.hidden = true;
+          // Serwer wyczyścił akcję i feedback (RPC app_lead_stracony) — karta
+          // ma to pokazać od razu, bez F5.
+          applyAkcjaLocally(null);
+          ctx.feedbackSetters.forEach((fn) => fn(''));
+          ctx.godzinaFeedbackSetters.forEach((fn) => fn(''));
+          prependHistoriaLocally(`[Stracony] ${wynik.powod}`);
+          if (opts.onStracony) opts.onStracony(digits, wynik);
+        } catch (err) {
+          alert(`Nie domknięto tematu: ${err.message}`);
+        } finally {
+          domknijBtn.disabled = false;
+        }
+      });
+      domknijSekcja.appendChild(domknijBtn);
+    }
+
     if (digits && !readOnly) body.appendChild(notatkaSekcja);
-    body.append(akcjaWrap, opisWrap, historia, kontaktGrid, transakcjaGrid);
+    body.append(akcjaWrap, opisWrap, historia, kontaktGrid, transakcjaGrid, domknijSekcja);
 
     // Sekcja Wycena zawsze dostępna — w środku albo wycena z nowej tabeli
     // (format ze zdjęciami + edycja), albo przycisk "Utwórz wycenę".
@@ -1402,6 +1632,10 @@ window.LeadKarta = (() => {
   return {
     buildBody,
     saveField,
+    // Domknięcie tematu z powodem — pigułki statusu w CRM i w Backlogu wołają
+    // dokładnie to samo (popup + POST /api/leady/stracony).
+    zamknijJakoStracony,
+    zapytajOPowodStraty,
     utils: {
       parseAnyDate,
       // Parser kolumny "Historia rozmów" — używa go też shared/kontakt-panel.js

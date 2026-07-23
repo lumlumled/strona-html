@@ -7,6 +7,7 @@ const { getClient } = require('./supabase');
 const { registerLeadyEndpoints, NIE_TELEFON_ZRODLA } = require('../../shared/server/leady-endpoints');
 const { analyzeCall, statusRank, NO_ANSWER_ALLOWED_FROM, parseKwotaZlotych, isPlDateDue, addPlDays, czyZaopiekowaneDzis, przyszlosciowyRecall } = require('../../shared/server/call-analysis');
 const { zamknijWycenyStraconego } = require('../../shared/server/wyceny-sync');
+const { powodZRozmowy } = require('../../shared/server/stracony');
 const rozmowy = require('./rozmowy');
 const { registerWycenyEndpoints } = require('../../shared/server/wyceny-endpoints');
 const { createAuth, clientPayload, panelLinks, isAdmin } = require('../../shared/server/auth');
@@ -1124,9 +1125,21 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       // Tylko przy PRZEJŚCIU na "Stracony": lead już wcześniej stracony nie ma
       // po co znów przeorywać wycen przy każdym kolejnym telefonie.
       if (statusAfter === 'Stracony' && statusBefore !== 'Stracony') {
+        // Powód straty wyłapany przez AI z rozmowy — ta sama kolumna, którą
+        // wypełnia ręczne domknięcie (POST /api/leady/stracony). Osobny update
+        // zamiast RPC: dotyka wyłącznie "Powód stracenia", więc trigger
+        // log_zmian_from_leady nie ma na co zareagować i nie zdubluje wpisu.
+        const powod = powodZRozmowy(analysis && analysis.powod_straty);
+        if (powod) {
+          const { error: powodErr } = await supabase.from(LEADY_B2C_TABLE)
+            .update({ 'Powód stracenia': powod })
+            .eq('ID Leada', lead['ID Leada']);
+          if (powodErr) console.error('Nie zapisano powodu straty:', powodErr.message);
+        }
         const { ids } = await zamknijWycenyStraconego(supabase, {
           leadId: lead['ID Leada'],
           telefon: customerDigits,
+          powod,
         });
         if (ids.length) console.log(`Domknięto wyceny straconego leada: ${ids.join(', ')}`);
       }
@@ -1550,7 +1563,16 @@ app.get('/api/leady/nowe', async (req, res) => {
 // /api/leady/pelny, GET /api/leady/:telefon/historia|wycena) żyją we wspólnym
 // module apps/shared/server/leady-endpoints.js — te same ścieżki rejestruje
 // CRM, implementacja w jednym miejscu.
-registerLeadyEndpoints(app, { getClient });
+registerLeadyEndpoints(app, {
+  getClient,
+  // Ręczne domknięcie tematu (POST /api/leady/stracony) musi dotknąć też planu
+  // dnia — Umowa jest migawką z rana, więc bez tego case wisiałby do wieczora
+  // ze starym statusem i pustym ptaszkiem, jakby nic się nie stało.
+  onStracony: async (supabase, { telefon, status }) => {
+    await updateStatusInUmowa(supabase, telefon, status);
+    await markZamknieteInUmowa(supabase, telefon);
+  },
+});
 
 // Panel Kontakt na karcie leada — wiadomości komunikatora dopasowane do leada
 // (apps/shared/server/kontakt-endpoints.js). Bramka panelu już chroni.
@@ -1580,8 +1602,8 @@ registerWycenyEndpoints(app, {
   requireEdit: wycenyAllow,
   isAdmin,
   // Wycena oznaczona jako stracona domyka swojego leada — plan dnia (migawka
-  // z rana) musi wtedy dostać nowy status i ptaszek, żeby domknięty temat nie
-  // wisiał do wieczora jako case do dzwonienia.
+  // z rana) musi wtedy dostać nowy status i ptaszek, tak samo jak przy
+  // domknięciu od strony leada.
   onStracony: async (supabase, { telefon, status }) => {
     await updateStatusInUmowa(supabase, telefon, status);
     await markZamknieteInUmowa(supabase, telefon);

@@ -10,6 +10,12 @@
 window.KontaktPanel = (() => {
   'use strict';
 
+  // Wiersze "Log zmian", które NIE są rozmową telefoniczną — w osi czasu
+  // renderują się jak notatka (etykieta zamiast czasu połączenia). Kopia
+  // zbioru z apps/shared/server/leady-endpoints.js (NIE_TELEFON_ZRODLA) bez
+  // 'facebook_lead_webhook', który ma własną etykietę "nowy lead".
+  const NIE_ROZMOWA_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'manual_stracony', 'wycena_stracona']);
+
   const CHANNEL_LABELS = {
     email: '✉️ mail',
     sms: '📱 SMS',
@@ -60,7 +66,7 @@ window.KontaktPanel = (() => {
   // (ta sama logika co dotychczasowa Historia rozmów w lead-card.js).
   function itemsZLogZmian(rows, utils) {
     return (rows || []).map((row) => {
-      const jestNotatka = row.zrodlo === 'notatka_handlowca' || row.zrodlo === 'manual_akcja';
+      const jestNotatka = NIE_ROZMOWA_ZRODLA.has(row.zrodlo);
       const nieodebrane = row.disposition === 'no_answer';
       const tagi = [];
       if (row.zrodlo === 'facebook_lead_webhook') tagi.push('nowy lead');

@@ -3265,6 +3265,39 @@
             closeAllStatusMenus();
             if (opt === c.status) return;
             const previous = c.status;
+
+            // "Stracony" to domknięcie tematu, nie edycja pola w migawce planu:
+            // idzie POST-em /api/leady/stracony (powód z popupu + status na
+            // leadzie/kontakcie, wycena na "Stracone", watch zgaszony, feedback
+            // i akcja wyczyszczone), a serwer sam podmienia case w dzisiejszej
+            // Umowie (onStracony w server.js). Reszta statusów jak dotąd —
+            // saveLeadField dotyka wyłącznie dokumentu planu dnia.
+            if (opt === 'Stracony' && !isWycenaHistoryczna) {
+              try {
+                const wynik = await LeadKarta.zamknijJakoStracony(API_BASE, {
+                  telefon: c.telefon,
+                  idLeada: c.id_lida,
+                  imie: c.imie || '',
+                });
+                if (!wynik) return; // anulowane w popupie — status zostaje stary
+                c.status = opt;
+                c.powod_straty = wynik.powod;
+                c.data_feedbacku = '';
+                trigger.textContent = opt;
+                trigger.title = `Stracony — ${wynik.powod}`;
+                applyStatusColor(trigger, opt, statusColors);
+                menu.querySelectorAll('.status-option').forEach((el) => {
+                  el.classList.toggle('is-selected', el === optionBtn);
+                });
+                // Domknięty temat spada na dół listy jak każdy zaopiekowany
+                // case (serwer zapisał tę samą flagę w dokumencie planu).
+                if (c.lp !== undefined) setLeadClosed(c.lp, true);
+              } catch (err) {
+                alert(`Nie domknięto tematu: ${err.message}`);
+              }
+              return;
+            }
+
             trigger.textContent = opt;
             applyStatusColor(trigger, opt, statusColors);
             menu.querySelectorAll('.status-option').forEach((el) => {
@@ -3276,16 +3309,18 @@
               // Plan dnia to migawka z rana — sam zapis w dokumencie zostawiłby
               // leada ze starym statusem, a jutrzejszy plan zbudowałby się z
               // nieaktualnych danych. Pigułka ma modulować listę I odbijać się
-              // na leadzie (decyzja Antoniego 2026-07-23). Wybór "Stracony"
-              // domyka tą drogą także otwartą wycenę klienta — PUT /api/leady
-              // woła zamknijWycenyStraconego (patrz leady-endpoints.js).
+              // na leadzie (decyzja Antoniego 2026-07-23). "Stracony" nie
+              // przechodzi tędy — idzie osobną, pełną ścieżką wyżej.
               // Case z wyceny historycznej ma własny słownik statusów (Open/
               // Closed/...), który nie należy do lejka leada — nie dotykamy.
               // ID Leada: z case'a, a gdy go nie niesie (tak jest w priorytecie
               // dziś i w większości kategorii) — po telefonie z /api/leady/akcje.
-              // akcjeByPhone bywa jeszcze null (pierwsze sekundy po wejściu),
+              // Brak jednego i drugiego = case bez leada (np. sierota z wyceny),
               // wtedy zostaje sam zapis w dokumencie planu.
               if (!isWycenaHistoryczna) {
+                // akcjeByPhone bywa jeszcze null (pierwsze sekundy po wejściu,
+                // zanim wróci /api/leady/akcje) — wtedy po prostu nie mamy
+                // czym trafić w leada i zostaje sam zapis w dokumencie planu.
                 const zAkcji = akcjeByPhone && akcjeByPhone.get(normalizePhone(c.telefon));
                 const idLeada = c.id_lida || (zAkcji && zAkcji.id_leada);
                 if (idLeada) await putLeadField(idLeada, 'Deal stage', opt);
@@ -3420,6 +3455,20 @@
                 c.data_feedbacku = stored;
                 const input = lead.querySelector('summary .feedback-date-input');
                 if (input) input.value = toIsoDate(stored);
+              },
+              // Domknięcie tematu z karty — case ma od razu wyglądać na
+              // zamknięty (pigułka + ptaszek), bez czekania na F5.
+              onStracony: (digits, wynik) => {
+                c.status = 'Stracony';
+                c.powod_straty = wynik.powod;
+                c.data_feedbacku = '';
+                const tag = lead.querySelector('summary .status-tag');
+                if (tag) {
+                  tag.textContent = 'Stracony';
+                  tag.title = `Stracony — ${wynik.powod}`;
+                  applyStatusColor(tag, 'Stracony', statusColors);
+                }
+                if (c.lp !== undefined) setLeadClosed(c.lp, true);
               },
             });
             // Karta ma własny border-top/padding (.lk-lead-body) — wrapper
@@ -4046,7 +4095,7 @@
     // Wpisy Log zmian, które NIE są telefonami (mirror NIE_TELEFON_ZRODLA z
     // backendu) — nie liczą się do "Zadzwoniono dziś" i nie są renderowane jako
     // rozmowa. facebook_lead_webhook to moment wpadnięcia nowego leada.
-    const NIE_TELEFON_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'facebook_lead_webhook']);
+    const NIE_TELEFON_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'manual_stracony', 'wycena_stracona', 'facebook_lead_webhook']);
 
     function polaczenieKierunekLabel(row) {
       if (row.zrodlo === 'notatka_handlowca') return 'notatka';

@@ -50,6 +50,16 @@ Klient JEDNOZNACZNIE odmawia: rezygnuje, cena za wysoka i nie chce negocjować, 
 Niepewny → "Po pierwszym tel".
 Jeśli pasuje kilka statusów → wybierz najdalej zaawansowany wg powyższej logiki.
 
+===== ZASADY powod_straty =====
+Wypełnij WYŁĄCZNIE gdy status = "Stracony". Przy każdym innym statusie → null.
+Krótko (max 6-8 słów), konkretnie, z tego co PADŁO w rozmowie — to ma być
+odpowiedź na pytanie "dlaczego go straciliśmy", czytana za pół roku:
+- "Za drogo, ma ofertę 3300 od elektryka"
+- "Kupił u konkurencji"
+- "Rezygnuje z LED-ów w tym remoncie"
+NIE zgaduj i nie moralizuj ("klient niezdecydowany" to nie powód). Gdy klient
+odmówił bez podania przyczyny → "Odmowa bez podania powodu".
+
 ===== ZASADY data_feedbacku =====
 Data feedbacku to WYŁĄCZNIE termin kolejnego kontaktu telefonicznego lub umówionej rozmowy.
 NIE jest to data żadnego innego zdarzenia jak koniec budowy, odbiór mieszkania, start remontu.
@@ -261,6 +271,7 @@ Prawdziwa, choćby krótka wymiana zdań z klientem → false.
 ===== FORMAT WYJŚCIOWY =====
 {
   "status": "",
+  "powod_straty": "max 6-8 słów lub null (tylko dla statusu Stracony)",
   "data_feedbacku": "DD.MM.YYYY lub null",
   "godzina_feedbacku": "HH:MM lub null",
   "opis": "",
@@ -312,7 +323,7 @@ async function analyzeCall(transcript, { kierunek, dzisiaj, poprzedniOpis, poprz
   // false znaczy "AI stwierdziła, że coś zostało na dziś"; padnięta analiza
   // nie może udawać takiego stwierdzenia. Boolean(...) w Log zmian daje z tego
   // false jak dotąd, więc kolumna boolean nie zobaczy różnicy.
-  const fallback = { status: null, data_feedbacku: null, godzina_feedbacku: null, opis: transcript ? transcript.slice(0, 200) : null, skrocony_opis: null, produkty: '', cena_zaproponowana: null, jakosc_leada: null, uzasadnienie_jakosci: '', zamkniete_dzis: null, najblizsza_akcja: null, najblizsza_akcja_termin: null, poczta_glosowa: false };
+  const fallback = { status: null, powod_straty: null, data_feedbacku: null, godzina_feedbacku: null, opis: transcript ? transcript.slice(0, 200) : null, skrocony_opis: null, produkty: '', cena_zaproponowana: null, jakosc_leada: null, uzasadnienie_jakosci: '', zamkniete_dzis: null, najblizsza_akcja: null, najblizsza_akcja_termin: null, poczta_glosowa: false };
   if (!OPENAI_API_KEY || !transcript) return fallback;
   try {
     const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {

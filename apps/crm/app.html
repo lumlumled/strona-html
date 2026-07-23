@@ -853,6 +853,33 @@
           menu.classList.remove('open');
           wrap.closest('.lead').classList.remove('status-menu-open');
           const prev = tag.textContent;
+
+          // "Stracony" NIE jest zwykłą zmianą pola: domknięcie tematu wymaga
+          // powodu (popup) i pociąga za sobą wycenę, jej watcha, feedback i
+          // najbliższą akcję — całość robi POST /api/leady/stracony przez
+          // wspólne LeadKarta.zamknijJakoStracony (to samo woła Backlog).
+          if (status === 'Stracony') {
+            try {
+              const wynik = await LeadKarta.zamknijJakoStracony(API_BASE, {
+                telefon: lead['Phone number'],
+                idLeada: lead['ID Leada'],
+                imie: lead['Name'] || '',
+              });
+              if (!wynik) return; // anulowane w popupie — status zostaje stary
+              lead['Deal stage'] = 'Stracony';
+              lead['Powód stracenia'] = wynik.powod;
+              lead['Data Feedbacku'] = null;
+              lead['Godzina Feedbacku'] = null;
+              lead['Najbliższa akcja'] = null;
+              tag.textContent = status;
+              tag.title = `Stracony — ${wynik.powod}`;
+              applyStatusColor(tag, status);
+            } catch (err) {
+              alert(`Nie domknięto tematu: ${err.message}`);
+            }
+            return;
+          }
+
           tag.textContent = status;
           applyStatusColor(tag, status);
           try {
@@ -959,6 +986,18 @@
         onFeedbackDate: (stored) => {
           feedback.textContent = stored ? `Data feedbacku: ${formatDateOnly(stored)}` : '';
           feedback.classList.toggle('is-overdue', isOverdue(stored));
+        },
+        // Domknięcie tematu z karty — pigułka statusu i data feedbacku w
+        // nagłówku wiersza mają to pokazać od razu (serwer wyczyścił termin).
+        onStracony: (digits, wynik) => {
+          const tag = statusPill.querySelector('.status-tag');
+          if (tag) {
+            tag.textContent = 'Stracony';
+            tag.title = `Stracony — ${wynik.powod}`;
+            applyStatusColor(tag, 'Stracony');
+          }
+          feedback.textContent = '';
+          feedback.classList.remove('is-overdue');
         },
       });
 
@@ -1097,6 +1136,29 @@
           menu.classList.remove('open');
           wrap.closest('.lead').classList.remove('status-menu-open');
           const prev = row.status;
+
+          // Ta sama reguła co na liście leadów: "Stracony" wymaga powodu.
+          // Numer z kontakty_organic domyka POST /api/leady/stracony (znajduje
+          // kontakt po telefonie); wiersze komunikatora nie mają telefonu ani
+          // wiersza w kontakty_organic, więc lecą starą ścieżką.
+          if (status === 'Stracony' && row.kontakt_id && row._telefon_formatted) {
+            try {
+              const wynik = await LeadKarta.zamknijJakoStracony(API_BASE, {
+                telefon: row._telefon_formatted,
+                imie: row.imie || '',
+              });
+              if (!wynik) return;
+              row.status = status;
+              row.powod_straty = wynik.powod;
+              tag.textContent = status;
+              tag.title = `Stracony — ${wynik.powod}`;
+              applyStatusColor(tag, status);
+            } catch (err) {
+              alert(`Nie domknięto tematu: ${err.message}`);
+            }
+            return;
+          }
+
           row.status = status;
           tag.textContent = status;
           applyStatusColor(tag, status);

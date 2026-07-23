@@ -11,6 +11,12 @@
 window.WycenaKarta = (() => {
   'use strict';
 
+  // Wiersze "Log zmian", które NIE są rozmową telefoniczną — w osi czasu
+  // renderują się jak notatka (etykieta zamiast czasu połączenia). Kopia
+  // zbioru z apps/shared/server/leady-endpoints.js (NIE_TELEFON_ZRODLA) bez
+  // 'facebook_lead_webhook', który ma własną etykietę "nowy lead".
+  const NIE_ROZMOWA_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'manual_stracony', 'wycena_stracona']);
+
   // Baza publicznych linków PDF (etykieta/faktura) — funkcja formularza,
   // ten sam origin co panele na prod (lumlum.dev). Nadpisywalne globalną
   // window.PUBLIC_PDF_BASE (np. inny port w dev).
@@ -904,7 +910,7 @@ window.WycenaKarta = (() => {
       const head = el('div', 'wk-rozmowa-head');
       head.appendChild(callDot(row));
       head.appendChild(el('span', 'wk-rozmowa-time', formatDT(row.data_zmiany)));
-      const jestNotatka = row.zrodlo === 'notatka_handlowca' || row.zrodlo === 'manual_akcja';
+      const jestNotatka = NIE_ROZMOWA_ZRODLA.has(row.zrodlo);
       if (row.zrodlo === 'facebook_lead_webhook') {
         // Wpadnięcie leada, nie rozmowa — czytelna etykieta zamiast pustki/czasu.
         head.appendChild(el('span', 'wk-rozmowa-tag', 'nowy lead'));

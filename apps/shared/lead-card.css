@@ -658,3 +658,164 @@ table.lk-produkty th { color: var(--text-muted); font-weight: 600; text-transfor
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* ── Domknięcie tematu: "Stracony" + powód ─────────────────────────────────
+   Popup wymusza powód (decyzja Antoniego 2026-07-23) — bez niego nie da się
+   po miesiącach odpowiedzieć, z czego tracimy. Overlay renderuje się w
+   document.body, więc styl musi być niezależny od kontekstu karty. */
+
+.lk-stracony-baner {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--feedback-overdue, #b5433f);
+  background: color-mix(in srgb, var(--feedback-overdue, #b5433f) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--feedback-overdue, #b5433f) 35%, transparent);
+  border-radius: 10px;
+  padding: 0.4rem 0.6rem;
+}
+
+.lk-stracony-baner[hidden] { display: none; }
+
+.lk-domknij-sekcja { display: flex; justify-content: flex-end; }
+
+.lk-domknij-btn {
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.25rem 0.75rem;
+  cursor: pointer;
+}
+
+.lk-domknij-btn:hover {
+  color: var(--feedback-overdue, #b5433f);
+  border-color: color-mix(in srgb, var(--feedback-overdue, #b5433f) 50%, transparent);
+}
+
+.lk-domknij-btn[hidden] { display: none; }
+.lk-domknij-btn:disabled { opacity: 0.5; cursor: default; }
+
+.lk-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.lk-modal {
+  width: min(30rem, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1rem;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+}
+
+.lk-modal-title { font-size: 1rem; font-weight: 700; }
+.lk-modal-sub { font-size: 0.8rem; color: var(--text-muted); }
+
+.lk-powody { display: flex; flex-direction: column; gap: 0.35rem; }
+
+.lk-powod {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  text-align: left;
+  font: inherit;
+  color: var(--text-primary);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.5rem 0.6rem;
+  cursor: pointer;
+}
+
+.lk-powod:hover { background: var(--accent-soft); }
+
+.lk-powod.is-selected {
+  border-color: var(--feedback-overdue, #b5433f);
+  background: color-mix(in srgb, var(--feedback-overdue, #b5433f) 10%, transparent);
+}
+
+.lk-powod-emoji { font-size: 1.1rem; line-height: 1; }
+.lk-powod-tekst { display: flex; flex-direction: column; gap: 0.1rem; }
+.lk-powod-label { font-size: 0.85rem; font-weight: 600; }
+.lk-powod-opis { font-size: 0.72rem; color: var(--text-muted); }
+
+.lk-powod-komentarz-row { display: flex; align-items: flex-start; gap: 0.3rem; }
+
+.lk-powod-komentarz {
+  flex: 1;
+  font: inherit;
+  font-size: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  padding: 0.5rem 0.6rem;
+  resize: vertical;
+}
+
+.lk-powod-komentarz-row .lk-notatka-mic {
+  font: inherit;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  padding: 0.4rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+
+.lk-powod-komentarz-row .lk-notatka-mic.recording { color: var(--feedback-overdue, #b5433f); }
+
+.lk-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.lk-modal-actions .lk-notatka-msg { margin-right: auto; }
+
+.lk-modal-cancel {
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  cursor: pointer;
+}
+
+.lk-modal-ok {
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #ffffff;
+  background: var(--feedback-overdue, #b5433f);
+  border: none;
+  border-radius: 999px;
+  padding: 0.35rem 0.9rem;
+  cursor: pointer;
+}
+
+.lk-modal-ok:disabled { opacity: 0.45; cursor: default; }

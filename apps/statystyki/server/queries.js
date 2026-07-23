@@ -10,7 +10,9 @@ const LOG = 'Log zmian';
 // Źródła w "Log zmian", które NIE są telefonami (src of truth:
 // apps/shared/server/leady-endpoints.js). Telefon = wiersz spoza tego zbioru.
 // facebook_lead_webhook = wpis "powstał nowy lead", nie połączenie.
-const NIE_TELEFON_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'facebook_lead_webhook']);
+// manual_stracony / wycena_stracona = ręczne domknięcie tematu z powodem
+// (i jego odbicie od strony wyceny) — decyzja handlowca, nie rozmowa.
+const NIE_TELEFON_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'manual_stracony', 'wycena_stracona', 'facebook_lead_webhook']);
 
 // Statusy leada, które są "domknięte/martwe" — nie licz jako aktywny lejek.
 const LEAD_ZAMKNIETE = new Set(['Sprzedane', 'Stracony', 'Błędne dane']);
