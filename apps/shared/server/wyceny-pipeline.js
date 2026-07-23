@@ -249,8 +249,10 @@ async function zapiszBlad(db, id, step, err) {
 
 // Przesyłka ShipX + polling trackingu (ShipX potwierdza ofertę asynchronicznie,
 // zwykle w sekundy). kind: 'order' | 'reship'.
-async function krokPrzesylka(db, wycena, { codAmount, insuranceAmount, kind = 'order' }) {
-  const locker = jestLocker(wycena);
+// `locker` (opcjonalne) nadpisuje wykrywanie paczkomatu z danych wyceny —
+// używa go panel dosyłki, gdzie handlowiec przełącza paczkomat <-> adres.
+async function krokPrzesylka(db, wycena, { codAmount, insuranceAmount, kind = 'order', locker: lockerOverride }) {
+  const locker = lockerOverride === undefined ? jestLocker(wycena) : Boolean(lockerOverride);
   const created = await shipx.createShipment(wycena, {
     locker,
     codAmount,
@@ -830,22 +832,57 @@ async function onDelivered(db, shipment) {
 // "Zamów kuriera ponownie" — nowa przesyłka na te same dane, bez faktury
 // i bez zmiany statusów (dosyłka/reklamacja). overrides z panelu:
 //   codAmount: number|null  — kwota pobrania (null = bez pobrania),
-//   email:     string|null  — nadpisany e-mail odbiorcy.
-// Klonujemy wycenę z podmienionym e-mailem (createShipment czyta wycena.email),
+//   email:     string|null  — nadpisany e-mail odbiorcy,
+//   delivery:  'locker' | 'address' | null — sposób dostawy dosyłki (null =
+//              jak w oryginale), a przy nim dane celu: punktOdbioru albo
+//              street/houseNo/flatNo/postcode/city.
+// Klonujemy wycenę z podmienionymi danymi (createShipment czyta wycena.*),
 // żeby NIE ruszać rekordu zamówienia — dosyłka nie zmienia danych w bazie.
+// Typowy przypadek: paczka szła do paczkomatu, dosyłka ma iść pod adres
+// domowy, który klient podał przy reklamacji.
 async function reship(db, wycenaId, overrides = {}) {
   const wycena = await loadWycena(db, wycenaId);
   if (!wycena) throw new Error('Nie znaleziono wyceny');
-  const w = overrides.email ? { ...wycena, email: overrides.email } : wycena;
+  const w = { ...wycena };
+  if (overrides.email) w.email = overrides.email;
   const codAmount = (overrides.codAmount != null && Number.isFinite(Number(overrides.codAmount)))
     ? Number(overrides.codAmount) : null;
+
+  const txt = (v) => (v == null ? '' : String(v).trim());
+  let locker;
+  if (overrides.delivery === 'locker') {
+    const kod = txt(overrides.punktOdbioru);
+    if (!kod) throw new Error('Podaj kod paczkomatu (np. WAW201M).');
+    locker = true;
+    w.punkt_odbioru = kod;
+    // punkt_odbioru_ID ma pierwszeństwo w ShipX — sam kod, bez adresu po
+    // spacji/przecinku (to samo cięcie co w wyceny-shipx).
+    w.punkt_odbioru_ID = kod.split(/[\s,]+/)[0];
+  } else if (overrides.delivery === 'address') {
+    const street = txt(overrides.street);
+    const postcode = txt(overrides.postcode);
+    const city = txt(overrides.city);
+    if (!street || !postcode || !city) throw new Error('Adres dosyłki wymaga ulicy, kodu pocztowego i miasta.');
+    locker = false;
+    // Czyścimy paczkomat w KLONIE, żeby jestLocker/target_point nie wróciły
+    // do starego punktu odbioru (w bazie zamówienia zostaje bez zmian).
+    w.punkt_odbioru = '';
+    w.punkt_odbioru_ID = '';
+    w.ship_street = street;
+    w.ship_house_no = txt(overrides.houseNo);
+    w.ship_flat_no = txt(overrides.flatNo);
+    w.ship_postcode = postcode;
+    w.ship_city = city;
+  }
+
   if (jestFurgonetka(w)) {
     if (wymagaCla(w)) throw new Error('Dosyłka poza UE wymaga danych celnych — zamów ręcznie w panelu Furgonetki.');
+    if (locker) throw new Error('Paczkomat jest tylko dla dostaw w Polsce — dla zagranicy wybierz adres.');
     return krokPrzesylkaFurgonetka(db, w, { kind: 'reship' });
   }
   // Ubezpieczenie jak w głównym pipeline COD (cod == insurance == kwota);
   // bez pobrania — bez ubezpieczenia, jak dawniej.
-  return krokPrzesylka(db, w, { codAmount, insuranceAmount: codAmount, kind: 'reship' });
+  return krokPrzesylka(db, w, { codAmount, insuranceAmount: codAmount, kind: 'reship', locker });
 }
 
 // ── Worker (pg_cron -> POST /formularz/api/cron/worker) ─────────────────────

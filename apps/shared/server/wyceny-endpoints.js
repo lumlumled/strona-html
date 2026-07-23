@@ -898,9 +898,10 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
 
   // POST /api/wyceny/:id/reship — "Zamów kuriera ponownie": nowa przesyłka
   // ShipX na te same dane, BEZ faktury i bez zmiany statusów (kind 'reship').
-  // Body (opcjonalne, z panelu): { codAmount: number|null, email: string|null }
-  // — nadpisania parametrów paczki. Brak body => zachowanie jak dawniej
-  // (bez pobrania, e-mail z zamówienia).
+  // Body (opcjonalne, z panelu): { codAmount, email, delivery: 'locker'|
+  // 'address', punktOdbioru | street/houseNo/flatNo/postcode/city } —
+  // nadpisania parametrów paczki. Brak body => zachowanie jak dawniej
+  // (bez pobrania, e-mail i cel dostawy z zamówienia).
   app.post('/api/wyceny/:id(\\d+)/reship', requireEdit, async (req, res) => {
     try {
       const id = Number(req.params.id);
@@ -916,10 +917,64 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
           return res.status(400).json({ error: 'Kwota pobrania musi być liczbą > 0' });
         }
       }
-      const overrides = { codAmount, email: body.email ? String(body.email).trim() : null };
+      const str = (v) => (v == null ? null : String(v).trim() || null);
+      const delivery = body.delivery === 'locker' || body.delivery === 'address' ? body.delivery : null;
+      if (delivery === 'locker' && !str(body.punktOdbioru)) {
+        return res.status(400).json({ error: 'Podaj kod paczkomatu (np. WAW201M)' });
+      }
+      if (delivery === 'address' && !(str(body.street) && str(body.postcode) && str(body.city))) {
+        return res.status(400).json({ error: 'Adres dosyłki wymaga ulicy, kodu pocztowego i miasta' });
+      }
+      const overrides = {
+        codAmount,
+        email: str(body.email),
+        delivery,
+        punktOdbioru: str(body.punktOdbioru),
+        street: str(body.street),
+        houseNo: str(body.houseNo),
+        flatNo: str(body.flatNo),
+        postcode: str(body.postcode),
+        city: str(body.city),
+      };
       const { reship } = require('./wyceny-pipeline');
       const shipment = await reship(supabase, id, overrides);
       res.json({ data: shipment });
+    } catch (err) {
+      handleError(res, err, 502);
+    }
+  });
+
+  // POST /api/wyceny/shipment/:shipmentId/etykieta-wydrukowana — to samo, co
+  // „Drukuj etykietę" w Fulfillmencie, ale dla KONKRETNEJ przesyłki (po id
+  // ShipX/Furgonetki), więc działa też dla dosyłek — te nie wchodzą do kolejki
+  // fulfillmentu, a kuriera po nie ktoś zamówić musi. Znacznik label_printed_at
+  // + zlecenie odbioru raz dziennie (zamowKuriera pilnuje idempotencji).
+  app.post('/api/wyceny/shipment/:shipmentId/etykieta-wydrukowana', requireEdit, async (req, res) => {
+    try {
+      const shipmentId = String(req.params.shipmentId);
+      const supabase = getClient();
+      const { data, error } = await supabase.from('wyceny_shipments')
+        .select('*').eq('shipment_id', shipmentId).limit(1);
+      if (error) throw error;
+      const ship = (data || [])[0];
+      if (!ship) return res.status(404).json({ error: 'Nie znaleziono przesyłki' });
+      if (!ship.label_printed_at) {
+        const nowIso = new Date().toISOString();
+        await supabase.from('wyceny_shipments')
+          .update({ label_printed_at: nowIso, updated_at: nowIso }).eq('id', ship.id);
+        await logEvent(supabase, ship.wycena_id, 'label.printed', {
+          user: req.user && req.user.name, shipment_id: ship.shipment_id, kind: ship.kind,
+        });
+      }
+      let kurier = null;
+      try {
+        const { zamowKuriera } = require('./fulfillment-endpoints');
+        kurier = await zamowKuriera(supabase, { user: req.user && req.user.name });
+      } catch (err) {
+        console.error('Etykieta / kurier:', err);
+        kurier = { dispatch: 'blad', error: err.message };
+      }
+      res.json({ ok: true, kurier });
     } catch (err) {
       handleError(res, err, 502);
     }

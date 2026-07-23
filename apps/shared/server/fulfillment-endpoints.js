@@ -561,4 +561,6 @@ function registerFulfillmentEndpoints(app, { getClient, requireAdmin }) {
   });
 }
 
-module.exports = { registerFulfillmentEndpoints, bucketOf };
+// zamowKuriera eksportowane też dla druku etykiety z karty wyceny (dosyłki nie
+// przechodzą przez kolejkę fulfillmentu — patrz wyceny-endpoints).
+module.exports = { registerFulfillmentEndpoints, bucketOf, zamowKuriera };

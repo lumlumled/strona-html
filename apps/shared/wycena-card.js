@@ -375,6 +375,61 @@ window.WycenaKarta = (() => {
     return wrap;
   }
 
+  // ── Druk etykiety (ta sama mechanika co w panelu Fulfillment) ──────────────
+  // Na MOBILE natywny share sheet (iOS → Drukuj/AirPrint), na komputerze nowa
+  // karta z PDF-em i Cmd+P — macOS nie ma „Drukuj" w share sheecie (decyzja
+  // Antoniego 2026-07-14). iPad w Safari udaje Maca, stąd maxTouchPoints.
+  const MOBILE = typeof navigator !== 'undefined'
+    && (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+      || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
+
+  // Znacznik „wydrukowana" + zlecenie odbioru kuriera (serwer, raz dziennie)
+  // leci w tle: iOS otwiera share sheet tylko zaraz po geście użytkownika.
+  async function printLabel(href, { apiBase, shipmentId, name }) {
+    const res = await fetch(href);
+    if (res.status === 401) { window.location.href = `${apiBase || ''}/login`; return; }
+    if (!res.ok) throw new Error(`Etykieta: błąd ${res.status}`);
+    const blob = await res.blob();
+    if (shipmentId) {
+      fetch(`${apiBase || ''}/api/wyceny/shipment/${encodeURIComponent(shipmentId)}/etykieta-wydrukowana`,
+        { method: 'POST' }).catch(() => {});
+    }
+    const file = new File([blob], name || 'etykieta.pdf', { type: 'application/pdf' });
+    if (MOBILE && navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file] });
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank', 'noopener');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
+  // Przycisk „Drukuj etykietę". Zewnętrzne label_url (stary import) zostają
+  // zwykłym linkiem — fetch cross-origin i tak by nie przeszedł.
+  function labelButton(href, opts, shipmentId, label) {
+    if (/^https?:\/\//i.test(href)) {
+      const a = el('a', '', label || 'Etykieta');
+      a.href = href;
+      a.target = '_blank';
+      return a;
+    }
+    const btn = el('button', 'wk-btn wk-btn--slim', label || 'Drukuj etykietę');
+    btn.type = 'button';
+    btn.addEventListener('click', async () => {
+      const prev = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '…';
+      try {
+        await printLabel(href, { apiBase: opts.apiBase, shipmentId, name: `etykieta-${shipmentId || 'przesylka'}.pdf` });
+      } catch (err) {
+        if (!err || err.name !== 'AbortError') alert((err && err.message) || 'Nie udało się pobrać etykiety');
+      }
+      btn.disabled = false;
+      btn.textContent = prev;
+    });
+    return btn;
+  }
+
   // ── Sekcja: realizacja (przesyłki + faktury) ───────────────────────────────
   function buildPipeline(wycena, opts) {
     const wrap = el('div');
@@ -464,12 +519,7 @@ window.WycenaKarta = (() => {
             ? `${PUBLIC_PDF_BASE}/api/etykieta/${s.shipment_id}?t=${encodeURIComponent(wycena.form_token)}`
             : `${opts.apiBase || ''}/api/wyceny/label/${s.shipment_id}`)
           : null);
-      if (labelHref) {
-        const a = el('a', '', 'Etykieta');
-        a.href = labelHref;
-        a.target = '_blank';
-        links.appendChild(a);
-      }
+      if (labelHref) links.appendChild(labelButton(labelHref, opts, s.shipment_id, 'Drukuj etykietę'));
       row.appendChild(links);
       list.appendChild(row);
     });
@@ -559,14 +609,18 @@ window.WycenaKarta = (() => {
 
   // Panel "Zamów kuriera ponownie" — nowa przesyłka na te same dane, ale z
   // możliwością edycji poszczególnych parametrów przed nadaniem. Domyślnie
-  // WSZYSTKO jak w oryginale: pobranie i kwota podstawiane z poprzedniej
-  // przesyłki (max cod_amount) albo — gdy tamta była bez pobrania — z kwoty
-  // „Do zapłaty"; e-mail z danych zamówienia. Typowy przypadek: paczka była
-  // pobraniowa, dosyłka ma być bez pobrania — wystarczy odznaczyć checkbox.
+  // WSZYSTKO jak w oryginale: sposób dostawy (paczkomat/adres) i jego dane
+  // z zamówienia, pobranie i kwota z poprzedniej przesyłki (max cod_amount)
+  // albo — gdy tamta była bez pobrania — z kwoty „Do zapłaty"; e-mail z danych
+  // zamówienia. Typowe przypadki: paczka była pobraniowa, a dosyłka ma być bez
+  // pobrania (odznacz checkbox); paczka szła do paczkomatu, a dosyłka ma iść
+  // pod adres podany przy reklamacji (przełącz sposób dostawy).
   function openReshipModal(wycena, opts) {
     const prevCod = Math.max(0, ...(wycena._shipments || []).map((s) => Number(s.cod_amount) || 0), 0);
     const fallbackKwota = Number(wycena._cena_finalna ?? wycena.kwota_proponowana_brutto ?? wycena._suma_pozycji) || 0;
     const defaultCod = prevCod > 0 ? prevCod : fallbackKwota;
+    const zagranica = Boolean(wycena.ship_country && String(wycena.ship_country).toUpperCase() !== 'PL');
+    const maPaczkomat = String(wycena.punkt_odbioru || '').replace(/[,\s]/g, '').length > 3;
 
     const backdrop = el('div', 'wk-modal-backdrop');
     const modal = el('div', 'wk-modal');
@@ -580,6 +634,73 @@ window.WycenaKarta = (() => {
     const hint = el('div', 'wk-pipe-sub', 'Nowa przesyłka na te same dane (bez faktury, bez zmiany statusów). Zmień tylko to, co trzeba.');
     hint.style.marginBottom = '0.75rem';
     modal.appendChild(hint);
+
+    // ── Sposób dostawy ──────────────────────────────────────────────────────
+    // Paczkomat vs kurier na adres. Domyślnie jak w oryginale, ale oba warianty
+    // mają wypełnione pola (adres bywa podany nawet przy dostawie do paczkomatu
+    // — wtedy przełączenie to jeden klik). Zagranica idzie przez Furgonetkę,
+    // która paczkomatów nie ma — tam wybór się nie pokazuje.
+    const wayRow = el('div', 'wk-actions');
+    wayRow.style.marginBottom = '0.15rem';
+    const lockerRadio = document.createElement('input');
+    const addressRadio = document.createElement('input');
+    [lockerRadio, addressRadio].forEach((r) => { r.type = 'radio'; r.name = `wk-reship-way-${wycena.id}`; });
+    lockerRadio.checked = maPaczkomat && !zagranica;
+    addressRadio.checked = !lockerRadio.checked;
+    if (!zagranica) {
+      const mkWay = (input, label) => {
+        const l = el('label', '');
+        l.style.cssText = 'display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;font-weight:600;cursor:pointer;';
+        l.append(input, el('span', '', label));
+        return l;
+      };
+      wayRow.append(
+        el('span', 'wk-note', 'Dostawa:'),
+        mkWay(lockerRadio, 'Paczkomat'),
+        mkWay(addressRadio, 'Kurier na adres')
+      );
+      modal.appendChild(wayRow);
+    }
+
+    // Paczkomat: kod (ShipX bierze pierwszy token, więc sklejka "KOD — adres"
+    // z formularza też jest OK).
+    const lockerField = el('div', 'wk-field');
+    lockerField.style.margin = '0.4rem 0 0.75rem';
+    lockerField.appendChild(el('label', '', 'Kod paczkomatu'));
+    const lockerInput = document.createElement('input');
+    lockerInput.value = wycena.punkt_odbioru_ID || wycena.punkt_odbioru || '';
+    lockerInput.placeholder = 'np. WAW201M';
+    lockerField.appendChild(lockerInput);
+    modal.appendChild(lockerField);
+
+    // Adres kurierski — wypełniony danymi z zamówienia, jeśli klient je podał.
+    const addrGrid = el('div', 'wk-form-grid');
+    addrGrid.style.margin = '0.4rem 0 0.75rem';
+    const addrInput = (label, value, placeholder) => {
+      const f = el('div', 'wk-field');
+      f.appendChild(el('label', '', label));
+      const i = document.createElement('input');
+      i.value = value || '';
+      if (placeholder) i.placeholder = placeholder;
+      f.appendChild(i);
+      addrGrid.appendChild(f);
+      return i;
+    };
+    const streetInput = addrInput('Ulica', wycena.ship_street, 'ulica');
+    const houseInput = addrInput('Nr domu', wycena.ship_house_no, 'nr');
+    const flatInput = addrInput('Nr lokalu', wycena.ship_flat_no, 'opcjonalnie');
+    const postcodeInput = addrInput('Kod pocztowy', wycena.ship_postcode, '00-000');
+    const cityInput = addrInput('Miasto', wycena.ship_city, 'miasto');
+    modal.appendChild(addrGrid);
+
+    const syncWay = () => {
+      const locker = lockerRadio.checked;
+      lockerField.style.display = locker ? '' : 'none';
+      addrGrid.style.display = locker ? 'none' : '';
+    };
+    lockerRadio.addEventListener('change', syncWay);
+    addressRadio.addEventListener('change', syncWay);
+    syncWay();
 
     // Pobranie (COD) — checkbox + kwota. Odznaczenie = przesyłka bez pobrania.
     const codRow = el('label', '');
@@ -630,10 +751,67 @@ window.WycenaKarta = (() => {
     cancel.addEventListener('click', destroy);
     backdrop.addEventListener('click', (e) => { if (e.target === backdrop) destroy(); });
 
+    // Po nadaniu NIE zamykamy panelu od razu — pokazujemy potwierdzenie z
+    // przyciskiem „Drukuj etykietę". Druk wymaga świeżego kliknięcia
+    // (share sheet na iOS otwiera się tylko z gestu użytkownika), a od razu po
+    // nadaniu to najkrótsza droga: zamów → wydrukuj → paczka gotowa.
+    function pokazGotowe(shipment) {
+      [wayRow, lockerField, addrGrid, codRow, codField, emailField, actionsRow, hint]
+        .forEach((n) => { if (n && n.parentNode) n.remove(); });
+      const ok = el('div', '');
+      ok.style.cssText = 'font-size:0.9rem;font-weight:600;';
+      ok.textContent = 'Dosyłka utworzona ✓';
+      modal.appendChild(ok);
+      const sub = [];
+      if (shipment && shipment.tracking_number) sub.push(`nr ${shipment.tracking_number}`);
+      if (shipment && shipment.cod_amount) sub.push(`pobranie ${moneyPLN(shipment.cod_amount)}`);
+      sub.push(lockerRadio.checked && !zagranica ? 'paczkomat' : 'kurier na adres');
+      modal.appendChild(el('div', 'wk-pipe-sub', sub.join(' · ')));
+
+      const doneRow = el('div', 'wk-modal-actions');
+      const doneErr = el('span', 'wk-error');
+      if (shipment && shipment.shipment_id) {
+        const print = el('button', 'wk-btn primary', 'Drukuj etykietę');
+        print.type = 'button';
+        print.addEventListener('click', async () => {
+          doneErr.textContent = '';
+          print.disabled = true;
+          print.textContent = '…';
+          try {
+            await printLabel(`${opts.apiBase || ''}/api/wyceny/label/${shipment.shipment_id}`, {
+              apiBase: opts.apiBase,
+              shipmentId: shipment.shipment_id,
+              name: `etykieta-${shipment.shipment_id}.pdf`,
+            });
+          } catch (e2) {
+            if (!e2 || e2.name !== 'AbortError') {
+              doneErr.textContent = `${(e2 && e2.message) || 'Nie udało się pobrać etykiety'} — jeśli przewoźnik jeszcze potwierdza przesyłkę, spróbuj za chwilę z karty.`;
+            }
+          }
+          print.disabled = false;
+          print.textContent = 'Drukuj etykietę';
+        });
+        doneRow.append(doneErr, print);
+      } else {
+        doneRow.appendChild(el('span', 'wk-pipe-sub', 'Etykieta pojawi się na karcie, gdy przewoźnik potwierdzi przesyłkę.'));
+      }
+      const zamknij = el('button', 'wk-btn', 'Zamknij');
+      zamknij.type = 'button';
+      zamknij.addEventListener('click', destroy);
+      doneRow.appendChild(zamknij);
+      modal.appendChild(doneRow);
+    }
+
     submit.addEventListener('click', async () => {
       const cod = codCheck.checked;
       const amount = Number(String(codAmountInput.value).replace(',', '.'));
       if (cod && !(amount > 0)) { err.textContent = 'Podaj kwotę pobrania (lub odznacz „Za pobraniem").'; return; }
+      const locker = lockerRadio.checked && !zagranica;
+      if (locker && !lockerInput.value.trim()) { err.textContent = 'Podaj kod paczkomatu (np. WAW201M).'; return; }
+      if (!locker && !(streetInput.value.trim() && postcodeInput.value.trim() && cityInput.value.trim())) {
+        err.textContent = 'Adres wymaga ulicy, kodu pocztowego i miasta.';
+        return;
+      }
       err.textContent = '';
       submit.disabled = true;
       submit.textContent = 'Zamawiam…';
@@ -644,12 +822,19 @@ window.WycenaKarta = (() => {
           body: JSON.stringify({
             codAmount: cod ? amount : null,
             email: emailInput.value.trim() || null,
+            delivery: locker ? 'locker' : 'address',
+            punktOdbioru: locker ? lockerInput.value.trim() : null,
+            street: locker ? null : streetInput.value.trim(),
+            houseNo: locker ? null : houseInput.value.trim(),
+            flatNo: locker ? null : flatInput.value.trim(),
+            postcode: locker ? null : postcodeInput.value.trim(),
+            city: locker ? null : cityInput.value.trim(),
           }),
         });
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
-        destroy();
         if (opts.onChanged) opts.onChanged();
+        pokazGotowe(body.data);
       } catch (e) {
         err.textContent = e.message;
         submit.disabled = false;
