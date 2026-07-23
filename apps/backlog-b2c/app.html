@@ -1459,8 +1459,23 @@
         max-width: 100%;
       }
 
+      /* Kropka priorytetu, diament i komentarz "dlaczego" na mobile: bez
+         własnego order wpadały na sam początek wiersza (domyślne order:0),
+         czyli NAD imię i nazwisko. Wrzucamy je za wiersz telefonu (order 6),
+         a przed status — tworzą jedną, wspólną linijkę "● 💎 1 próba" tuż pod
+         imieniem. Kropka stoi w tej samej linii co komentarz (a nie nad
+         nazwiskiem jak dotąd), bo contact-row ma flex-basis:100% i domyka swój
+         wiersz, więc kropka+komentarz zawijają się razem do następnego. */
+      .lead summary .score-dot { order: 7; }
+      .lead summary .diament { order: 8; }
+      .lead summary .score-why {
+        order: 9;
+        flex-basis: auto;
+        margin-left: 0;
+      }
+
       .lead summary .status-wrap {
-        order: 7;
+        order: 10;
         flex-basis: 100%;
         margin-top: 0.45rem;
       }
@@ -3236,15 +3251,6 @@
 
       if (contactRow.children.length) summary.appendChild(contactRow);
 
-      // "Dlaczego" — 2-3 powody score'a ("wycena 6 500 zł · termin −2d · gorący"),
-      // żeby handlowiec ufał kolejności. Tylko gdy serwer je doliczył (applyScoring).
-      if (Array.isArray(c.dlaczego) && c.dlaczego.length) {
-        const why = document.createElement('span');
-        why.className = 'score-why';
-        why.textContent = c.dlaczego.join(' · ');
-        summary.appendChild(why);
-      }
-
       let statusEl = null;
       if (c.status && c.lp === undefined) {
         // Żywy lead spoza wygenerowanej Umowy — pigułka statusu bez
@@ -3393,6 +3399,20 @@
       // pierwszy się aktywuje — przeglądarka dzieli wolną przestrzeń między
       // WSZYSTKIMI naraz, co rozjeżdża wiersz, gdy któregoś pola brakuje.
       (feedbackDate || statusEl || formLink).classList.add('right-anchor');
+
+      // "Dlaczego" — 2-3 powody score'a ("wycena 6 500 zł · termin −2d · gorący"),
+      // żeby handlowiec ufał kolejności. Tylko gdy serwer je doliczył (applyScoring).
+      // Doklejone na SAMYM KOŃCU wiersza celowo: jako element flex-basis:100%
+      // zawija się w osobną, wyszarzoną linię pod imieniem — a że nie ma za sobą
+      // już nic, NIE spycha statusu ani strzałki formularza do dodatkowej linii
+      // (dawniej stało w środku i wypychało je w lewo, do 3. wiersza). Na mobile
+      // o jego pozycji (pod imieniem, w parze z kropką) decyduje media query.
+      if (Array.isArray(c.dlaczego) && c.dlaczego.length) {
+        const why = document.createElement('span');
+        why.className = 'score-why';
+        why.textContent = c.dlaczego.join(' · ');
+        summary.appendChild(why);
+      }
 
       // Żywy status + link do formularza — ta sama zasada co pigułka akcji
       // (refreshAkcje): dokument Umowy to migawka z rana, a status leada
