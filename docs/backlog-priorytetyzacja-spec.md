@@ -1,6 +1,6 @@
 # Spec: priorytetyzacja lidów w Backlog B2C (do wdrożenia ~po tygodniu sprzedaży)
 
-> Status: **POMYSŁ / SPEC — nie wdrażać teraz.** Antoni świadomie odkłada to o ~tydzień, żeby najpierw tydzień pracować na sprzedaży (domykanie pipeline'u). Ten plik = brief dla przyszłego czatu, który to zbuduje. Cel: żeby Lorenzo dostawał lidy w kolejności potencjalnego zwrotu, zanim przyzwyczai się do obecnej (chronologicznej) kolejności.
+> Status: **PHASE 1 ZBUDOWANE 2026-07-23, czeka na deploy.** Kod na branchu (niezacommitowany): moduł `apps/backlog-b2c/server/scoring.js`, kubełek „Wyceny do domknięcia" z kanonicznej `wyceny`, dedup, tier UI 🔴🟠⚪+💎+„dlaczego", re-scoring temperatury po rozmowie (RPC `app_update_leady_after_call` + `p_temperatura`). Przetestowane E2E na prod-danych (read-only). ZOSTAŁO do wdrożenia: (1) `node scripts/add-temperatura-po-rozmowie.js` (migracja RPC), (2) commit + deploy Vercel. Phase 2 (auto-SMS po 5-6 nieodebranych, real-time push, pełna żywa lista 268k) — nietknięte. Cel: żeby Lorenzo dostawał lidy w kolejności potencjalnego zwrotu.
 
 ## AKTUALIZACJA 2026-07-22 — decyzje dopięte (NADPISUJĄ poniższe, gdzie się różnią)
 

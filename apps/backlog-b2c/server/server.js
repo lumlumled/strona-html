@@ -11,6 +11,7 @@ const { registerWycenyEndpoints } = require('../../shared/server/wyceny-endpoint
 const { createAuth, clientPayload, panelLinks, isAdmin } = require('../../shared/server/auth');
 const { servePushWorker, registerPushEndpoints, notifyUser } = require('../../shared/server/push');
 const { recordInboundSms } = require('../../shared/server/kontakt-send');
+const { scoreCase, applyScoring, normalizeTemperatura, SCORED_CATEGORIES } = require('./scoring');
 
 const app = express();
 app.use(cors());
@@ -576,6 +577,51 @@ async function updateStatusInUmowa(supabase, phoneDigits, newStatus) {
   }
 }
 
+// Wpisuje świeżą temperaturę na wszystkie wystąpienia case'a po telefonie.
+function setTemperaturaByPhone(json, phoneDigits, temperatura) {
+  let updated = false;
+  const applyToArray = (arr) => {
+    if (!Array.isArray(arr)) return;
+    arr.forEach((item) => {
+      if (item && normalizePhoneDigits(item.telefon) === phoneDigits) {
+        if (temperatura) item.temperatura = temperatura;
+        updated = true;
+      }
+    });
+  };
+  applyToArray(json.priorytet_dzis);
+  if (json.kategorie && typeof json.kategorie === 'object') {
+    Object.values(json.kategorie).forEach(applyToArray);
+  }
+  return updated;
+}
+
+// Re-scoring po rozmowie: nadpisuje temperaturę case'a w dzisiejszej Umowie i
+// przelicza score/tier/dlaczego (applyScoring resortuje kubełki). Bliźniak
+// updateStatusInUmowa — plan dnia to migawka z rana, telefon w ciągu dnia ma
+// ją odświeżyć bez czekania na jutrzejszy cron.
+async function patchScoreInUmowa(supabase, phoneDigits, temperatura) {
+  if (!phoneDigits) return;
+  try {
+    const { y, m, d } = warsawParts(new Date());
+    const dataIso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const row = await getRowByData(supabase, dataIso);
+    if (!row) return;
+    const patch = {};
+    ['draft', 'poprawka', 'final'].forEach((state) => {
+      const column = DOCS.umowa[state];
+      const json = row[column];
+      if (json && setTemperaturaByPhone(json, phoneDigits, temperatura)) {
+        applyScoring(json);
+        patch[column] = json;
+      }
+    });
+    if (Object.keys(patch).length) await updateRowByData(supabase, dataIso, patch);
+  } catch (err) {
+    console.warn('Nie udało się przeliczyć score case\'a w dzisiejszej Umowie:', err.message);
+  }
+}
+
 async function findLeadByPhone(supabase, phoneDigits) {
   if (!phoneDigits) return null;
   const { data, error } = await supabase
@@ -959,6 +1005,11 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       // podstawie poprzedniej wersji + tej rozmowy (patrz analyzeCall).
       if (analysis?.skrocony_opis) patch['Ocena AI kontaktu'] = analysis.skrocony_opis;
 
+      // Temperatura przeliczona z tej rozmowy (analyzeCall.jakosc_leada) —
+      // zasila scoring. null gdy brak (nieodebrane/poczta głosowa → analysis
+      // null), żeby coalesce w RPC nie nadpisał istniejącej wartości pustką.
+      const temperaturaPoRozmowie = normalizeTemperatura(analysis && analysis.jakosc_leada) || null;
+
       // RPC zamiast zwykłego .update() — ustawia transaction-local flagę
       // bypass, żeby trigger log_zmian_from_leady (patrz migracja
       // add-log-zmian-manual-capture.js) nie zdublował wpisu, który już
@@ -984,6 +1035,7 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
         // nowa/wyczyszczona data bez godziny czyści starą, brak zmiany daty
         // nie dotyka jej wcale.
         p_godzina_feedbacku: godzinaFeedbackuParam,
+        p_temperatura: temperaturaPoRozmowie,
       });
       if (updateErr) console.error('Błąd update Leady B2C:', updateErr.message);
 
@@ -996,6 +1048,12 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       // przy realnej różnicy.
       if (customerDigits && statusAfter) {
         await updateStatusInUmowa(supabase, customerDigits, statusAfter);
+      }
+
+      // Re-scoring po rozmowie: wpisz świeżą temperaturę na case'a w dzisiejszej
+      // Umowie i przelicz score/tier (case może zmienić kolejność w kubełku).
+      if (customerDigits && temperaturaPoRozmowie) {
+        await patchScoreInUmowa(supabase, customerDigits, temperaturaPoRozmowie);
       }
 
       // Jeśli GPT ocenił, że temat jest zaopiekowany na dziś — oznacz ten
@@ -1431,6 +1489,7 @@ rozmowy.registerRozmowyEndpoints(app, {
   findLeadByPhone,
   updateStatusInUmowa,
   markZamknieteInUmowa,
+  patchScoreInUmowa,
   warsawDateStr,
   warsawDateTimeStr,
   defaultHandlowiec: process.env.DEFAULT_HANDLOWIEC || null,
@@ -1595,24 +1654,78 @@ function formatProdukty(produktyJson) {
     .join('; ');
 }
 
+// Formatuje pozycje kanonicznej wyceny (items jsonb: [{name, quantity, unit,
+// ...}]) do jednej linii "10m Taśma; 2 Sterownik" — jak formatProdukty, ale dla
+// kształtu z tabeli `wyceny`.
+function formatItems(items) {
+  if (!Array.isArray(items) || !items.length) return '';
+  return items
+    .map((p) => {
+      const qty = p && p.quantity !== undefined && p.quantity !== null ? p.quantity : '';
+      const unit = (p && p.unit) || '';
+      const name = (p && p.name) || '';
+      return [qty, unit, name].filter((part) => part !== '' && part !== undefined && part !== null).join(' ');
+    })
+    .filter(Boolean)
+    .join('; ');
+}
+
+// 9-cyfrowy klucz telefonu (bez prefiksu 48) — kanoniczny format
+// `wyceny.telefon_digits`. Leady B2C "Phone number" bywa z 48 i bez, więc mapy
+// budujemy pod OBA klucze (d9 i 48+d9), żeby dopasowanie nie zależało od tego,
+// w której postaci numer jest zapisany.
+function nine(digits) {
+  return String(digits || '').replace(/\D/g, '').replace(/^48/, '');
+}
+
+// "Ma realną wycenę" trzymamy w mapie po telefonie, czytanej z KANONICZNEJ
+// tabeli `wyceny` (nie legacy "Wyceny B2C"). Realna = koszyk z pozycjami +
+// kwota (dokładnie rozróżnienie, którego chce Antoni: oferta produktowa /
+// katalog wysłany "do popatrzenia" NIE jest wyceną). Bierzemy najnowszą wycenę
+// per telefon (typ WYCENA lub ZAMÓWIENIE), status Open.
 async function fetchWycenaByPhone(supabase) {
   const { data, error } = await supabase
-    .from(WYCENY_B2C_TABLE)
-    .select('Telefon,produkty_json,ID,Kwota,"Data stworzenia","Link do formularza"');
+    .from('wyceny')
+    .select('id,typ,status,telefon_digits,telefon_e164,items,kwota_proponowana_brutto,created_at')
+    .in('typ', ['WYCENA', 'ZAMÓWIENIE'])
+    .eq('status', 'Open')
+    .order('id', { ascending: false }); // najnowsza pierwsza → pierwsza wygrywa per telefon
   if (error) throw error;
   const map = new Map();
   (data || []).forEach((row) => {
-    const digits = normalizePhoneDigits(row['Telefon']);
-    if (!digits || map.has(digits)) return;
-    map.set(digits, {
-      produkty: formatProdukty(row['produkty_json']),
-      id: row['ID'] || '',
-      kwota: Number(row['Kwota']) || 0,
-      dataStworzenia: row['Data stworzenia'] || '',
-      linkFormularz: row['Link do formularza'] || '',
-    });
+    const realna = Array.isArray(row['items']) && row['items'].length > 0 && row['kwota_proponowana_brutto'] != null;
+    if (!realna) return;
+    const d9 = row['telefon_digits'] || nine(row['telefon_e164']);
+    if (!d9) return;
+    if (map.has(d9)) return; // pierwsza (najnowsza) wygrywa
+    const val = {
+      produkty: formatItems(row['items']),
+      id: `#${row['id']}`,
+      kwota: Number(row['kwota_proponowana_brutto']) || 0,
+      dataStworzenia: String(row['created_at'] || '').slice(0, 10),
+      maWycene: true,
+    };
+    map.set(d9, val);
+    map.set(`48${d9}`, val);
   });
   return map;
+}
+
+// Indeks Leady B2C po telefonie (d9 + 48+d9) i po "ID Leada" — używany przy
+// budowie kubełka "Wyceny do domknięcia", żeby dociągnąć do wyceny kontekst
+// leada (temperatura, data feedbacku, notatki, status, liczba prób).
+async function fetchLeadIndex(supabase) {
+  const { data, error } = await supabase.from(LEADY_B2C_TABLE).select('*').is('Źródło', null);
+  if (error) throw error;
+  const byPhone = new Map();
+  const byId = new Map();
+  (data || []).forEach((row) => {
+    const d9 = nine(row['Phone number']);
+    if (d9 && !byPhone.has(d9)) { byPhone.set(d9, row); byPhone.set(`48${d9}`, row); }
+    const idLeada = row['ID Leada'] != null ? String(row['ID Leada']).replace(/\.0$/, '') : '';
+    if (idLeada && !byId.has(idLeada)) byId.set(idLeada, row);
+  });
+  return { byPhone, byId };
 }
 
 // "Ile razy dzwoniono do tego leada" liczone z realnych wierszy "Log zmian"
@@ -1637,13 +1750,14 @@ async function fetchCallCountByPhone(supabase) {
 function mapLeadRow(row, wycenaByPhone, callCountByPhone) {
   const phoneDigits = normalizePhoneDigits(row['Phone number']);
   const wycena = wycenaByPhone && phoneDigits ? wycenaByPhone.get(phoneDigits) : undefined;
-  const linkFormularz = row['Link do formularza'] || (wycena && wycena.linkFormularz) || '';
-  // Samo dopasowanie telefonu do wiersza w Wyceny B2C NIE wystarcza, żeby
-  // uznać to za "prawdziwą wycenę" — taki wiersz może istnieć bez realnie
-  // wygenerowanego linku. Rozstrzyga wyłącznie obecność linku do wyceny: jest
-  // link → id_wyceny/Data wyceny/Kwota są prawdziwe; nie ma linku → to tylko
-  // notatka z rozmowy, pokazujemy id_lida zamiast id_wyceny.
-  const maWycene = Boolean(linkFormularz);
+  const linkFormularz = row['Link do formularza'] || '';
+  // "Prawdziwa wycena" = realny rekord w KANONICZNEJ tabeli `wyceny` z
+  // koszykiem produktów + kwotą (fetchWycenaByPhone filtruje na items+kwota).
+  // To dokładnie rozróżnienie, którego chce Antoni: sama oferta produktowa /
+  // katalog wysłany "do popatrzenia" ani status "Wycena wysłana" na leadzie nie
+  // liczą się jako wycena — dopiero konkretny koszyk z wartością. Bez wyceny
+  // pokazujemy id_lida zamiast id_wyceny.
+  const maWycene = Boolean(wycena);
   return {
     id: row['ID'] || '',
     // "ID Leada" to wewnętrzny, auto-inkrementowany numer leada w TEJ tabeli
@@ -1679,7 +1793,9 @@ function mapLeadRow(row, wycenaByPhone, callCountByPhone) {
     // etykietę) — bez linku to nadal użyteczna informacja, tylko nieformalna
     // (data/kwota z rozmowy, nie z wysłanego dokumentu).
     data_wyceny: row['Data wysłania wyceny'] || (wycena && wycena.dataStworzenia) || '',
-    kwota: Number(row['Kwota wyceny']) || (wycena && wycena.kwota) || 0,
+    // Dla case'a z realną wyceną kwota = kwota z kanonicznej wyceny (autorytet
+    // do scoringu wartości), inaczej ewentualna kwota z rozmowy.
+    kwota: (wycena && wycena.kwota) || Number(row['Kwota wyceny']) || 0,
     // Migawka z momentu generowania Umowy — front i tak nadpisuje ją na
     // żywo z GET /api/leady/akcje (akcja zmienia się w ciągu dnia po każdej
     // rozmowie/notatce), ale dzięki migawce pigułka jest widoczna od
@@ -1734,73 +1850,120 @@ async function fetchLeadyByStage(supabase, stage, excludeStages) {
   });
 }
 
-async function fetchNowe(supabase, wycenaByPhone, callCountByPhone) {
+// Czy telefon leada jest już w kubełku "Wyceny do domknięcia" (ma realną,
+// otwartą wycenę) — jeśli tak, NIE pokazujemy go w nowe/inne/nieodebrane, żeby
+// case z wyceną żył w dokładnie jednym miejscu (koniec miksowania z dawnymi
+// "wycenami historycznymi"). excludePhones trzyma oba warianty (d9 i 48+d9).
+function isExcludedPhone(row, excludePhones) {
+  if (!excludePhones || !excludePhones.size) return false;
+  const d9 = nine(row['Phone number']);
+  return excludePhones.has(d9) || excludePhones.has(`48${d9}`);
+}
+
+// Sort po score (malejąco) — spójny z applyScoring, który i tak przeliczy to
+// jeszcze raz na gotowym dokumencie; tu decyduje o tym, kto wejdzie w slice().
+function sortByScore(cases) {
+  const now = Date.now();
+  return cases.sort((a, b) => (scoreCase(b, now).score) - (scoreCase(a, now).score));
+}
+
+async function fetchNowe(supabase, wycenaByPhone, callCountByPhone, excludePhones) {
   const rows = await fetchLeadyByStage(supabase, 'Nowy');
   const cutoff = Date.now() - 3 * 24 * 60 * 60 * 1000;
-  return rows
+  const cases = rows
+    .filter((row) => !isExcludedPhone(row, excludePhones))
     .map((row) => ({ row, date: parseLeadDate(row['Date']) }))
     .filter(({ date }) => date && date.getTime() >= cutoff)
-    .sort((a, b) => b.date - a.date)
-    .slice(0, 10)
     .map(({ row }) => mapLeadRow(row, wycenaByPhone, callCountByPhone));
+  return sortByScore(cases).slice(0, 10);
 }
 
-// Ograniczone do ostatnich 3 dni (dziś + 3 dni wstecz) — starsze przeterminowane
-// feedbacki i tak trafiają do "Zaległe feedbacki" (fetchZalegleFeedbacki, bez
-// limitu dni), więc bez tego okna te dwie kategorie by się duplikowały.
-async function fetchWycenyZFeedbackiem(supabase, wycenaByPhone, callCountByPhone) {
-  const rows = await fetchLeadyByStage(supabase, 'Wycena wysłana');
-  const now = Date.now();
-  const cutoff = now - 3 * 24 * 60 * 60 * 1000;
-  return rows
-    .map((row) => ({ row, date: parseLeadDate(row['Data Feedbacku']) }))
-    .filter(({ date }) => date && date.getTime() <= now && date.getTime() >= cutoff)
-    .sort((a, b) => a.date - b.date || Number(b.row['Kwota wyceny'] || 0) - Number(a.row['Kwota wyceny'] || 0))
-    .map(({ row }) => mapLeadRow(row, wycenaByPhone, callCountByPhone));
-}
-
-async function fetchInneZFeedbackiem(supabase, wycenaByPhone, callCountByPhone) {
+async function fetchInneZFeedbackiem(supabase, wycenaByPhone, callCountByPhone, excludePhones) {
   const rows = await fetchLeadyByStage(supabase, null, ['Wycena wysłana', 'Stracony', 'Sprzedane']);
   const now = Date.now();
   const cutoff = now - 3 * 24 * 60 * 60 * 1000;
-  return rows
+  const cases = rows
+    .filter((row) => !isExcludedPhone(row, excludePhones))
     .map((row) => ({ row, date: parseLeadDate(row['Data Feedbacku']) }))
     .filter(({ date }) => date && date.getTime() <= now && date.getTime() >= cutoff)
-    .sort((a, b) => a.date - b.date || Number(b.row['Kwota wyceny'] || 0) - Number(a.row['Kwota wyceny'] || 0))
     .map(({ row }) => mapLeadRow(row, wycenaByPhone, callCountByPhone));
+  return sortByScore(cases);
 }
 
 // Okno 7 dni liczone od "Ostatni kontakt" (kiedy faktycznie nie odebrano), nie
 // od "Date" (kiedy lead powstał) — stary lead z dziś nieodebranym telefonem
 // ma się tu pojawić, a nie wypadać tylko bo powstał dawno temu.
-async function fetchNieodebrane(supabase, wycenaByPhone, callCountByPhone) {
+async function fetchNieodebrane(supabase, wycenaByPhone, callCountByPhone, excludePhones) {
   const rows = await fetchLeadyByStage(supabase, 'Nie odebrał');
   const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  return rows
+  const cases = rows
+    .filter((row) => !isExcludedPhone(row, excludePhones))
     .map((row) => ({ row, date: parseLeadDate(row['Ostatni kontakt']) }))
     .filter(({ date }) => date && date.getTime() >= cutoff)
-    .sort((a, b) => (Number(b.row['Ilość telefonów']) || 0) - (Number(a.row['Ilość telefonów']) || 0) || b.date - a.date)
-    .slice(0, 10)
     .map(({ row }) => mapLeadRow(row, wycenaByPhone, callCountByPhone));
+  return sortByScore(cases).slice(0, 10);
 }
 
-async function fetchWycenyHistoryczne(supabase) {
-  const { data: allRows, error } = await supabase.from(WYCENY_B2C_TABLE).select('*');
+// Kubełek "Wyceny do domknięcia" (spec §aktualizacja 2026-07-22): WSZYSTKIE
+// otwarte, realne wyceny z KANONICZNEJ tabeli `wyceny` (koszyk produktów +
+// kwota), dociągnięte do leada po lead_id lub telefonie dla kontekstu
+// (temperatura, feedback, notatki). Scorowane Reżimem A, sort malejąco, do
+// planu dnia idzie top-N + licznik reszty jako backlog. Wchłania dawne
+// "wyceny z feedbackiem" + "wyceny historyczne". Zwraca też excludePhones —
+// telefony do odjęcia z pozostałych kategorii (dedup).
+const WYCENY_DO_DOMKNIECIA_CAP = 15;
+
+async function fetchWycenyDoDomkniecia(supabase, leadIndex, callCountByPhone) {
+  const { data, error } = await supabase
+    .from('wyceny')
+    .select('id,typ,status,imie_nazwisko,telefon_e164,telefon_digits,email,lead_id,items,kwota_proponowana_brutto,komentarz,created_at')
+    .eq('typ', 'WYCENA')
+    .eq('status', 'Open')
+    .order('created_at', { ascending: true });
   if (error) throw error;
   const now = Date.now();
-  const withFeedback = (allRows || [])
-    .map((row) => ({ row, date: parseLeadDate(row['Data Feedbacku']) }))
-    .filter(({ date }) => date && date.getTime() <= now)
-    .map(({ row }) => row);
-
-  const usedIds = new Set(withFeedback.map((r) => r['ID']));
-  const openOldestFirst = (allRows || [])
-    .filter((row) => row['Status'] === 'Open' && !usedIds.has(row['ID']))
-    .map((row) => ({ row, date: parseLeadDate(row['Data stworzenia']) }))
-    .sort((a, b) => (a.date?.getTime() || 0) - (b.date?.getTime() || 0))
-    .map(({ row }) => row);
-
-  return [...withFeedback, ...openOldestFirst].slice(0, 10).map(mapWycenaRow);
+  const real = (data || []).filter(
+    (w) => Array.isArray(w.items) && w.items.length > 0 && w.kwota_proponowana_brutto != null
+  );
+  const excludePhones = new Set();
+  const cases = real.map((w) => {
+    const d9 = w.telefon_digits || nine(w.telefon_e164);
+    const idLeada = w.lead_id != null ? String(w.lead_id).replace(/\.0$/, '') : '';
+    const lead = (idLeada && leadIndex.byId.get(idLeada)) || (d9 && leadIndex.byPhone.get(d9)) || null;
+    if (d9) { excludePhones.add(d9); excludePhones.add(`48${d9}`); }
+    const phonePlus = lead ? formatPhonePlus(lead['Phone number']) : (d9 ? `+48${d9}` : '');
+    const phoneDigits = normalizePhoneDigits(phonePlus);
+    const c = {
+      id: (lead && lead['ID']) || '',
+      id_wyceny: `#${w.id}`,
+      id_lida: (lead && lead['ID Leada']) || '',
+      ma_wycene: true,
+      data_dolaczenia: (lead && lead['Date']) || '',
+      imie: (lead && lead['Name']) || w.imie_nazwisko || '(brak nazwiska)',
+      telefon: phonePlus,
+      email: (lead && lead['Email']) || w.email || '',
+      status: (lead && lead['Deal stage']) || 'Wycena',
+      opis: (lead && (lead['Notes'] || lead['Ocena AI kontaktu'])) || w.komentarz || '',
+      data_feedbacku: lead ? formatPlDate(lead['Data Feedbacku']) : '',
+      godzina_feedbacku: (lead && lead['Godzina Feedbacku']) || '',
+      temperatura: (lead && lead['Temperatura']) || '',
+      ostatni_kontakt: (lead && lead['Ostatni kontakt']) || '',
+      ilosc_telefonow: (phoneDigits && callCountByPhone.get(phoneDigits)) || (d9 && callCountByPhone.get(d9)) || 0,
+      produkty: formatItems(w.items),
+      link_formularz: (lead && lead['Link do formularza']) || '',
+      data_wyceny: String(w.created_at || '').slice(0, 10),
+      kwota: Number(w.kwota_proponowana_brutto) || 0,
+      // Wiek wyceny w dniach — martwy pipeline (76 dni śr.), przyda się na froncie.
+      wiek_dni: Math.max(0, Math.floor((now - new Date(w.created_at).getTime()) / (24 * 60 * 60 * 1000))),
+      najblizsza_akcja: (lead && lead['Najbliższa akcja']) || '',
+      najblizsza_akcja_termin: (lead && lead['Najbliższa akcja termin']) || '',
+      najblizsza_akcja_owner: (lead && lead['Najbliższa akcja owner']) || '',
+    };
+    c.score = scoreCase(c, now).score;
+    return c;
+  });
+  cases.sort((a, b) => (b.score || 0) - (a.score || 0));
+  return { cases: cases.slice(0, WYCENY_DO_DOMKNIECIA_CAP), total: real.length, excludePhones };
 }
 
 // Siatka bezpieczeństwa: WSZYSTKIE leady z przeterminowanym feedbackiem,
@@ -1970,7 +2133,10 @@ function postProcessCalledToday(parsed, calledSet) {
 // głównych 5 kategoriach (w stałej kolejności) dostaje kolejny numer, a
 // priorytet_dzis jest dopasowywany do swojego bliźniaka po telefonie zamiast
 // polegać na lp, które model sam podał.
-const KATEGORIA_LP_ORDER = ['nowe', 'wyceny_z_feedbackiem', 'inne_z_feedbackiem', 'nieodebrane', 'wyceny_historyczne'];
+// Tylko kategorie budowane przez MODEL — kubełek "wyceny_do_domkniecia" jest
+// deterministyczny (applyWycenyDoDomkniecia, po reassignLps), jak
+// rozmowy_spoza_bazy/zalegle, więc nie ma go tutaj.
+const KATEGORIA_LP_ORDER = ['nowe', 'inne_z_feedbackiem', 'nieodebrane'];
 
 function reassignLps(parsed) {
   const kat = parsed.kategorie || {};
@@ -2031,6 +2197,30 @@ function applyRozmowySpozaBazy(parsed, rozmowySpozaBazyRaw, phoneToLp, nextLp) {
 
   parsed.kategorie = parsed.kategorie || {};
   parsed.kategorie.rozmowy_spoza_bazy = result;
+  return next;
+}
+
+// Kubełek "Wyceny do domknięcia" — deterministyczny (dane z
+// fetchWycenyDoDomkniecia), model go NIE buduje (dostaje tylko top-N do wglądu,
+// żeby móc wciągnąć gorącą wycenę do priorytet_dzis). Wzorzec applyRozmowySpozaBazy:
+// jeśli case jest już w priorytecie (ten sam telefon w phoneToLp), dostaje TEN
+// SAM lp (bliźniak — checkbox zamyka oba naraz); inaczej świeży lp. Uruchamiane
+// PO reassignLps, PRZED applyZalegleFeedbacki (żeby telefony z wyceną trafiły do
+// phoneToLp i nie zdublowały się w zaległych feedbackach).
+function applyWycenyDoDomkniecia(parsed, wycenyCases, phoneToLp, nextLp) {
+  let next = nextLp;
+  const result = (wycenyCases || []).map((c) => {
+    const digits = normalizePhoneDigits(c.telefon);
+    let lp = digits ? phoneToLp.get(digits) : undefined;
+    if (lp === undefined) {
+      lp = next;
+      next += 1;
+      if (digits) phoneToLp.set(digits, lp);
+    }
+    return { ...c, lp, row_number: 0, zamkniete: 0, zadzwonil_dzis: false };
+  });
+  parsed.kategorie = parsed.kategorie || {};
+  parsed.kategorie.wyceny_do_domkniecia = result;
   return next;
 }
 
@@ -2176,7 +2366,7 @@ function applyZalegleFeedbacki(parsed, zalegleRaw, phoneToLp, nextLp) {
 // wyceny_historyczne/zalegle_feedbacki to z definicji otwarte, ciągłe listy
 // (nie "dzisiejszy plan"), więc oznaczanie ich jako na_jutro nic by nie
 // wnosiło.
-const NA_JUTRO_KATEGORIE = ['nowe', 'wyceny_z_feedbackiem', 'inne_z_feedbackiem', 'nieodebrane'];
+const NA_JUTRO_KATEGORIE = ['nowe', 'wyceny_do_domkniecia', 'inne_z_feedbackiem', 'nieodebrane'];
 
 // Telefony niezamkniętych case'ów we wczorajszej Umowie (priorytet_dzis + 4
 // kategorie wyżej) — dostają dziś widoczną flagę na_jutro (patrz
@@ -2246,7 +2436,7 @@ function buildStatusByPhone(rows) {
 // prawdziwe, więc brak pola = case bez statusu w UI. Wymuszamy je tu
 // deterministycznie z tych samych danych źródłowych, którymi model był
 // zasilony (dopasowanie po telefonie), zamiast ufać, że wiernie przepisał.
-function postProcessStatus(parsed, leadyStatusByPhone, wycenyStatusByPhone) {
+function postProcessStatus(parsed, leadyStatusByPhone) {
   const patchWith = (arr, statusMap) => {
     if (!Array.isArray(arr)) return;
     arr.forEach((item) => {
@@ -2255,22 +2445,12 @@ function postProcessStatus(parsed, leadyStatusByPhone, wycenyStatusByPhone) {
       if (status) item.status = status;
     });
   };
-  const patchEither = (arr) => {
-    if (!Array.isArray(arr)) return;
-    arr.forEach((item) => {
-      if (!item || typeof item !== 'object' || !item.telefon) return;
-      const digits = normalizePhoneDigits(item.telefon);
-      const status = leadyStatusByPhone.get(digits) || wycenyStatusByPhone.get(digits);
-      if (status) item.status = status;
-    });
-  };
-  patchEither(parsed.priorytet_dzis);
+  patchWith(parsed.priorytet_dzis, leadyStatusByPhone);
   if (parsed.kategorie && typeof parsed.kategorie === 'object') {
     patchWith(parsed.kategorie.nowe, leadyStatusByPhone);
-    patchWith(parsed.kategorie.wyceny_z_feedbackiem, leadyStatusByPhone);
+    patchWith(parsed.kategorie.wyceny_do_domkniecia, leadyStatusByPhone);
     patchWith(parsed.kategorie.inne_z_feedbackiem, leadyStatusByPhone);
     patchWith(parsed.kategorie.nieodebrane, leadyStatusByPhone);
-    patchWith(parsed.kategorie.wyceny_historyczne, wycenyStatusByPhone);
   }
 }
 
@@ -2289,10 +2469,9 @@ function postProcessCallCounts(parsed, callCountByPhone) {
   patch(parsed.priorytet_dzis);
   if (parsed.kategorie && typeof parsed.kategorie === 'object') {
     patch(parsed.kategorie.nowe);
-    patch(parsed.kategorie.wyceny_z_feedbackiem);
+    patch(parsed.kategorie.wyceny_do_domkniecia);
     patch(parsed.kategorie.inne_z_feedbackiem);
     patch(parsed.kategorie.nieodebrane);
-    // wyceny_historyczne nie ma tego pola w schemacie — celowo pominięte.
   }
 }
 
@@ -2309,17 +2488,16 @@ function postProcessCounts(parsed) {
     if (arr.length > cap) kat[key] = arr.slice(0, cap);
     return { count: Math.min(arr.length, cap), backlog };
   };
-  const wf = capWithBacklog('wyceny_z_feedbackiem', 8);
   const inf = capWithBacklog('inne_z_feedbackiem', 8);
 
   parsed.plan = parsed.plan || {};
   parsed.plan.nowe_count = Array.isArray(kat.nowe) ? kat.nowe.length : 0;
-  parsed.plan.wyceny_feedback_count = wf.count;
-  parsed.plan.wyceny_feedback_backlog = wf.backlog;
+  // wyceny_do_domkniecia: count z długości kategorii, backlog wstrzykiwany w
+  // orkiestracji (zna total wszystkich otwartych wycen, nie tylko top-N w planie).
+  parsed.plan.wyceny_domkniecia_count = Array.isArray(kat.wyceny_do_domkniecia) ? kat.wyceny_do_domkniecia.length : 0;
   parsed.plan.inne_feedback_count = inf.count;
   parsed.plan.inne_feedback_backlog = inf.backlog;
   parsed.plan.nieodebrane_count = Array.isArray(kat.nieodebrane) ? kat.nieodebrane.length : 0;
-  parsed.plan.wyceny_historyczne_count = Array.isArray(kat.wyceny_historyczne) ? kat.wyceny_historyczne.length : 0;
   parsed.plan.zalegle_feedbacki_count = Array.isArray(kat.zalegle_feedbacki) ? kat.zalegle_feedbacki.length : 0;
   parsed.plan.priorytet_dzis_count = Array.isArray(parsed.priorytet_dzis) ? parsed.priorytet_dzis.length : 0;
 }
@@ -2333,7 +2511,7 @@ Generujesz WYŁĄCZNIE czysty JSON — bez tekstu przed, bez komentarza, bez mar
 
 ## DANE WEJŚCIOWE
 
-Dostajesz dziewięć zestawów danych, każdy jako tablica obiektów JSON z nazwanymi polami (nie kolumny arkusza indeksowane liczbami):
+Dostajesz osiem zestawów danych, każdy jako tablica obiektów JSON z nazwanymi polami (nie kolumny arkusza indeksowane liczbami):
 
 **STANDUP LOG ostatnie 3 dni** — ostatnie 3 wiersze dziennego logu, malejąco po dacie. Pola: \`data\`, \`komentarz_dzienny_poprzedniej_umowy\` (co handlowiec miał zrobić poprzednio), \`podsumowanie_dnia\` (JSON podsumowania dnia albo null).
 
@@ -2342,13 +2520,11 @@ Dostajesz dziewięć zestawów danych, każdy jako tablica obiektów JSON z nazw
 **LOG TELEFONÓW DZIŚ (Zadarma)** — dzisiejsze połączenia (przychodzące/wychodzące/nieodebrane) już zarejestrowane w systemie. Pola identyczne jak wyżej. Jeśli pusta tablica, pomiń bez komentarza — oznacza, że dziś jeszcze nikt nie dzwonił.
 
 **LEADY NOWE** — leady ze statusem "Nowy", max 3 dni, limit 10, najnowsze pierwsze.
-**WYCENY AKTYWNE z feedbackiem** — leady ze statusem "Wycena wysłana" z terminem feedbacku dziś lub wcześniej, najstarszy feedback pierwszy.
-**LEADY AKTYWNE z feedbackiem** — leady w innym statusie (nie "Wycena wysłana"/"Stracony"/"Sprzedane") z terminem feedbacku w ostatnich 7 dniach, najstarszy feedback pierwszy.
+**WYCENY DO DOMKNIĘCIA** — leady, które mają REALNĄ, otwartą wycenę (koszyk produktów + kwota) — najbardziej "przy pieniądzach". Top-N wg score (wartość × temperatura × termin). To próbka DO WGLĄDU: kategorię "wyceny_do_domkniecia" zbuduję automatycznie po twojej odpowiedzi z pełnej, wyscorowanej listy — NIE buduj jej sam. Ta próbka służy tylko po to, żebyś mógł wciągnąć gorącą, wartościową wycenę do \`priorytet_dzis\`, jeśli na to zasługuje.
+**LEADY AKTYWNE z feedbackiem** — leady BEZ wyceny (te z wyceną są wyżej), w statusie innym niż "Wycena wysłana"/"Stracony"/"Sprzedane", z terminem feedbacku w ostatnich 7 dniach, najstarszy feedback pierwszy.
 **LEADY NIEODEBRANE ostatnie 7 dni** — status "Nie odebrał", limit 10, najwięcej prób nieodebrania pierwsze.
 
 Pola każdego leada: \`id\`, \`id_wyceny\`, \`data_dolaczenia\`, \`imie\`, \`telefon\`, \`email\`, \`status\`, \`opis\` (notatki handlowca — surowe, do przeczytania i zrozumienia sprawy, ale w WYJŚCIU masz napisać własną syntezę, patrz sekcja "Pole opis w wyjściu" niżej), \`data_feedbacku\`, \`temperatura\`, \`ostatni_kontakt\`, \`ilosc_telefonow\` (już policzone z realnych połączeń — przepisz jak jest, nie licz go), \`produkty\`, \`link_formularz\`, \`data_wyceny\`, \`kwota\`.
-
-**WYCENY HISTORYCZNE** — do 10 wycen: najpierw te z feedbackiem (termin dziś lub wcześniej), potem uzupełnienie najstarszymi otwartymi ("Open"), bez duplikatów po ID. Pola: \`id_wyceny\`, \`data_stworzenia\`, \`data_feedbacku\`, \`komentarz\`, \`typ\`, \`status\`, \`imie\`, \`telefon\`, \`email\`, \`link_formularz\`, \`kwota\`.
 
 **NAJBARDZIEJ PRZETERMINOWANE FEEDBACKI** — próbka (top N po dacie) z pełnej listy WSZYSTKICH leadów z przeterminowanym feedbackiem, każdego statusu, bez limitu dni wstecz — siatka bezpieczeństwa na wypadek, że case wypadł z powyższych kategorii (limit dni/limit 8 do wyświetlenia). Pełna lista trafi do osobnej kategorii "zalegle_feedbacki" automatycznie, deterministycznie, PO twojej odpowiedzi — nie musisz jej budować ani kategoryzować. Ta próbka jest tu wyłącznie po to, żebyś mógł wyłapać naprawdę zapomniany, ważny case do \`priorytet_dzis\`, jeśli na to zasługuje wg poniższych kryteriów.
 
@@ -2376,10 +2552,9 @@ Nie wrzucaj case'a do priorytetu tylko po to, żeby wypełnić limit 5 — jeśl
 
 ### Kategorie w wyjściu — max do wyświetlenia
 **nowe** — wszystkie z LEADY NOWE.
-**wyceny_z_feedbackiem** — max 8 z WYCENY AKTYWNE z feedbackiem. Resztę zlicz jako backlog.
 **inne_z_feedbackiem** — max 8 z LEADY AKTYWNE z feedbackiem. Resztę zlicz jako backlog.
 **nieodebrane** — wszystkie z LEADY NIEODEBRANE (już max 10 z danych wejściowych).
-**wyceny_historyczne** — wszystkie z WYCENY HISTORYCZNE (już max 10 z danych wejściowych).
+**wyceny_do_domkniecia** — NIE buduj tej kategorii, zostaw ją pominiętą albo pustą tablicą. Zostanie wypełniona automatycznie po twojej odpowiedzi z pełnej, wyscorowanej listy otwartych wycen (patrz opis WYCENY DO DOMKNIĘCIA wyżej).
 **zalegle_feedbacki** — NIE buduj tej kategorii, zostaw ją całkowicie pominiętą albo pustą tablicę. Zostanie wypełniona automatycznie po twojej odpowiedzi z pełnej listy (patrz opis NAJBARDZIEJ PRZETERMINOWANE FEEDBACKI wyżej).
 
 ### Temperatura (jeśli pole puste — oceń sam na podstawie opisu)
@@ -2387,7 +2562,7 @@ Nie wrzucaj case'a do priorytetu tylko po to, żeby wypełnić limit 5 — jeśl
 - LETNI: "muszę pomierzyć", "zastanowię się", "czekam na projekt"
 - ZIMNY: brak kontekstu, wielokrotne nieodebrane, "może kiedyś"
 
-### Pole \`opis\` w wyjściu (dotyczy wszystkich kategorii leadów, nie wyceny_historyczne)
+### Pole \`opis\` w wyjściu (dotyczy kategorii, które budujesz: nowe / inne_z_feedbackiem / nieodebrane; wyceny_do_domkniecia i zalegle_feedbacki są automatyczne)
 NIE kopiuj notatek handlowca (wejściowe \`opis\`) 1:1 do wyjścia. Napisz własnymi słowami syntetyczne podsumowanie stanu sprawy, maks. 3 zdania: co się wydarzyło, na czym konkretnie stoi sprawa, jaki jest następny krok — z realnymi szczegółami (kwoty, terminy, produkty, ustalenia), nie ogólnikowo ("kontakt nawiązany", "czeka na odpowiedź"). Jeśli dla tego telefonu jest coś w LOG ZMIAN/LOG TELEFONÓW DZIŚ, uwzględnij to też. To pole zastępuje starą "ocenę AI" — ma być treściwe, nie krótsze niż notatka, tylko lepiej napisane.
 
 ### Komentarz dzienny (pole główne, jedno na całą umowę)
@@ -2420,12 +2595,9 @@ Ton: bezpośredni, jakbyś był doświadczonym sprzedawcą który mówi co robi�
   "plan": {
     "priorytet_dzis_count": 0,
     "nowe_count": 0,
-    "wyceny_feedback_count": 0,
-    "wyceny_feedback_backlog": 0,
     "inne_feedback_count": 0,
     "inne_feedback_backlog": 0,
     "nieodebrane_count": 0,
-    "wyceny_historyczne_count": 0,
     "zalegle_feedbacki_count": 0,
     "zadzwoniono_dzis": 0
   },
@@ -2446,16 +2618,9 @@ Ton: bezpośredni, jakbyś był doświadczonym sprzedawcą który mówi co robi�
         "kwota": 0, "zadzwonil_dzis": false, "zamkniete": 0
       }
     ],
-    "wyceny_z_feedbackiem": [],
     "inne_z_feedbackiem": [],
     "nieodebrane": [],
-    "wyceny_historyczne": [
-      {
-        "lp": 0, "row_number": 0, "id_wyceny": "", "data_stworzenia": "", "data_feedbacku": "",
-        "dni_temu": 0, "imie": "", "telefon": "", "kwota": 0, "komentarz": "", "link_formularz": "",
-        "zadzwonil_dzis": false, "zamkniete": 0
-      }
-    ],
+    "wyceny_do_domkniecia": [],
     "zalegle_feedbacki": []
   }
 }
@@ -2511,20 +2676,27 @@ app.all('/api/cron/umowa-draft', async (req, res) => {
 
     // Osobno, przed resztą — leady-fetche potrzebują tych map do wypełnienia
     // pól produkty/kwota/data_wyceny/link_formularz/id_wyceny/ilosc_telefonow.
-    const [wycenaByPhone, callCountByPhone] = await Promise.all([
+    // leadIndex = indeks Leady B2C po telefonie/ID, potrzebny do dociągnięcia
+    // kontekstu leada do każdej otwartej wyceny w kubełku "do domknięcia".
+    const [wycenaByPhone, callCountByPhone, leadIndex] = await Promise.all([
       fetchWycenaByPhone(supabase),
       fetchCallCountByPhone(supabase),
+      fetchLeadIndex(supabase),
     ]);
 
-    const [standupLog, logZmianWczoraj, logZmianDzis, nowe, wycenyZFeedbackiem, inneZFeedbackiem, nieodebrane, wycenyHistoryczne, zalegleRaw, rozmowySpozaBazyRaw, alertyWatchdogaRaw] = await Promise.all([
+    // Kubełek "Wyceny do domknięcia" liczymy NAJPIERW — daje excludePhones
+    // (telefony z otwartą wyceną), które odejmujemy z nowe/inne/nieodebrane,
+    // żeby case z wyceną żył w jednym miejscu (dedup).
+    const wycenyDoDomkniecia = await fetchWycenyDoDomkniecia(supabase, leadIndex, callCountByPhone);
+    const excludePhones = wycenyDoDomkniecia.excludePhones;
+
+    const [standupLog, logZmianWczoraj, logZmianDzis, nowe, inneZFeedbackiem, nieodebrane, zalegleRaw, rozmowySpozaBazyRaw, alertyWatchdogaRaw] = await Promise.all([
       fetchStandupLog3(supabase),
       fetchLogZmianRange(supabase, wczoraj.start, wczoraj.end),
       fetchLogZmianRange(supabase, dzis.start, dzis.end),
-      fetchNowe(supabase, wycenaByPhone, callCountByPhone),
-      fetchWycenyZFeedbackiem(supabase, wycenaByPhone, callCountByPhone),
-      fetchInneZFeedbackiem(supabase, wycenaByPhone, callCountByPhone),
-      fetchNieodebrane(supabase, wycenaByPhone, callCountByPhone),
-      fetchWycenyHistoryczne(supabase),
+      fetchNowe(supabase, wycenaByPhone, callCountByPhone, excludePhones),
+      fetchInneZFeedbackiem(supabase, wycenaByPhone, callCountByPhone, excludePhones),
+      fetchNieodebrane(supabase, wycenaByPhone, callCountByPhone, excludePhones),
       fetchZalegleFeedbacki(supabase, wycenaByPhone, callCountByPhone),
       fetchRozmowySpozaBazy(supabase, wycenaByPhone, callCountByPhone),
       fetchAlertyWatchdoga(supabase),
@@ -2564,13 +2736,12 @@ app.all('/api/cron/umowa-draft', async (req, res) => {
       '',
       'LEADY NOWE:', JSON.stringify(nowe),
       '',
-      'WYCENY AKTYWNE z feedbackiem:', JSON.stringify(wycenyZFeedbackiem),
+      `WYCENY DO DOMKNIĘCIA (top ${wycenyDoDomkniecia.cases.length} z ${wycenyDoDomkniecia.total} otwartych, wg score — tylko do wglądu, kategoria budowana automatycznie po twojej odpowiedzi):`,
+      JSON.stringify(wycenyDoDomkniecia.cases),
       '',
       'LEADY AKTYWNE z feedbackiem:', JSON.stringify(inneZFeedbackiem),
       '',
       'LEADY NIEODEBRANE ostatnie 7 dni:', JSON.stringify(nieodebrane),
-      '',
-      'WYCENY HISTORYCZNE:', JSON.stringify(wycenyHistoryczne),
       '',
       `NAJBARDZIEJ PRZETERMINOWANE FEEDBACKI (top ${zalegleDlaModelu.length} z ${zalegleRaw.length} łącznie, tylko do wglądu — patrz zasady niżej):`,
       JSON.stringify(zalegleDlaModelu),
@@ -2609,17 +2780,24 @@ app.all('/api/cron/umowa-draft', async (req, res) => {
     }
 
     const { phoneToLp, nextLp } = reassignLps(parsed);
-    const nextLpPoBazie = applyRozmowySpozaBazy(parsed, rozmowySpozaBazyRaw, phoneToLp, nextLp);
+    // Kubełek wyceny_do_domkniecia zaraz po reassignLps — jego telefony wchodzą
+    // do phoneToLp, więc applyZalegleFeedbacki (niżej) je pominie (bez dubla).
+    const nextLpPoWyceny = applyWycenyDoDomkniecia(parsed, wycenyDoDomkniecia.cases, phoneToLp, nextLp);
+    const nextLpPoBazie = applyRozmowySpozaBazy(parsed, rozmowySpozaBazyRaw, phoneToLp, nextLpPoWyceny);
     const nextLpPoZaleglych = applyZalegleFeedbacki(parsed, zalegleRaw, phoneToLp, nextLpPoBazie);
     applyAlertyWatchdoga(parsed, alertyWatchdogaRaw, phoneToLp, nextLpPoZaleglych);
     fixLpMentionsInComment(parsed);
     postProcessCalledToday(parsed, calledSet);
     postProcessCounts(parsed);
-    const leadyStatusByPhone = buildStatusByPhone([...nowe, ...wycenyZFeedbackiem, ...inneZFeedbackiem, ...nieodebrane, ...zalegleRaw]);
-    const wycenyStatusByPhone = buildStatusByPhone(wycenyHistoryczne);
-    postProcessStatus(parsed, leadyStatusByPhone, wycenyStatusByPhone);
+    // Backlog kubełka wycen: total wszystkich otwartych minus pokazane w planie.
+    parsed.plan.wyceny_domkniecia_backlog = Math.max(0, wycenyDoDomkniecia.total - (parsed.plan.wyceny_domkniecia_count || 0));
+    const leadyStatusByPhone = buildStatusByPhone([...nowe, ...wycenyDoDomkniecia.cases, ...inneZFeedbackiem, ...nieodebrane, ...zalegleRaw]);
+    postProcessStatus(parsed, leadyStatusByPhone);
     postProcessCallCounts(parsed, callCountByPhone);
     applyNaJutroCarryover(parsed, carryPhones);
+    // Ostatni krok: dolicz score/tier/dlaczego/💎 do wszystkich kategorii
+    // score'owalnych i posortuj je malejąco po score (silnik AI nietknięty).
+    applyScoring(parsed);
 
     const { error: upsertErr } = await supabase
       .from(STANDUP_TABLE)

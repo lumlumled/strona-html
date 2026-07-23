@@ -705,6 +705,32 @@
       background: #e8b400;
     }
 
+    /* Priorytet leada (scoring) — kropka 🔴/🟠/⚪ przed nazwiskiem, 💎 na
+       grubej wycenie, "dlaczego" w osobnej, wyszarzonej linijce pod spodem
+       (summary ma flex-wrap: wrap, więc flex-basis:100% zawija ją niżej). */
+    .lead summary .score-dot {
+      flex: 0 0 auto;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+    .lead summary .score-dot.score-hot { background: #d9483b; }
+    .lead summary .score-dot.score-warm { background: #e8832a; }
+    .lead summary .score-dot.score-cold { background: #cbc9c4; }
+    .lead summary .diament {
+      flex: 0 0 auto;
+      font-size: 0.82rem;
+      line-height: 1;
+    }
+    .lead summary .score-why {
+      flex-basis: 100%;
+      margin-left: 1.5rem;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      line-height: 1.25;
+    }
+    .lead.zamkniete summary .score-dot { opacity: 0.4; }
+
     .copy-btn {
       flex: 0 0 auto;
       display: inline-flex;
@@ -2194,16 +2220,15 @@
       alerty_watchdoga: '🚨 Alerty — temat ucieka',
       leady_do_odswiezenia: '🌡️ Leady do odświeżenia (cisza po rozmowie)',
       nowe: 'Nowe',
-      nieodebrane: 'Nieodebrane',
+      wyceny_do_domkniecia: '💰 Wyceny do domknięcia',
       inne_z_feedbackiem: 'Inne z feedbackiem (ostatnie 3 dni)',
-      wyceny_z_feedbackiem: 'Wyceny z feedbackiem (ostatnie 3 dni)',
-      wyceny_historyczne: 'Wyceny historyczne',
+      nieodebrane: 'Nieodebrane',
       zalegle_feedbacki: 'Zaległe feedbacki',
       rozmowy_spoza_bazy: 'Rozmowy spoza bazy',
       dodane_recznie: 'Dodane ręcznie',
     };
 
-    const KATEGORIA_ORDER = ['alerty_watchdoga', 'leady_do_odswiezenia', 'nowe', 'wyceny_z_feedbackiem', 'inne_z_feedbackiem', 'nieodebrane', 'wyceny_historyczne', 'zalegle_feedbacki', 'rozmowy_spoza_bazy', 'dodane_recznie'];
+    const KATEGORIA_ORDER = ['alerty_watchdoga', 'leady_do_odswiezenia', 'nowe', 'wyceny_do_domkniecia', 'inne_z_feedbackiem', 'nieodebrane', 'zalegle_feedbacki', 'rozmowy_spoza_bazy', 'dodane_recznie'];
 
     // Kolory statusów odwzorowane z CRM-u (Google Sheets) — przybliżone,
     // nie muszą być piksel w piksel identyczne.
@@ -2319,10 +2344,9 @@
     // nieznane klucze dostają etykietę z klucza (podkreślenia → spacje).
     const PLAN_TILE_LABELS = {
       nowe_count: 'Nowe',
-      wyceny_feedback_count: 'Wyceny z feedbackiem',
+      wyceny_domkniecia_count: '💰 Wyceny do domknięcia',
       inne_feedback_count: 'Inne z feedbackiem',
       nieodebrane_count: 'Nieodebrane',
-      wyceny_historyczne_count: 'Wyceny historyczne',
       zalegle_feedbacki_count: 'Zaległe feedbacki',
       zadzwoniono_dzis: 'Zadzwoniono dziś',
       wykonane_telefony: 'Wykonane telefony',
@@ -2371,7 +2395,7 @@
       // zmian), backlogi i priorytet_dzis_count to pomocnicze liczniki, nie
       // osobne kafelki — Plan dnia ma zostać przy dokładnie 6 kategoriach.
       const HIDDEN_PLAN_KEYS = [
-        'zadzwoniono_dzis', 'wyceny_feedback_backlog', 'inne_feedback_backlog', 'priorytet_dzis_count',
+        'zadzwoniono_dzis', 'wyceny_domkniecia_backlog', 'inne_feedback_backlog', 'priorytet_dzis_count',
         'priorytet_zamkniete', 'priorytet_niezamkniete',
       ];
       const known = Object.keys(PLAN_TILE_LABELS).filter((k) => !HIDDEN_PLAN_KEYS.includes(k) && plan[k] !== undefined);
@@ -2842,6 +2866,23 @@
         leadInstancesByLp.get(c.lp).push({ lead, checkbox });
       }
 
+      // Priorytet (score) — kropka 🔴/🟠/⚪ + 💎 na grubej wycenie (5k+).
+      // Deterministyczny z serwera (applyScoring); kategorie bez score
+      // (alerty/rozmowy) nie mają c.tier, więc badge się nie pokazuje.
+      if (c.tier) {
+        const dot = document.createElement('span');
+        dot.className = `score-dot score-${c.tier}`;
+        dot.title = c.score != null ? `Priorytet · score ${c.score}` : 'Priorytet';
+        summary.appendChild(dot);
+      }
+      if (c.diament) {
+        const gem = document.createElement('span');
+        gem.className = 'diament';
+        gem.textContent = '💎';
+        gem.title = 'Gruba wycena (5k+)';
+        summary.appendChild(gem);
+      }
+
       const name = document.createElement('span');
       name.className = 'name';
       name.textContent = c.imie || '(brak nazwiska)';
@@ -3079,6 +3120,15 @@
       }
 
       if (contactRow.children.length) summary.appendChild(contactRow);
+
+      // "Dlaczego" — 2-3 powody score'a ("wycena 6 500 zł · termin −2d · gorący"),
+      // żeby handlowiec ufał kolejności. Tylko gdy serwer je doliczył (applyScoring).
+      if (Array.isArray(c.dlaczego) && c.dlaczego.length) {
+        const why = document.createElement('span');
+        why.className = 'score-why';
+        why.textContent = c.dlaczego.join(' · ');
+        summary.appendChild(why);
+      }
 
       let statusEl = null;
       if (c.status && c.lp === undefined) {

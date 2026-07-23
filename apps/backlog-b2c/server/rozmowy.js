@@ -14,6 +14,7 @@
 // Umowy, helpery dat) — bez cyklicznego require i testowalny na atrapie.
 
 const { analyzeCall, statusRank, NO_ANSWER_ALLOWED_FROM, parseKwotaZlotych, isPlDateDue } = require('../../shared/server/call-analysis');
+const { normalizeTemperatura } = require('./scoring');
 
 const LEADY_B2C_TABLE = 'Leady B2C';
 const LOG_ZMIAN_TABLE = 'Log zmian';
@@ -95,7 +96,7 @@ async function applyRozmowaDoKontaktu(supabase, kontakt, { analysis, transcript,
 // deps: { getClient, findLeadByPhone, updateStatusInUmowa, markZamknieteInUmowa,
 //         warsawDateStr, warsawDateTimeStr, defaultHandlowiec }
 function registerRozmowyEndpoints(app, deps) {
-  const { getClient, findLeadByPhone, updateStatusInUmowa, markZamknieteInUmowa, warsawDateStr, warsawDateTimeStr } = deps;
+  const { getClient, findLeadByPhone, updateStatusInUmowa, markZamknieteInUmowa, patchScoreInUmowa, warsawDateStr, warsawDateTimeStr } = deps;
 
   // GET /api/rozmowy/szukaj?telefon= — podgląd dopasowania na żywo w panelu
   // (zanim użytkownik wklei transkrypcję wie, czy pisze do leada, do
@@ -232,6 +233,7 @@ function registerRozmowyEndpoints(app, deps) {
         if (insertErr) throw new Error(`Zapis do Log zmian: ${insertErr.message}`);
 
         const cenaZaproponowana = parseKwotaZlotych(analysis?.cena_zaproponowana);
+        const temperaturaPoRozmowie = normalizeTemperatura(analysis && analysis.jakosc_leada) || null;
         const { error: updateErr } = await supabase.rpc('app_update_leady_after_call', {
           p_phone: lead['Phone number'],
           p_ilosc_telefonow: String((Number(lead['Ilość telefonów']) || 0) + 1),
@@ -248,12 +250,14 @@ function registerRozmowyEndpoints(app, deps) {
           p_akcja_termin: akcjaTermin,
           p_akcja_owner: akcjaOwner,
           p_godzina_feedbacku: analysis?.data_feedbacku ? (analysis.godzina_feedbacku || null) : null,
+          p_temperatura: temperaturaPoRozmowie,
         });
         if (updateErr) throw new Error(`Zapis do Leady B2C: ${updateErr.message}`);
 
         // Plan dnia: status case'a dociąga się jak po telefonie z Zadarmy
         // (commit f580f96) — kategoria zostaje, status się aktualizuje.
         if (statusAfter) await updateStatusInUmowa(supabase, digits, statusAfter);
+        if (temperaturaPoRozmowie && patchScoreInUmowa) await patchScoreInUmowa(supabase, digits, temperaturaPoRozmowie);
         if (analysis?.zamkniete_dzis) await markZamknieteInUmowa(supabase, digits);
 
         return res.json({
