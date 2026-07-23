@@ -7,6 +7,7 @@
 // żeby treść odpowiadała temu, co klient faktycznie dostał.
 
 const { cenaFinalna, rabat24hKwota } = require('../../shared/server/wyceny-cena');
+const { numeryZeSmsemOd } = require('../../shared/server/auto-sms');
 
 // Wycena poniżej tej kwoty (albo bez kwoty) to prawie na pewno błąd/śmieć -
 // odbiorca dostaje flagę "podejrzany" i czeka na ręczne zatwierdzenie.
@@ -50,7 +51,7 @@ async function zbudujPopulacje(db, { minWiekDni = 30, owner = null, kanal = 'sms
   const { data: wyceny, error } = await q;
   if (error) throw error;
 
-  const wykluczeni = { bez_kontaktu: 0, optout: 0, w_kampanii: 0 };
+  const wykluczeni = { bez_kontaktu: 0, optout: 0, w_kampanii: 0, sms_30_dni: 0 };
 
   // grupowanie po telefonie: pierwsza (najnowsza) wycena niesie kontekst
   const poTelefonie = new Map();
@@ -88,6 +89,14 @@ async function zbudujPopulacje(db, { minWiekDni = 30, owner = null, kanal = 'sms
     zajete = new Set((zajeteRows || []).map((r) => telefonKlucz(r.telefon)));
   }
 
+  // Wspólny guard z auto-SMS-em po nieodebranym (decyzja Antoniego
+  // 2026-07-23, docs/plan-auto-sms-nieodebrane.md): numer, który dostał od
+  // nas JAKIKOLWIEK SMS w ostatnich 30 dniach (auto po nieodebranym, ręczny
+  // z karty, inna kampania), nie wchodzi do populacji — klient nie ma dostać
+  // dwóch różnych automatów w krótkim odstępie. Zbiór kluczy = 9 ostatnich
+  // cyfr, ta sama konwencja co telefonKlucz.
+  const swiezoSmsowane = await numeryZeSmsemOd(db, new Date(Date.now() - 30 * 86400000).toISOString());
+
   // imiona: wycena.imie_nazwisko, a gdy brak - Name z powiązanego leada
   const leadIds = [...new Set(
     [...poTelefonie.values()].flatMap((g) => g.wyceny.map((w) => Number(w.lead_id)).filter(Number.isFinite))
@@ -105,6 +114,7 @@ async function zbudujPopulacje(db, { minWiekDni = 30, owner = null, kanal = 'sms
   for (const g of poTelefonie.values()) {
     if (optout.has(g.telefon)) { wykluczeni.optout++; continue; }
     if (zajete.has(g.telefon)) { wykluczeni.w_kampanii++; continue; }
+    if (swiezoSmsowane.has(g.telefon)) { wykluczeni.sms_30_dni++; continue; }
     const najnowsza = g.wyceny[0];
     const leadId = najnowsza.lead_id ? String(Number(najnowsza.lead_id)) : null;
     const imie = String(najnowsza.imie_nazwisko || '').trim()

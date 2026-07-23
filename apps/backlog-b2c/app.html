@@ -1837,6 +1837,21 @@
       font-weight: 600;
     }
 
+    /* Auto-SMS po nieodebranym: ślad w zwiniętej linii połączenia. Czerwony
+       wariant = wysyłka się nie powiodła (sms_wyslany zaczyna się od "BŁĄD:"). */
+    .polaczenie-row .sms-badge {
+      font-size: 0.76rem;
+      padding: 0.15rem 0.55rem;
+      border-radius: 999px;
+      background: var(--accent);
+      color: var(--accent-contrast);
+      flex: 0 0 auto;
+      font-weight: 600;
+    }
+    .polaczenie-row .sms-badge.sms-blad {
+      background: var(--bad, #c0392b);
+    }
+
     .polaczenie-body {
       padding: 0 0.85rem 0.85rem 0.85rem;
       font-size: 0.88rem;
@@ -4178,6 +4193,18 @@
           badge.title = 'GPT ocenił po rozmowie, że z tym tematem nie trzeba dziś nic więcej robić';
           summary.appendChild(badge);
         }
+        // Auto-SMS po nieodebranym — ślad w zwiniętej linii; pełna treść po
+        // rozwinięciu ("SMS wysłany" niżej). "BŁĄD:" = wysyłka się nie powiodła.
+        if (row.sms_wyslany) {
+          const smsBlad = String(row.sms_wyslany).startsWith('BŁĄD:');
+          const smsBadge = document.createElement('span');
+          smsBadge.className = smsBlad ? 'sms-badge sms-blad' : 'sms-badge';
+          smsBadge.textContent = smsBlad ? '✉ SMS: błąd' : '✉ SMS';
+          smsBadge.title = smsBlad
+            ? 'Automatyczny SMS po nieodebranym NIE wyszedł — szczegóły po rozwinięciu'
+            : 'Po nieodebranym połączeniu poszedł automatyczny SMS — treść po rozwinięciu';
+          summary.appendChild(smsBadge);
+        }
         details.appendChild(summary);
 
         const body = document.createElement('div');
@@ -4188,6 +4215,7 @@
         appendPolaczenieField(body, 'Data feedbacku przed', row.data_feedbacku_przed);
         appendPolaczenieField(body, 'Data feedbacku po', row.data_feedbacku_po);
         appendPolaczenieField(body, 'Transkrypcja', row.transkrypcja);
+        appendPolaczenieField(body, 'SMS wysłany', row.sms_wyslany);
         if (!body.children.length) {
           const empty = document.createElement('p');
           empty.className = 'polaczenia-empty';

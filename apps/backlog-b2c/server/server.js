@@ -13,6 +13,7 @@ const { registerWycenyEndpoints } = require('../../shared/server/wyceny-endpoint
 const { createAuth, clientPayload, panelLinks, isAdmin } = require('../../shared/server/auth');
 const { servePushWorker, registerPushEndpoints, notifyUser } = require('../../shared/server/push');
 const { recordInboundSms } = require('../../shared/server/kontakt-send');
+const { autoSmsPoNieodebranym } = require('../../shared/server/auto-sms');
 const { scoreCase, applyScoring, normalizeTemperatura, SCORED_CATEGORIES } = require('./scoring');
 
 const app = express();
@@ -1003,7 +1004,9 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       || process.env.DEFAULT_HANDLOWIEC
       || null;
 
-    const { error: insertErr } = await supabase.from(LOG_ZMIAN_TABLE).insert({
+    // .select('id') — auto-SMS po nieodebranym dopisuje potem swój ślad
+    // (sms_wyslany) UPDATE-em do tego samego wiersza, patrz blok niżej.
+    const { data: logRow, error: insertErr } = await supabase.from(LOG_ZMIAN_TABLE).insert({
       zrodlo: 'zadarma_webhook',
       telefon: customerDigits || null,
       status_przed: statusBefore,
@@ -1037,7 +1040,7 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       // więc identyfikujemy po telefonie, jedynym polu po którym cała reszta
       // kodu i tak dopasowuje Leady B2C (patrz findLeadByPhone/update wyżej).
       dopasowano_id: lead ? String(lead['ID'] ?? '') : wycena ? wycena['ID'] : kontaktOrganic ? String(kontaktOrganic.id) : createdLead ? String(createdLead['Phone number'] ?? '') : null,
-    });
+    }).select('id').single();
     if (insertErr) console.error('Błąd zapisu Log zmian:', insertErr.message);
 
     if (lead) {
@@ -1169,6 +1172,45 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       }
     }
 
+    // ── Auto-SMS po nieodebranym (docs/plan-auto-sms-nieodebrane.md) ────────
+    // ŚWIADOMIE po wszystkich zapisach leada: RPC app_update_leady_after_call
+    // wyżej przepisał Historię rozmów ze stanu z początku webhooka — wysyłka
+    // wcześniej zgubiłaby dopisywaną przez sendSmsAndLog linię [SMS→]
+    // (nadpisana stalą Historią). Dlatego refetchLead: [SMS→] dokleja się do
+    // ŚWIEŻEJ Historii, już z wpisem tej rozmowy. Bramka (kierunek wychodzące,
+    // 1/dobę, 3 w 7 dni, godziny 8-20:30, kill switch AUTO_SMS_NIEODEBRANE)
+    // i treści siedzą w apps/shared/server/auto-sms.js. Nigdy nie wywala
+    // webhooka — zapis rozmowy jest ważniejszy niż SMS.
+    let autoSms = null;
+    if (label === 'no_answer') {
+      autoSms = await autoSmsPoNieodebranym(supabase, {
+        digits: customerDigits,
+        kierunek,
+        lead, // stan sprzed rozmowy: Name, Źródło, "Data Feedbacku" czyta bramka/szablon
+        leadClosed: Boolean(leadClosed),
+        feedbackBefore,
+        senderName: handlowiec,
+        pbxCallId: call.pbx_call_id || null,
+        refetchLead: () => findLeadByPhone(supabase, customerDigits),
+      });
+      if (autoSms && autoSms.status !== 'skip' && logRow && logRow.id) {
+        // Ślad w tym samym wierszu Log zmian co rozmowa → widok "Połączenia"
+        // pokazuje całą próbę kontaktu w jednym miejscu. Błąd też zapisujemy:
+        // cisza jest gorsza niż widoczny błąd.
+        const zapis = autoSms.status === 'sent' ? autoSms.tresc : `BŁĄD: ${autoSms.blad}`;
+        const { error: smsErr } = await supabase.from(LOG_ZMIAN_TABLE)
+          .update({ sms_wyslany: zapis }).eq('id', logRow.id);
+        if (smsErr) console.warn('Nie zapisano śladu auto-SMS w Log zmian:', smsErr.message);
+      }
+      if (autoSms && autoSms.status !== 'skip') {
+        await logOperation(supabase, 'auto_sms', autoSms.status, {
+          telefon: customerDigits, pbx_call_id: call.pbx_call_id || null,
+          scenariusz: autoSms.scenariusz, proba: autoSms.proba,
+          segmenty: autoSms.segmenty, koszt: autoSms.koszt, blad: autoSms.blad,
+        });
+      }
+    }
+
     // Analiza skończona — zdejmij spinner "rozmowa w analizie" z case'a.
     await clearRozmowaWToku(supabase, customerDigits);
 
@@ -1181,6 +1223,10 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       nowy_lead_bez_dopasowania: Boolean(createdLead),
       transkrypcja: Boolean(transcript),
       zamkniete_dzis: zaopiekowaneDzis,
+      // Skipy auto-SMS-a (z powodem) widoczne tu, bez osobnego wpisu w logu —
+      // wysyłki i błędy mają swój wpis 'auto_sms' wyżej.
+      auto_sms: autoSms ? autoSms.status : null,
+      auto_sms_powod: autoSms && autoSms.powod ? autoSms.powod : null,
     });
     res.json({ status: 'ok' });
   } catch (err) {

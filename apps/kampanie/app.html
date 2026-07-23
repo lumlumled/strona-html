@@ -558,7 +558,7 @@
       const w = pop.wykluczeni || {};
       $('popBox').innerHTML = `Populacja: <b>${pop.liczba} osób</b> na łącznie <b>${money(pop.suma_kwot)}</b> otwartych wycen`
         + (pop.podejrzani ? ` <span style="color:var(--warn)">· ⚠ ${pop.podejrzani} podejrzanych (kwota poniżej 400 zł) - wyjdą dopiero po Twoim zatwierdzeniu</span>` : '')
-        + ` <span class="muted">(pominięci: ${w.bez_kontaktu || 0} bez kontaktu, ${w.optout || 0} wypisanych, ${w.w_kampanii || 0} w innej kampanii)</span>`;
+        + ` <span class="muted">(pominięci: ${w.bez_kontaktu || 0} bez kontaktu, ${w.optout || 0} wypisanych, ${w.w_kampanii || 0} w innej kampanii, ${w.sms_30_dni || 0} z naszym SMS-em z ostatnich 30 dni)</span>`;
     }
 
     let popTimer = null;
