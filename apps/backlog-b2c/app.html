@@ -2230,6 +2230,11 @@
 
     const KATEGORIA_ORDER = ['alerty_watchdoga', 'leady_do_odswiezenia', 'nowe', 'wyceny_do_domkniecia', 'inne_z_feedbackiem', 'nieodebrane', 'zalegle_feedbacki', 'rozmowy_spoza_bazy', 'dodane_recznie'];
 
+    // Kategorie ukryte w widoku Backlog B2C (nadal budowane po stronie serwera,
+    // po prostu nie renderowane). „Alerty — temat ucieka" (watchdog) chowamy na
+    // prośbę Antoniego — za dużo szumu w planie dnia.
+    const HIDDEN_KATEGORIE = new Set(['alerty_watchdoga']);
+
     // Kolory statusów odwzorowane z CRM-u (Google Sheets) — przybliżone,
     // nie muszą być piksel w piksel identyczne.
     const STATUS_COLORS = {
@@ -3385,6 +3390,7 @@
         Object.keys(kategorie).filter((key) => !KATEGORIA_ORDER.includes(key))
       );
       const entries = orderedKeys
+        .filter((key) => !HIDDEN_KATEGORIE.has(key))
         .filter((key) => Array.isArray(kategorie[key]) && kategorie[key].length)
         .map((key) => [key, kategorie[key]]);
       if (!entries.length) return;
