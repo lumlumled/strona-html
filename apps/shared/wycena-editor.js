@@ -31,18 +31,25 @@ window.WycenaEditor = (() => {
   // sam produkt, więc "4× zasilacz 24 V" ma być 1 wierszem × 4 szt., a nie
   // czterema wierszami × 1. Pozycje bez SKU ("spoza oferty") NIE łączymy — dwa
   // różne produkty indywidualne mają puste SKU i muszą zostać osobno.
+  function skuKey(p) {
+    const sku = String((p && (p.SKU || p.sku)) || '').trim();
+    // Klucz = SKU + cena. Ten sam produkt w dwóch różnych cenach (np. druga
+    // partia z rabatem) zostaje osobno — inaczej suma pozycji by się zmieniła.
+    return sku ? `${sku}|${money(p.price)}` : '';
+  }
+
   function mergeBySku(list) {
     const out = [];
-    const bySku = new Map();
+    const byKey = new Map();
     (list || []).forEach((raw) => {
       const p = { ...raw };
-      const sku = String(p.SKU || p.sku || '').trim();
-      if (sku && bySku.has(sku)) {
-        const ex = bySku.get(sku);
+      const key = skuKey(p);
+      if (key && byKey.has(key)) {
+        const ex = byKey.get(key);
         ex.quantity = (money(ex.quantity) || 0) + (money(p.quantity) || 0);
         return;
       }
-      if (sku) bySku.set(sku, p);
+      if (key) byKey.set(key, p);
       out.push(p);
     });
     return out;
@@ -576,10 +583,10 @@ window.WycenaEditor = (() => {
           image_url: p.image_url || '',
         })),
       addItem: (p) => {
-        // To samo SKU co pozycja już na liście → dolicz ilość zamiast nowego
-        // wiersza. Bez SKU (spoza oferty) zawsze osobno.
-        const sku = String((p && (p.SKU || p.sku)) || '').trim();
-        const ex = sku ? state.items.find((x) => String(x.SKU || x.sku || '').trim() === sku) : null;
+        // To samo SKU + ta sama cena co pozycja już na liście → dolicz ilość
+        // zamiast nowego wiersza. Bez SKU (spoza oferty) zawsze osobno.
+        const key = skuKey(p);
+        const ex = key ? state.items.find((x) => skuKey(x) === key) : null;
         if (ex) ex.quantity = (money(ex.quantity) || 0) + (money(p.quantity) || 1);
         else state.items.push({ ...p });
         render();
