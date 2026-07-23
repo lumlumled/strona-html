@@ -29,6 +29,9 @@ const LEAD_STATUS_WYCENA = 'Wycena wysłana';
 // obniża cenę ostateczną, nie jest już samym banerem). Patrz wyceny-cena.js.
 const { cenaFinalna, rabat24hKwota } = require('./wyceny-cena');
 
+// Kierunek odwrotny: wycena "Stracone" → lead "Stracony" (patrz PUT niżej).
+const { stracLeadaPoWycenie } = require('./wyceny-sync');
+
 // Publiczny link formularza dla klienta (podmieniany na formularz-test w testach).
 // Czysty ?id= bez tokenu — decyzja Antoniego: link ma być krótki. Endpoint GET
 // i tak przyjmuje linki bez tokenu (tokenOk zwraca true przy braku t); form_token
@@ -364,6 +367,10 @@ const EDITABLE_WYCENA_FIELDS = [
   'first_name', 'last_name', 'ship_street', 'ship_house_no', 'ship_flat_no',
   'ship_postcode', 'ship_city', 'ship_country',
   'invoice_company_nip', 'invoice_company_name',
+  // Powód straty (migracja 013) — edytowalny, bo status 'Stracone' ustawiony
+  // od strony wyceny domyka też leada i przenosi ten tekst na niego
+  // (stracLeadaPoWycenie). Bez tego strata z panelu Wycen byłaby bezimienna.
+  'powod_straty',
 ];
 
 // Push „Nowa wycena" — do adminów + ownera wyceny, ale NIGDY do osoby, która ją
@@ -401,7 +408,11 @@ async function notifyWycenaCreated(db, wycena, actorName) {
   }
 }
 
-function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isAdmin }) {
+// onStracony — opcjonalny hook hosta, wołany PO tym, jak strata wyceny domknie
+// jej leada ({ telefon, status }). Backlog podpina pod niego synchronizację
+// planu dnia (ta sama wtyczka co przy POST /api/leady/stracony); panel Wyceny
+// nie ma czego synchronizować i go nie daje.
+function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isAdmin, onStracony }) {
   function handleError(res, err, fallbackStatus = 400) {
     console.error(err);
     res.status(fallbackStatus).json({ error: err.message || 'Wewnętrzny błąd serwera' });
@@ -785,7 +796,29 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
       // Ręczne przypięcie wyceny do leada ("Powiązany lead") odbija status
       // "Wycena wysłana" + link na leadzie, tak samo jak utworzenie wyceny.
       if (patch.lead_id) await linkWycenaToLead(supabase, data[0]);
-      res.json({ data: decorate(data[0]) });
+
+      // Wycena oznaczona jako stracona domyka też swojego leada — ta sama
+      // zasada w obie strony (decyzja Antoniego 2026-07-23), żeby temat nie
+      // został żywy po jednej stronie i nie wrócił do planu dnia jako case do
+      // dzwonienia. `onStracony` (hook hosta) synchronizuje wtedy plan dnia.
+      let leadStracony;
+      if (patch.status === 'Stracone') {
+        const wynik = await stracLeadaPoWycenie(supabase, data[0], {
+          powod: patch.powod_straty || data[0].powod_straty || null,
+          handlowiec: req.user && req.user.name,
+        });
+        if (wynik) {
+          leadStracony = wynik.leadId;
+          if (onStracony && wynik.telefon) {
+            try {
+              await onStracony(supabase, { telefon: wynik.telefon, status: 'Stracony' });
+            } catch (err) {
+              console.error('Sync planu dnia po stracie z wyceny:', err.message);
+            }
+          }
+        }
+      }
+      res.json({ data: decorate(data[0]), ...(leadStracony ? { lead_stracony: leadStracony } : {}) });
     } catch (err) {
       handleError(res, err, 502);
     }

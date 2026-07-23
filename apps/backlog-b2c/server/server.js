@@ -1579,6 +1579,13 @@ registerWycenyEndpoints(app, {
   requireView: wycenyAllow,
   requireEdit: wycenyAllow,
   isAdmin,
+  // Wycena oznaczona jako stracona domyka swojego leada — plan dnia (migawka
+  // z rana) musi wtedy dostać nowy status i ptaszek, żeby domknięty temat nie
+  // wisiał do wieczora jako case do dzwonienia.
+  onStracony: async (supabase, { telefon, status }) => {
+    await updateStatusInUmowa(supabase, telefon, status);
+    await markZamknieteInUmowa(supabase, telefon);
+  },
 });
 
 // Watchdog "temat ucieka" (docs/plan-watchdog-feedback.md): odczyt/zamykanie
@@ -1601,7 +1608,7 @@ app.get('/api/leady/akcje', async (req, res) => {
     // (front sprawdza val.akcja).
     const { data, error } = await supabase
       .from(LEADY_B2C_TABLE)
-      .select('"Phone number", "Name", "Deal stage", "Najbliższa akcja", "Najbliższa akcja termin", "Najbliższa akcja owner", "Link do formularza"');
+      .select('"Phone number", "Name", "Deal stage", "Najbliższa akcja", "Najbliższa akcja termin", "Najbliższa akcja owner", "Link do formularza", "ID Leada"');
     if (error) throw error;
     const rows = (data || [])
       .filter((row) => row['Phone number'])
@@ -1609,6 +1616,12 @@ app.get('/api/leady/akcje', async (req, res) => {
         telefon: formatPhonePlus(row['Phone number']),
         imie: row['Name'] || '',
         status: row['Deal stage'] || '',
+        // Klucz do zapisu statusu wprost na leadzie z pigułki w planie dnia
+        // (PUT /api/leady/:idLeada). Sam dokument Umowy go NIE niesie: pole
+        // `id_lida` case'a jest puste w priorytecie dziś i w większości
+        // kategorii (sprawdzone na planie 23.07.2026), więc front musi je
+        // dobrać po telefonie z tego właśnie endpointu.
+        id_leada: row['ID Leada'] ?? null,
         akcja: String(row['Najbliższa akcja'] || '').trim(),
         termin: row['Najbliższa akcja termin'] || '',
         owner: row['Najbliższa akcja owner'] || '',

@@ -5,7 +5,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { zamknijWycenyStraconego } = require('./wyceny-sync');
+const { zamknijWycenyStraconego, stracLeadaPoWycenie } = require('./wyceny-sync');
 
 // Atrapa Supabase wierna użytemu API, rozdzielona PER TABELA — domykanie
 // wyceny dotyka dwóch: 'wyceny' (status) i 'feedback_watch' (resolveWatch,
@@ -92,4 +92,81 @@ test('błąd bazy nie wywraca operacji nadrzędnej (rozmowy/edycji leada)', asyn
   const res = await zamknijWycenyStraconego(sb, { leadId: 467, telefon: '518337069' });
   assert.deepEqual(res.ids, []);
   assert.equal(res.error, 'timeout');
+});
+
+// ── Kierunek odwrotny: wycena "Stracone" → lead "Stracony" ──────────────────
+// Atrapa dla stracLeadaPoWycenie: lead czytany z "Leady B2C", zapis idzie RPC
+// app_lead_stracony (migracja 013), a ślad decyzji do "Log zmian".
+function fakeSupabaseLead({ lead = null, leadByPhone = null } = {}) {
+  const calls = { rpc: null, log: null, phoneQuery: null, idQuery: null };
+  return {
+    calls,
+    rpc(name, params) { calls.rpc = { name, params }; return Promise.resolve({ error: null }); },
+    from(table) {
+      if (table === 'Log zmian') {
+        return { insert(row) { calls.log = row; return Promise.resolve({ error: null }); } };
+      }
+      const q = {
+        _col: null,
+        select() { return q; },
+        eq(col, val) { q._col = col; if (col === 'Phone number') calls.phoneQuery = val; else calls.idQuery = val; return q; },
+        limit() {
+          const wynik = q._col === 'Phone number' ? leadByPhone : lead;
+          return Promise.resolve({ data: wynik ? [wynik] : [], error: null });
+        },
+      };
+      return q;
+    },
+  };
+}
+
+const LEAD = { 'ID Leada': 467, ID: 'L467', 'Deal stage': 'Wycena wysłana', 'Historia rozmów': 'stary wpis' };
+
+test('wycena stracona domyka leada tym samym RPC co ręczne domknięcie', async () => {
+  const sb = fakeSupabaseLead({ lead: LEAD });
+  const res = await stracLeadaPoWycenie(sb, { id: 1974, lead_id: 467, telefon_digits: '518337069' }, {
+    powod: 'Za drogo, ma ofertę 3300', handlowiec: 'Lorenzo',
+  });
+
+  assert.deepEqual(res, { leadId: 467, statusPrzed: 'Wycena wysłana', telefon: '48518337069' });
+  assert.equal(sb.calls.rpc.name, 'app_lead_stracony');
+  assert.equal(sb.calls.rpc.params.p_id_leada, 467);
+  assert.equal(sb.calls.rpc.params.p_powod, 'Za drogo, ma ofertę 3300');
+  // Nowy wpis na GÓRZE historii, stary zachowany.
+  assert.match(sb.calls.rpc.params.p_historia, /\[Stracony\] Za drogo, ma ofertę 3300\nstary wpis$/);
+  assert.equal(sb.calls.log.zrodlo, 'wycena_stracona');
+  assert.equal(sb.calls.log.status_przed, 'Wycena wysłana');
+  assert.equal(sb.calls.log.status_po, 'Stracony');
+});
+
+test('lead znajdowany po telefonie, gdy wycena nie ma lead_id (sierota)', async () => {
+  const sb = fakeSupabaseLead({ leadByPhone: LEAD });
+  const res = await stracLeadaPoWycenie(sb, { id: 1974, lead_id: null, telefon_digits: '518337069' }, {});
+  assert.equal(res.leadId, 467);
+  // Leady B2C trzyma numer z prefiksem 48 jako liczbę.
+  assert.equal(sb.calls.phoneQuery, 48518337069);
+});
+
+test('sprzedanego leada nie cofa strata wyceny', async () => {
+  const sb = fakeSupabaseLead({ lead: { ...LEAD, 'Deal stage': 'Sprzedane' } });
+  assert.equal(await stracLeadaPoWycenie(sb, { id: 1, lead_id: 467 }, {}), null);
+  assert.equal(sb.calls.rpc, null); // żadnego zapisu
+});
+
+test('lead już stracony — bez powtórnego zapisu i drugiego wpisu w logu', async () => {
+  const sb = fakeSupabaseLead({ lead: { ...LEAD, 'Deal stage': 'Stracony' } });
+  assert.equal(await stracLeadaPoWycenie(sb, { id: 1, lead_id: 467 }, {}), null);
+  assert.equal(sb.calls.rpc, null);
+  assert.equal(sb.calls.log, null);
+});
+
+test('brak leada (czysta sierota z wyceną) to nie błąd', async () => {
+  const sb = fakeSupabaseLead({});
+  assert.equal(await stracLeadaPoWycenie(sb, { id: 1, lead_id: null, telefon_digits: '500100200' }, {}), null);
+});
+
+test('bez powodu wpis i tak mówi, skąd wzięła się strata', async () => {
+  const sb = fakeSupabaseLead({ lead: LEAD });
+  await stracLeadaPoWycenie(sb, { id: 1974, lead_id: 467 }, {});
+  assert.match(sb.calls.log.opis, /\[Stracony\] Wycena 1974 oznaczona jako stracona/);
 });

@@ -27,6 +27,19 @@ function nine(v) {
   return String(v || '').replace(/\D/g, '').replace(/^48/, '');
 }
 
+// "DD.MM.YYYY HH:mm" w czasie warszawskim — format wpisów w "Historia rozmów"
+// (parsowany przez kartę leada). Liczony lokalnie, żeby ten moduł nie ciągnął
+// helperów z serwera Backlogu.
+function warsawDateTimeStr(date) {
+  const f = new Intl.DateTimeFormat('pl-PL', {
+    timeZone: 'Europe/Warsaw',
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  const p = Object.fromEntries(f.formatToParts(date).filter((x) => x.type !== 'literal').map((x) => [x.type, x.value]));
+  return `${p.day}.${p.month}.${p.year} ${p.hour}:${p.minute}`;
+}
+
 // Zwraca { ids, error } — lista id domkniętych wycen (pusta, gdy nie było
 // czego domykać). Nie rzuca: to efekt uboczny zmiany statusu leada i nie może
 // wywrócić głównej operacji (rozmowy, edycji karty). Błąd ląduje w polu error
@@ -78,4 +91,70 @@ async function zamknijWycenyStraconego(supabase, { leadId, telefon } = {}) {
   }
 }
 
-module.exports = { zamknijWycenyStraconego };
+// ── Kierunek odwrotny: wycena "Stracone" → lead "Stracony" ──────────────────
+// Decyzja Antoniego 2026-07-23: to ma działać na tej samej zasadzie w obie
+// strony. Wycena i lead to jeden temat — domknięcie po którejkolwiek stronie
+// nie może zostawiać drugiej jako żywej, bo backlog zaraz pokaże ją jako
+// otwarty case do dzwonienia.
+//
+// Zapis idzie RPC app_lead_stracony: jedna transakcja ustawia status + powód,
+// czyści feedback i akcję (inaczej lead wracałby alertem watchdoga) i wyłącza
+// trigger log_zmian_from_leady, bo własny, bogatszy wiersz do "Log zmian"
+// wstawiamy tutaj — bez bypassu jedno domknięcie logowałoby się dwa razy.
+//
+// Nie rzuca — jak zamknijWycenyStraconego. Zwraca { leadId, statusPrzed } albo
+// null, gdy nie było czego domykać (brak leada / lead już stracony).
+async function stracLeadaPoWycenie(supabase, wycena, { powod, handlowiec, whenText } = {}) {
+  if (!wycena) return null;
+  try {
+    const d9 = nine(wycena.telefon_digits || wycena.telefon_e164);
+    const idNum = Number(wycena.lead_id);
+    let lead = null;
+    if (Number.isFinite(idNum) && idNum > 0) {
+      const { data, error } = await supabase
+        .from('Leady B2C').select('*').eq('ID Leada', idNum).limit(1);
+      if (error) throw error;
+      lead = data[0] || null;
+    }
+    if (!lead && d9) {
+      // Leady B2C trzyma numer z prefiksem 48 jako liczbę (patrz findLeadByPhone).
+      const { data, error } = await supabase
+        .from('Leady B2C').select('*').eq('Phone number', Number(`48${d9}`)).limit(1);
+      if (error) throw error;
+      lead = data[0] || null;
+    }
+    if (!lead) return null;
+
+    const statusPrzed = lead['Deal stage'] || null;
+    // Już domknięty (albo sprzedany — strata wyceny nie cofa sprzedaży).
+    if (statusPrzed === 'Stracony' || statusPrzed === 'Sprzedane') return null;
+
+    const opis = `[Stracony] ${powod || `Wycena ${wycena.id} oznaczona jako stracona`}`;
+    const historiaEntry = `${whenText || warsawDateTimeStr(new Date())} - ${opis}`;
+    const { error: rpcErr } = await supabase.rpc('app_lead_stracony', {
+      p_id_leada: Number(lead['ID Leada']),
+      p_powod: powod || null,
+      p_historia: lead['Historia rozmów'] ? `${historiaEntry}\n${lead['Historia rozmów']}` : historiaEntry,
+    });
+    if (rpcErr) throw rpcErr;
+
+    const { error: logErr } = await supabase.from('Log zmian').insert({
+      zrodlo: 'wycena_stracona',
+      telefon: d9 ? `48${d9}` : null,
+      status_przed: statusPrzed,
+      status_po: 'Stracony',
+      opis,
+      handlowiec: handlowiec || null,
+      dopasowano_tabela: 'Leady B2C',
+      dopasowano_id: String(lead['ID'] ?? ''),
+    });
+    if (logErr) console.error('Nie zapisano straty leada do Log zmian:', logErr.message);
+
+    return { leadId: Number(lead['ID Leada']), statusPrzed, telefon: d9 ? `48${d9}` : null };
+  } catch (err) {
+    console.error('Nie udało się oznaczyć leada jako straconego po wycenie:', err.message);
+    return null;
+  }
+}
+
+module.exports = { zamknijWycenyStraconego, stracLeadaPoWycenie };

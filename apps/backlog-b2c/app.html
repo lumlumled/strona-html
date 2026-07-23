@@ -3273,6 +3273,23 @@
             try {
               await saveLeadField(c.lp, 'status', opt);
               c.status = opt;
+              // Plan dnia to migawka z rana — sam zapis w dokumencie zostawiłby
+              // leada ze starym statusem, a jutrzejszy plan zbudowałby się z
+              // nieaktualnych danych. Pigułka ma modulować listę I odbijać się
+              // na leadzie (decyzja Antoniego 2026-07-23). Wybór "Stracony"
+              // domyka tą drogą także otwartą wycenę klienta — PUT /api/leady
+              // woła zamknijWycenyStraconego (patrz leady-endpoints.js).
+              // Case z wyceny historycznej ma własny słownik statusów (Open/
+              // Closed/...), który nie należy do lejka leada — nie dotykamy.
+              // ID Leada: z case'a, a gdy go nie niesie (tak jest w priorytecie
+              // dziś i w większości kategorii) — po telefonie z /api/leady/akcje.
+              // akcjeByPhone bywa jeszcze null (pierwsze sekundy po wejściu),
+              // wtedy zostaje sam zapis w dokumencie planu.
+              if (!isWycenaHistoryczna) {
+                const zAkcji = akcjeByPhone && akcjeByPhone.get(normalizePhone(c.telefon));
+                const idLeada = c.id_lida || (zAkcji && zAkcji.id_leada);
+                if (idLeada) await putLeadField(idLeada, 'Deal stage', opt);
+              }
             } catch (err) {
               c.status = previous;
               trigger.textContent = previous;
@@ -3875,6 +3892,21 @@
     function autoGrowInput() {
       composerInput.style.height = 'auto';
       composerInput.style.height = `${Math.min(composerInput.scrollHeight, 128)}px`;
+    }
+
+    // Zapis JEDNEGO pola wprost na leadzie (wspólny endpoint CRM-u i Backlogu).
+    // Używane przez pigułkę statusu w planie dnia: dokument Umowy to migawka,
+    // a "Deal stage" musi wylądować w Leady B2C, inaczej jutrzejszy plan i
+    // karta leada pokazywałyby stary status.
+    async function putLeadField(idLeada, field, value) {
+      const res = await fetch(`${API_BASE}/api/leady/${encodeURIComponent(idLeada)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ field, value }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+      return body;
     }
 
     async function postJson(url, payload) {
