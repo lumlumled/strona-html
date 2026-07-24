@@ -2118,8 +2118,23 @@ async function fetchWycenyDoDomkniecia(supabase, leadIndex, callCountByPhone) {
     c.score = scoreCase(c, now).score;
     return c;
   });
-  cases.sort((a, b) => (b.score || 0) - (a.score || 0));
-  return { cases: cases.slice(0, WYCENY_DO_DOMKNIECIA_CAP), total: real.length, excludePhones };
+  // Klient z konkretnym PRZYSZŁYM terminem kontaktu (Data Feedbacku po dziś)
+  // jest UMÓWIONY, nie "do domknięcia dziś" — chowamy go z tego kubełka, tak
+  // samo jak robią to pozostałe kubełki feedbackowe (filtr `<= now` w
+  // fetchInneZFeedbackiem/fetchZalegleFeedbacki). Bez tego gruba wycena z
+  // odległym terminem (np. 5 335 zł, feedback we wrześniu) i tak przebijała
+  // top-15 i śmieciła plan dnia — przyszły termin daje 0 pkt za termin, ale
+  // sama wartość wynosiła case wysoko. Telefon został już dodany do
+  // excludePhones w mapie wyżej, więc case nie wycieknie do nowe/inne/
+  // nieodebrane; wróci sam w dniu terminu przez fetchZalegleFeedbacki (siatka
+  // bezpieczeństwa `<= now`) i widnieje w panelu Feedbacki (kalendarz). Pusta
+  // Data Feedbacku → parseLeadDate=null → zostaje (to realna wycena do domknięcia).
+  const aktywne = cases.filter((c) => {
+    const fb = parseLeadDate(c.data_feedbacku);
+    return !(fb && fb.getTime() > now);
+  });
+  aktywne.sort((a, b) => (b.score || 0) - (a.score || 0));
+  return { cases: aktywne.slice(0, WYCENY_DO_DOMKNIECIA_CAP), total: aktywne.length, excludePhones };
 }
 
 // Siatka bezpieczeństwa: WSZYSTKIE leady z przeterminowanym feedbackiem,
