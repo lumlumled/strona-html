@@ -48,6 +48,37 @@ const SENDER = {
   },
 };
 
+// ── Paczka w Weekend (end_of_week_collection) ────────────────────────────────
+// InPost: nadanie do paczkomatu 24/7 w oknie czw ~18:00 → sob dochodzi w
+// sobotę (a nadanie sobotnie w niedzielę), zamiast paczki leżącej do
+// poniedziałku. Reguła (2026-07-24, prośba Antoniego): niezależnie od drogi
+// nadania (zwykłe, dosyłka, markPaidAndShip, „Zamów kuriera ponownie" — wszystkie
+// idą przez createShipment) w tym oknie automatycznie zamawiamy paczkę weekendową.
+// Płatny dodatek (~4 zł netto). Kill-switch: INPOST_WEEKEND=0.
+//
+// Próbujemy dla OBU dróg (paczkomat + kurier), ale różna jest pewność:
+//  • paczkomat 24/7 — właściwa droga usługi, zwykle przyjmie flagę,
+//  • kurier pod adres — sobotni kurier InPost jest ograniczony (duże miasta),
+//    więc best-effort: jak nie wejdzie, to nie wolno przez to zablokować nadania.
+// Dlatego zawsze pod flagą jest fallback (patrz koniec createShipment): jak InPost
+// odrzuci end_of_week_collection, ponawiamy raz BEZ niej — czyli zwykłe zamówienie
+// (paczkomat standard / kurier standard), przesyłka i tak wychodzi. Dokładne
+// okno/strefę i tak weryfikuje InPost.
+function weekendWlaczony() {
+  return process.env.INPOST_WEEKEND !== '0';
+}
+function oknoWeekendoweOtwarte(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Warsaw', weekday: 'short', hour: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now);
+  const dzien = parts.find((p) => p.type === 'weekday')?.value;
+  const godz = Number(parts.find((p) => p.type === 'hour')?.value);
+  if (dzien === 'Thu') return godz >= 18; // czwartek od 18:00 (otwarcie okna etykiet)
+  if (dzien === 'Fri') return true;        // cały piątek → dostawa w sobotę
+  if (dzien === 'Sat') return godz < 13;   // sobota do ~13:00 → dostawa w niedzielę
+  return false;
+}
+
 // Przesyłka paczkomatowa (inpost_locker_standard, template medium) albo
 // kurierska (inpost_courier_standard, wymiary jak dziś w Baselinkerze:
 // 50×35×18 cm, 3 kg). codAmount/insuranceAmount w zł (null = bez).
@@ -80,6 +111,10 @@ async function createShipment(wycena, { locker, codAmount, insuranceAmount, refe
       target_point: targetPoint,
     };
     payload.service = 'inpost_locker_standard';
+    // Paczka w Weekend — w oknie czw 18:00 → sob ~13:00 (patrz komentarz wyżej).
+    if (weekendWlaczony() && oknoWeekendoweOtwarte()) {
+      payload.end_of_week_collection = true;
+    }
   } else {
     receiver.address = {
       street: wycena.ship_street || '',
@@ -91,8 +126,25 @@ async function createShipment(wycena, { locker, codAmount, insuranceAmount, refe
     payload.parcels = { dimensions: { length: '50', width: '35', height: '18' }, weight: { amount: '3', unit: 'kg' } };
     payload.custom_attributes = { sending_method: 'dispatch_order' };
     payload.service = 'inpost_courier_standard';
+    // Sobotni kurier — best-effort (patrz komentarz wyżej). Jak InPost odrzuci,
+    // fallback na końcu ponawia jako zwykły kurier, więc flow się nie wywala.
+    if (weekendWlaczony() && oknoWeekendoweOtwarte()) {
+      payload.end_of_week_collection = true;
+    }
   }
-  return shipxFetch(`/organizations/${orgId()}/shipments`, { method: 'post', body: payload });
+  const url = `/organizations/${orgId()}/shipments`;
+  if (payload.end_of_week_collection) {
+    try {
+      return await shipxFetch(url, { method: 'post', body: payload });
+    } catch (e) {
+      // Flaga weekendowa odrzucona (poza oknem / paczkomat nie-24/7 / strefa bez
+      // soboty) NIE może zablokować nadania — kasujemy ją i ponawiamy raz.
+      // Jeśli błąd był z innego powodu, poleci ponownie i realny błąd wróci wyżej.
+      console.warn(`[weekend] end_of_week_collection odrzucone dla #${reference || wycena.id}: ${e.message} — ponawiam standardowo`);
+      delete payload.end_of_week_collection;
+    }
+  }
+  return shipxFetch(url, { method: 'post', body: payload });
 }
 
 async function getShipment(shipmentId) {
