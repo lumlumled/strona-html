@@ -23,6 +23,9 @@ const furgonetka = require('./wyceny-furgonetka');
 const mailer = require('./wyceny-mailer');
 // "Cena, którą klient realnie płaci" (rabat czasowy obniża cenę ostateczną).
 const { cenaFinalna } = require('./wyceny-cena');
+// Meta Conversions API (Conversion Leads): zapłata leada = etap "Sprzedane"
+// dosyłany do optymalizacji reklam po Facebook Leads ID. Patrz meta-capi.js.
+const metaCapi = require('./meta-capi');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -626,6 +629,7 @@ async function onInvoicePaid(db, uuid) {
       await notifyFulfillment(db, wycena); // gotowe do spakowania
       await pushWeekend(db, wycena);
     }
+    await metaCapi.notifyPurchase(db, wycena, kwotaFinalna); // Meta CAPI "Sprzedane"
     return { ok: true };
   } catch (err) {
     await zapiszBlad(db, wycenaId, 'onInvoicePaid', err);
@@ -668,6 +672,7 @@ async function markPaidAndShip(db, wycenaId) {
       await notifyFulfillment(db, wycena);
       await pushWeekend(db, wycena);
     }
+    await metaCapi.notifyPurchase(db, wycena, kwotaFinalna); // Meta CAPI "Sprzedane"
     return { ok: true, path: 'manual-paid' };
   } catch (err) {
     await zapiszBlad(db, wycenaId, 'markPaidAndShip', err);
@@ -772,6 +777,7 @@ async function realizujSklep(db, wycenaId, { pobranie } = {}) {
     });
     await notifyFulfillment(db, wycena);
     await pushWeekend(db, wycena);
+    await metaCapi.notifyPurchase(db, wycena, kwotaFinalna); // Meta CAPI "Sprzedane"
     return { ok: true, path: 'sklep-oplacone' };
   } catch (err) {
     await zapiszBlad(db, wycenaId, 'realizujSklep', err);
@@ -818,6 +824,7 @@ async function onDelivered(db, shipment) {
         status: 'Closed',
         worker_last_error: null,
       });
+      await metaCapi.notifyPurchase(db, wycena, cenaFinalna(wycena)); // Meta CAPI "Sprzedane" (COD doręczone)
     } catch (err) {
       await zapiszBlad(db, wycena.id, 'onDelivered', err);
       await releaseLock(db, wycena.id, token);

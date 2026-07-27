@@ -29,6 +29,10 @@ const LEAD_STATUS_WYCENA = 'Wycena wysłana';
 // obniża cenę ostateczną, nie jest już samym banerem). Patrz wyceny-cena.js.
 const { cenaFinalna, rabat24hKwota } = require('./wyceny-cena');
 
+// Meta Conversions API (Conversion Leads): wejście leada na "Wycena wysłana"
+// dosyłamy do optymalizacji reklam po Facebook Leads ID. Patrz meta-capi.js.
+const metaCapi = require('./meta-capi');
+
 // Kierunek odwrotny: wycena "Stracone" → lead "Stracony" (patrz PUT niżej).
 const { stracLeadaPoWycenie } = require('./wyceny-sync');
 
@@ -214,7 +218,7 @@ async function linkWycenaToLead(supabase, wycena) {
       const id = Number(wycena.lead_id);
       if (Number.isFinite(id)) {
         const { data } = await supabase
-          .from('Leady B2C').select('"ID Leada", "Deal stage", "Link do formularza"')
+          .from('Leady B2C').select('"ID Leada", "Deal stage", "Link do formularza", "Facebook Leads ID", "Email", "Phone number"')
           .eq('ID Leada', id).limit(1);
         lead = data && data[0];
       }
@@ -224,7 +228,7 @@ async function linkWycenaToLead(supabase, wycena) {
       const cands = leadPhoneCandidates(digits);
       if (cands.length) {
         const { data } = await supabase
-          .from('Leady B2C').select('"ID Leada", "Deal stage", "Link do formularza"')
+          .from('Leady B2C').select('"ID Leada", "Deal stage", "Link do formularza", "Facebook Leads ID", "Email", "Phone number"')
           .in('Phone number', cands).limit(1);
         lead = data && data[0];
         matchedByPhone = Boolean(lead);
@@ -233,12 +237,21 @@ async function linkWycenaToLead(supabase, wycena) {
     if (!lead) return null;
 
     const patch = { 'Link do formularza': formularzLink(wycena) };
-    if (statusRank(lead['Deal stage']) < statusRank(LEAD_STATUS_WYCENA)) {
+    const crossedIntoWycena = statusRank(lead['Deal stage']) < statusRank(LEAD_STATUS_WYCENA);
+    if (crossedIntoWycena) {
       patch['Deal stage'] = LEAD_STATUS_WYCENA;
     }
     const { error: upErr } = await supabase
       .from('Leady B2C').update(patch).eq('ID Leada', lead['ID Leada']);
     if (upErr) throw upErr;
+
+    // Meta Conversions API: lead wszedł na etap "Wycena wysłana" → dosyłamy do
+    // optymalizacji Conversion Leads (dopasowanie po Facebook Leads ID). Tylko
+    // przy realnym wejściu na etap (w górę lejka); best-effort, nie wywala
+    // zapisu wyceny (notifyQuoteSent łapie własne błędy i dedupuje per wycena).
+    if (crossedIntoWycena) {
+      await metaCapi.notifyQuoteSent(supabase, lead, wycena);
+    }
 
     // Dopisz powiązanie na wycenie, gdy złapaliśmy leada po telefonie (int-
     // jako-tekst, kanonicznie jak reszta lead_id — patrz backfill z 2026-07-12).

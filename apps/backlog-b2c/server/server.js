@@ -1417,6 +1417,17 @@ app.post('/api/webhooks/lead', express.json(), async (req, res) => {
     const email = (body.email ?? d.email ?? '').toString().trim() || null;
     const phoneDigits = normalizePhoneDigits(body.phone ?? body.phone_number ?? body.telefon ?? d.phone_number ?? d.phone);
 
+    // Odpowiedź na pytanie kwalifikujące z formularza ("w jakim czasie planujesz
+    // montaż oświetlenia") = sygnał pilności/priorytetu. Make mapuje ją jako
+    // data.priority (pole tablicowe FB może przyjść jako tablica albo string).
+    // Ląduje na WIERZCHU notatki ("Montaż planowany: …"), żeby handlowiec od razu
+    // widział, jak pilny jest lead. Fallback: surowy klucz pytania z data.
+    const priorityRaw = body.priority ?? d.priority ?? d['w_jakim_czasie_planujesz_zrealizować_montaż_oświetlenia?'];
+    const priorityAns = (Array.isArray(priorityRaw)
+      ? priorityRaw.filter(Boolean).join(', ')
+      : String(priorityRaw ?? '')).trim();
+    const montazNote = priorityAns ? `Montaż planowany: ${priorityAns}` : null;
+
     // Kontekst marketingowy: id + nazwy kampanii/adsetu/reklamy, platforma,
     // isOrganic, formId. Trzymamy pełny, ustrukturyzowany obiekt (nie tylko
     // sklejony ad_name) — panel analiz grupuje po kampanii/adsecie i spina z
@@ -1487,6 +1498,11 @@ app.post('/api/webhooks/lead', express.json(), async (req, res) => {
       if (adName && !existing.ad_name) enrich.ad_name = adName;
       if (email && !existing.Email) enrich.Email = email;
       if (name && !existing.Name) enrich.Name = name;
+      // Priorytet montażu na wierzch istniejącej notatki (nie kasuje tego, co
+      // handlowiec już wpisał). `includes` chroni przed dublem przy retry FB.
+      if (montazNote && !String(existing.Notes || '').includes(montazNote)) {
+        enrich.Notes = existing.Notes ? `${montazNote}\n${existing.Notes}` : montazNote;
+      }
       // Aktualizujemy WYŁĄCZNIE po jednoznacznym kluczu. Gdyby "ID Leada" było
       // puste, .eq('ID Leada', null) trafiłby we WSZYSTKIE wiersze bez id —
       // dlatego twardy warunek na niepustą wartość (fallback po telefonie).
@@ -1525,6 +1541,7 @@ app.post('/api/webhooks/lead', express.json(), async (req, res) => {
     if (email) insertRow.Email = email;
     if (adName) insertRow.ad_name = adName;
     if (fbLeadId) insertRow['Facebook Leads ID'] = fbLeadId;
+    if (montazNote) insertRow.Notes = montazNote;
     if (Object.keys(marketingMeta).length) insertRow.marketing_meta = marketingMeta;
 
     const { data: inserted, error: createErr } = await supabase
