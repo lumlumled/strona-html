@@ -1552,6 +1552,19 @@ function formatPlDate(value) {
   return `${dd}.${mm}.${d.getFullYear()}`;
 }
 
+// Klient z konkretnym PRZYSZŁYM terminem kontaktu (Data Feedbacku po dziś) jest
+// UMÓWIONY, nie „do zrobienia dziś" — Backlog to plan na DZIŚ, więc chowamy go
+// z każdego kubełka planu (fetchNowe/fetchNieodebrane/fetchWycenyDoDomkniecia +
+// żywe /api/leady/nowe). fetchInneZFeedbackiem/fetchZalegleFeedbacki i tak mają
+// twardy filtr `<= now`, więc dają dokładnie to samo. Case wraca sam w dniu
+// terminu przez fetchZalegleFeedbacki (siatka `<= now`) i przez cały czas
+// widnieje w panelu Feedbacki (kalendarz). Pusta / dzisiejsza / przeterminowana
+// Data Feedbacku → parseLeadDate null lub `<= now` → zostaje w planie.
+function hasFutureFeedback(dataFeedbacku, now = Date.now()) {
+  const fb = parseLeadDate(dataFeedbacku);
+  return !!(fb && fb.getTime() > now);
+}
+
 app.get('/api/leady/nowe', async (req, res) => {
   try {
     const supabase = getClient();
@@ -1561,8 +1574,12 @@ app.get('/api/leady/nowe', async (req, res) => {
       .eq('Deal stage', 'Nowy');
     if (error) throw error;
 
-    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const cutoff = now - 7 * 24 * 60 * 60 * 1000;
     const rows = (data || [])
+      // Nowy lead z umówionym PRZYSZŁYM feedbackiem (ktoś już z nim gadał i
+      // ustalił termin) nie jest „do zrobienia dziś" — patrz hasFutureFeedback.
+      .filter((row) => !hasFutureFeedback(row['Data Feedbacku'], now))
       .map((row) => ({ row, date: parseLeadDate(row['Date']) }))
       .filter(({ date }) => date && date.getTime() >= cutoff)
       .sort((a, b) => b.date - a.date)
@@ -2025,9 +2042,11 @@ function sortByScore(cases) {
 
 async function fetchNowe(supabase, wycenaByPhone, callCountByPhone, excludePhones) {
   const rows = await fetchLeadyByStage(supabase, 'Nowy');
-  const cutoff = Date.now() - 3 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const cutoff = now - 3 * 24 * 60 * 60 * 1000;
   const cases = rows
     .filter((row) => !isExcludedPhone(row, excludePhones))
+    .filter((row) => !hasFutureFeedback(row['Data Feedbacku'], now))
     .map((row) => ({ row, date: parseLeadDate(row['Date']) }))
     .filter(({ date }) => date && date.getTime() >= cutoff)
     .map(({ row }) => mapLeadRow(row, wycenaByPhone, callCountByPhone));
@@ -2051,9 +2070,13 @@ async function fetchInneZFeedbackiem(supabase, wycenaByPhone, callCountByPhone, 
 // ma się tu pojawić, a nie wypadać tylko bo powstał dawno temu.
 async function fetchNieodebrane(supabase, wycenaByPhone, callCountByPhone, excludePhones) {
   const rows = await fetchLeadyByStage(supabase, 'Nie odebrał');
-  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const cutoff = now - 7 * 24 * 60 * 60 * 1000;
   const cases = rows
     .filter((row) => !isExcludedPhone(row, excludePhones))
+    // Nie odebrał + umówiony PRZYSZŁY termin ("dzwońcie we wrześniu") = UMÓWIONY,
+    // nie zaległy telefon na dziś. Wraca w dniu terminu przez fetchZalegleFeedbacki.
+    .filter((row) => !hasFutureFeedback(row['Data Feedbacku'], now))
     .map((row) => ({ row, date: parseLeadDate(row['Ostatni kontakt']) }))
     .filter(({ date }) => date && date.getTime() >= cutoff)
     .map(({ row }) => mapLeadRow(row, wycenaByPhone, callCountByPhone));
@@ -2129,10 +2152,7 @@ async function fetchWycenyDoDomkniecia(supabase, leadIndex, callCountByPhone) {
   // nieodebrane; wróci sam w dniu terminu przez fetchZalegleFeedbacki (siatka
   // bezpieczeństwa `<= now`) i widnieje w panelu Feedbacki (kalendarz). Pusta
   // Data Feedbacku → parseLeadDate=null → zostaje (to realna wycena do domknięcia).
-  const aktywne = cases.filter((c) => {
-    const fb = parseLeadDate(c.data_feedbacku);
-    return !(fb && fb.getTime() > now);
-  });
+  const aktywne = cases.filter((c) => !hasFutureFeedback(c.data_feedbacku, now));
   aktywne.sort((a, b) => (b.score || 0) - (a.score || 0));
   return { cases: aktywne.slice(0, WYCENY_DO_DOMKNIECIA_CAP), total: aktywne.length, excludePhones };
 }
@@ -2416,6 +2436,35 @@ function mergeRestaLejka(parsed) {
   });
   kat.reszta_lejka = reszta;
   parsed.kategorie = kat;
+}
+
+// Ostateczna, deterministyczna siatka „nigdy dwa razy": ten sam człowiek
+// (telefon) zostaje w DOKŁADNIE jednej kategorii planu. excludePhones (wyceny),
+// phoneToLp (reassignLps/applyZalegleFeedbacki) i mergeRestaLejka rozdzielają
+// większość przypadków, ale gdy MODEL wrzuci ten sam case do dwóch kategorii
+// naraz (albo dwa razy do jednej), i tak go tu utniemy — „nigdy dwa razy" ma
+// być gwarancją, nie efektem ubocznym. Kolejność = ta co na froncie
+// (KATEGORIA_ORDER w app.html), więc zostaje kopia WYŻEJ na ekranie, znika
+// niższa. priorytet_dzis to świadoma nakładka (case żyje w priorytecie I w
+// swojej kategorii, front synchronizuje je po lp) — NIE ruszamy go. Kategorie
+// spoza głównego lejka (dodane_recznie = ręczne, alerty_watchdoga/
+// leady_do_odswiezenia = watchdog, osobny podsystem) zostają nietknięte.
+const DEDUP_KATEGORIE = ['nowe', 'wyceny_do_domkniecia', 'reszta_lejka', 'zalegle_feedbacki'];
+
+function dedupeKategorie(parsed) {
+  const kat = parsed.kategorie;
+  if (!kat || typeof kat !== 'object') return;
+  const seen = new Set();
+  DEDUP_KATEGORIE.forEach((key) => {
+    if (!Array.isArray(kat[key])) return;
+    kat[key] = kat[key].filter((c) => {
+      const digits = c && c.telefon ? normalizePhoneDigits(c.telefon) : '';
+      if (!digits) return true;            // bez telefonu nie da się zdedupować — zostaje
+      if (seen.has(digits)) return false;  // już pokazany w kategorii wyżej na liście
+      seen.add(digits);
+      return true;
+    });
+  });
 }
 
 // Alerty watchdoga "temat ucieka" (docs/plan-watchdog-feedback.md §8) —
@@ -2989,6 +3038,9 @@ app.all('/api/cron/umowa-draft', async (req, res) => {
     // Scal inne_z_feedbackiem + nieodebrane + rozmowy_spoza_bazy w reszta_lejka
     // (przed licznikami/statusami, żeby liczyły już scalony kubełek).
     mergeRestaLejka(parsed);
+    // Zaraz po scaleniu, PRZED licznikami/scoringiem — żeby plan.*_count i
+    // sortowanie liczyły już listy bez dubli.
+    dedupeKategorie(parsed);
     fixLpMentionsInComment(parsed);
     postProcessCalledToday(parsed, calledSet);
     postProcessCounts(parsed);

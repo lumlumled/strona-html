@@ -3723,14 +3723,27 @@
       summary.appendChild(document.createTextNode(`${label} (${count})`));
     }
 
-    async function mergeLiveNowe(kategorieNowe, date) {
+    async function mergeLiveNowe(draft, date) {
       // Tylko dla dzisiejszego dnia — dla dni historycznych "co właśnie
       // wpadło" nie ma znaczenia, Umowa z tamtego dnia jest zamknięta.
       if (!isSameDate(date, new Date())) return;
       const live = await fetchLiveNowe();
       if (!live.length) return;
 
-      const known = new Set((kategorieNowe || []).map((c) => normalizePhone(c.telefon)));
+      // Dedup względem WSZYSTKIEGO, co już jest na ekranie (priorytet +
+      // wszystkie kategorie), nie tylko względem kategorie.nowe — inaczej lead
+      // sprzed 4-7 dni z zaległym feedbackiem, który wpadł już do „Zaległe
+      // feedbacki"/„Reszta lejka", pokazałby się drugi raz tutaj jako świeży.
+      const known = new Set();
+      const addPhones = (arr) => {
+        if (!Array.isArray(arr)) return;
+        arr.forEach((c) => { if (c && c.telefon) known.add(normalizePhone(c.telefon)); });
+      };
+      const kategorieNowe = (draft && draft.kategorie && draft.kategorie.nowe) || [];
+      if (draft) {
+        addPhones(draft.priorytet_dzis);
+        if (draft.kategorie) Object.values(draft.kategorie).forEach(addPhones);
+      }
       const fresh = live.filter((c) => !known.has(normalizePhone(c.telefon)));
       if (!fresh.length) return;
 
@@ -3739,7 +3752,7 @@
       const list = details.querySelector('.cases');
       fresh.forEach((c, i) => list.insertBefore(leadItem(c, -1 - i, 'nowe'), list.firstChild));
       resortContainer(list);
-      setKategoriaCount(details, KATEGORIA_LABELS.nowe, (kategorieNowe || []).length + fresh.length);
+      setKategoriaCount(details, KATEGORIA_LABELS.nowe, kategorieNowe.length + fresh.length);
     }
 
     function resetSections() {
@@ -3833,7 +3846,7 @@
       renderPlan(draft.plan);
       renderPriorytet(draft.priorytet_dzis);
       renderKategorie(draft.kategorie);
-      if (activeDoc === 'umowa') mergeLiveNowe(draft.kategorie && draft.kategorie.nowe, date);
+      if (activeDoc === 'umowa') mergeLiveNowe(draft, date);
 
       if (activeDoc === 'umowa') {
         caseByPhone = buildCaseByPhone(draft);
