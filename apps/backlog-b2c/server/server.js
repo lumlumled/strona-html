@@ -730,6 +730,33 @@ async function logOperation(supabase, automatyzacja, status, szczegoly) {
   }
 }
 
+// ── Praca w tle PO odpowiedzi (bezpieczna dla serverless) ────────────────────
+// Vercel zamraża funkcję, gdy handler zwróci odpowiedź — sam setTimeout po
+// res.json() nie ma GWARANCJI wykonania. `waitUntil` z kontekstu żądania (ten
+// sam mechanizm, którego używa @vercel/functions) każe Vercelowi utrzymać
+// funkcję przy życiu, aż promise się rozliczy (do maxDuration=180 s z
+// vercel.json). Poza Vercelem (lokalny serwer na :3001) kontekstu nie ma —
+// proces żyje dalej, więc promise i tak doleci. Zadanie STARTUJEMY zawsze;
+// waitUntil tylko chroni je przed zamrożeniem.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function scheduleAfterResponse(task) {
+  const p = Promise.resolve().then(task).catch((err) => {
+    console.error('Zadanie w tle nie powiodło się:', err && err.message);
+  });
+  try {
+    const store = globalThis[Symbol.for('@vercel/request-context')];
+    const ctx = store && typeof store.get === 'function' ? store.get() : null;
+    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(p);
+  } catch { /* brak kontekstu Vercela (lokalnie) — promise i tak leci */ }
+  return p;
+}
+
+// Opóźnienie auto-SMS-a po nieodebranym, żeby nie wychodził w tej samej
+// sekundzie, w której Lorenzo odłożył słuchawkę (wygląda naturalniej).
+// Nadpisywalne env-em na wypadek strojenia; domyślnie minuta.
+const AUTO_SMS_DELAY_MS = Number(process.env.AUTO_SMS_DELAY_MS) || 60000;
+
 app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
   const supabase = getClient();
   try {
@@ -1181,34 +1208,50 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
     // 1/dobę, 3 w 7 dni, godziny 8-20:30, kill switch AUTO_SMS_NIEODEBRANE)
     // i treści siedzą w apps/shared/server/auto-sms.js. Nigdy nie wywala
     // webhooka — zapis rozmowy jest ważniejszy niż SMS.
-    let autoSms = null;
-    if (label === 'no_answer') {
-      autoSms = await autoSmsPoNieodebranym(supabase, {
-        digits: customerDigits,
-        kierunek,
-        lead, // stan sprzed rozmowy: Name, Źródło, "Data Feedbacku" czyta bramka/szablon
-        leadClosed: Boolean(leadClosed),
-        feedbackBefore,
-        senderName: handlowiec,
-        pbxCallId: call.pbx_call_id || null,
-        refetchLead: () => findLeadByPhone(supabase, customerDigits),
-      });
-      if (autoSms && autoSms.status !== 'skip' && logRow && logRow.id) {
-        // Ślad w tym samym wierszu Log zmian co rozmowa → widok "Połączenia"
-        // pokazuje całą próbę kontaktu w jednym miejscu. Błąd też zapisujemy:
-        // cisza jest gorsza niż widoczny błąd.
-        const zapis = autoSms.status === 'sent' ? autoSms.tresc : `BŁĄD: ${autoSms.blad}`;
-        const { error: smsErr } = await supabase.from(LOG_ZMIAN_TABLE)
-          .update({ sms_wyslany: zapis }).eq('id', logRow.id);
-        if (smsErr) console.warn('Nie zapisano śladu auto-SMS w Log zmian:', smsErr.message);
-      }
-      if (autoSms && autoSms.status !== 'skip') {
-        await logOperation(supabase, 'auto_sms', autoSms.status, {
-          telefon: customerDigits, pbx_call_id: call.pbx_call_id || null,
-          scenariusz: autoSms.scenariusz, proba: autoSms.proba,
-          segmenty: autoSms.segmenty, koszt: autoSms.koszt, blad: autoSms.blad,
+    // Cała ocena bramki, treść i wysyłka biegną z opóźnieniem AUTO_SMS_DELAY_MS
+    // (~1 min) i JUŻ PO odpowiedzi do Make: jego moduł HTTP ma 40 s timeout
+    // (stopOnHttpError) i nie może czekać na tę minutę. Tanie pre-filtry tutaj
+    // (nieodebrane wychodzące + kill switch) mirrorują bramkę auto-sms.js tylko
+    // po to, żeby nie utrzymywać funkcji przy życiu minutę dla połączeń, które
+    // i tak by odpadły (nieodebrane przychodzące, wyłączony env) — pełną bramkę
+    // nadal sprawdza auto-sms.js po opóźnieniu. refetchLead pobiera świeży stan.
+    const autoSmsScheduled = label === 'no_answer'
+      && kierunek === 'wychodzące'
+      && process.env.AUTO_SMS_NIEODEBRANE === '1';
+    if (autoSmsScheduled) {
+      scheduleAfterResponse(async () => {
+        await sleep(AUTO_SMS_DELAY_MS);
+        const autoSms = await autoSmsPoNieodebranym(supabase, {
+          digits: customerDigits,
+          kierunek,
+          lead, // stan sprzed rozmowy: Name, Źródło, "Data Feedbacku" czyta bramka/szablon
+          leadClosed: Boolean(leadClosed),
+          feedbackBefore,
+          senderName: handlowiec,
+          pbxCallId: call.pbx_call_id || null,
+          refetchLead: () => findLeadByPhone(supabase, customerDigits),
         });
-      }
+        if (autoSms && autoSms.status !== 'skip' && logRow && logRow.id) {
+          // Ślad w tym samym wierszu Log zmian co rozmowa → widok "Połączenia"
+          // pokazuje całą próbę kontaktu w jednym miejscu. Błąd też zapisujemy:
+          // cisza jest gorsza niż widoczny błąd.
+          const zapis = autoSms.status === 'sent' ? autoSms.tresc : `BŁĄD: ${autoSms.blad}`;
+          const { error: smsErr } = await supabase.from(LOG_ZMIAN_TABLE)
+            .update({ sms_wyslany: zapis }).eq('id', logRow.id);
+          if (smsErr) console.warn('Nie zapisano śladu auto-SMS w Log zmian:', smsErr.message);
+        }
+        // Osobny wpis 'auto_sms' po opóźnieniu — teraz z KAŻDYM wynikiem (sent /
+        // error / skip z powodem): wpis zadarma_webhook powstaje minutę wcześniej
+        // i nie zna już rozstrzygnięcia, więc powód pominięcia musi wylądować tu.
+        if (autoSms) {
+          await logOperation(supabase, 'auto_sms', autoSms.status, {
+            telefon: customerDigits, pbx_call_id: call.pbx_call_id || null,
+            scenariusz: autoSms.scenariusz, proba: autoSms.proba,
+            segmenty: autoSms.segmenty, koszt: autoSms.koszt,
+            blad: autoSms.blad, powod: autoSms.powod,
+          });
+        }
+      });
     }
 
     // Analiza skończona — zdejmij spinner "rozmowa w analizie" z case'a.
@@ -1223,10 +1266,11 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       nowy_lead_bez_dopasowania: Boolean(createdLead),
       transkrypcja: Boolean(transcript),
       zamkniete_dzis: zaopiekowaneDzis,
-      // Skipy auto-SMS-a (z powodem) widoczne tu, bez osobnego wpisu w logu —
-      // wysyłki i błędy mają swój wpis 'auto_sms' wyżej.
-      auto_sms: autoSms ? autoSms.status : null,
-      auto_sms_powod: autoSms && autoSms.powod ? autoSms.powod : null,
+      // Auto-SMS jest teraz opóźniony i leci w tle PO tej odpowiedzi (patrz
+      // scheduleAfterResponse + AUTO_SMS_DELAY_MS) — tu odnotowujemy tylko, że
+      // został zaplanowany; realne rozstrzygnięcie (sent/error/skip z powodem)
+      // ląduje w osobnym wpisie 'auto_sms' minutę później.
+      auto_sms: autoSmsScheduled ? 'zaplanowany' : null,
     });
     res.json({ status: 'ok' });
   } catch (err) {
