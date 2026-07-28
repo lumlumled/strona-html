@@ -178,6 +178,37 @@ async function notifyNewLead({ telefon, name, owner }) {
   }
 }
 
+// Push do WŁAŚCICIELA leada (mapa imię owner -> app_users -> notifyUser na
+// wszystkie jego urządzenia). Bez mirrora do kogokolwiek innego — decyzja
+// Antoniego 2026-07-28: powiadomienia o SMS-ie/feedbacku idą wyłącznie do
+// ownera leada. Nigdy nie rzuca (błąd push łykany), żeby nie wywrócić webhooka
+// ani crona. Zwraca liczbę userów, do których poszło (0 = owner bez konta /
+// bez subskrypcji / brak VAPID). ⚠️ Realnie dojdzie tylko, gdy owner ma
+// włączone powiadomienia w PWA na swoim urządzeniu.
+async function pushToOwner(ownerName, { title, body, url, tag }) {
+  const name = String(ownerName || '').trim();
+  if (!name) return 0;
+  try {
+    const supabase = getClient();
+    const { data } = await supabase.from('app_users')
+      .select('id').ilike('name', name).eq('active', true);
+    if (!data || !data.length) return 0;
+    let sent = 0;
+    for (const u of data) {
+      try {
+        await notifyUser(getClient, u.id, { title, body, url, tag });
+        sent += 1;
+      } catch (err) {
+        console.warn('pushToOwner notifyUser:', err.message);
+      }
+    }
+    return sent;
+  } catch (err) {
+    console.warn('pushToOwner:', err.message);
+    return 0;
+  }
+}
+
 const PROMPT_INTRO = {
   umowa: 'Jesteś edytorem umowy dziennej LumLum. Dostajesz JSON umowy i polecenie użytkownika (często dyktowane głosowo — mogą być literówki).',
   podsumowanie: 'Jesteś edytorem podsumowania dnia LumLum. Dostajesz JSON podsumowania dnia i polecenie użytkownika (często dyktowane głosowo — mogą być literówki).',
@@ -1362,6 +1393,19 @@ app.all('/api/webhooks/zadarma-sms', async (req, res) => {
       });
       if (rpcErr) console.warn('zadarma-sms: app_update_leady_notatka:', rpcErr.message);
       feedback = { data_feedbacku: dataFeedbacku, godzina_feedbacku: godzina, najblizsza_akcja: akcja };
+
+      // (a) Push OD RAZU do ownera: klient odpisał SMS-em. Idzie na każdą
+      // przychodzącą wiadomość od znanego leada (odpowiedzi na nasz outreach są
+      // rzadkie i cenne), z wyciągniętym terminem w treści, gdy AI go znalazło.
+      // Nie blokuje odpowiedzi webhooka — pushToOwner łyka własne błędy.
+      const terminTxt = dataFeedbacku ? ` — prosi o kontakt ${dataFeedbacku}${godzina ? ` ${godzina}` : ''}` : '';
+      const kto = lead['Name'] || `+${lead['Phone number'] || fromDigits}`;
+      await pushToOwner(lead['Owner'], {
+        title: 'Klient odpisał SMS-em',
+        body: `${kto}${terminTxt}: ${tresc.replace(/\s+/g, ' ').slice(0, 120)}`,
+        url: '/backlog-b2c/',
+        tag: `sms-in-${lead['ID Leada']}`,
+      });
     }
 
     return res.json({ status: 'ok', lead: Boolean(lead), threadId, feedback });
@@ -3358,6 +3402,71 @@ app.all('/api/cron/watchdog', async (req, res) => {
     res.json({ ok: true, ...raport });
   } catch (err) {
     await logOperation(supabase, 'watchdog_cron', 'error', { message: err.message });
+    handleError(res, err, 502);
+  }
+});
+
+// Punktualne przypomnienie o umówionym feedbacku (punkt c). DEDYKOWANY, gęstszy
+// niż watchdog — pg_cron woła to co ~5 min. Bierze JAWNE lead-watche (mirror
+// "Data Feedbacku"), których termin właśnie wybił, jeszcze nie przypomniane i
+// nierozwiązane -> push "zadzwoń teraz" do ownera. Osobny ślad reminded_at (migr.
+// 014) nie koliduje z alerted_at watchdoga; oba mechanizmy żyją obok siebie:
+// tu punktualne "umówiony kontakt HH:MM", watchdog później "temat ucieka", gdy
+// mimo to cisza. Okno wstecz (WINDOW) chroni przed zalaniem starymi terminami po
+// dłuższej przerwie crona: spóźnione >WINDOW zostawiamy watchdogowi. due_at jest
+// w timestamptz (trigger liczy godzinę w Europe/Warsaw), więc porównanie do now
+// trafia w rzeczywistą godzinę warszawską bez przeliczeń.
+const FEEDBACK_REMINDER_WINDOW_MS = 30 * 60 * 1000;
+app.all('/api/cron/feedback-reminder', async (req, res) => {
+  const supabase = getClient();
+  try {
+    if (!isCronAuthorized(req)) return res.status(401).json({ error: 'Brak autoryzacji' });
+    const now = new Date();
+    const { data: watches, error } = await supabase.from('feedback_watch')
+      .select('id,object_id,owner,due_at')
+      .eq('object_type', 'lead').eq('visible', true)
+      .is('resolved_at', null).is('reminded_at', null)
+      .lte('due_at', now.toISOString())
+      .gte('due_at', new Date(now.getTime() - FEEDBACK_REMINDER_WINDOW_MS).toISOString());
+    if (error) throw error;
+
+    let sent = 0;
+    let skipped = 0;
+    if (watches && watches.length) {
+      const leadIds = [...new Set(watches.map((w) => Number(w.object_id)).filter(Number.isFinite))];
+      const { data: leady } = await supabase.from(LEADY_B2C_TABLE)
+        .select('"ID Leada",Name,"Phone number","Deal stage",Owner,"Godzina Feedbacku"')
+        .in('ID Leada', leadIds);
+      const leadById = new Map((leady || []).map((l) => [String(l['ID Leada']), l]));
+      for (const w of watches) {
+        const lead = leadById.get(String(w.object_id));
+        // Zamknięte tematy nie wymagają przypomnienia, ale i tak stawiamy
+        // reminded_at, żeby cron nie łapał tego watcha w kółko.
+        if (lead && !['Sprzedane', 'Stracony'].includes(String(lead['Deal stage'] || ''))) {
+          const godz = String(lead['Godzina Feedbacku'] || '').trim() || warsawTimeStr(new Date(w.due_at));
+          const kto = [lead['Name'], lead['Phone number'] ? `+${lead['Phone number']}` : '']
+            .filter(Boolean).join(' · ') || 'klient';
+          const n = await pushToOwner(w.owner || lead['Owner'], {
+            title: 'Przypomnienie: umówiony kontakt',
+            body: `${godz} — ${kto}`,
+            url: '/backlog-b2c/',
+            tag: `feedback-reminder-${w.id}`,
+          });
+          if (n) sent += 1; else skipped += 1;
+        } else {
+          skipped += 1;
+        }
+        await supabase.from('feedback_watch')
+          .update({ reminded_at: now.toISOString() })
+          .eq('id', w.id).is('reminded_at', null);
+      }
+    }
+
+    const raport = { checked: watches ? watches.length : 0, sent, skipped };
+    await logOperation(supabase, 'feedback_reminder_cron', 'ok', raport).catch(() => {});
+    res.json({ ok: true, ...raport });
+  } catch (err) {
+    await logOperation(supabase, 'feedback_reminder_cron', 'error', { message: err.message }).catch(() => {});
     handleError(res, err, 502);
   }
 });
