@@ -1419,10 +1419,13 @@ app.post('/api/webhooks/lead', express.json(), async (req, res) => {
 
     // Odpowiedź na pytanie kwalifikujące z formularza ("w jakim czasie planujesz
     // montaż oświetlenia") = sygnał pilności/priorytetu. Make mapuje ją jako
-    // data.priority (pole tablicowe FB może przyjść jako tablica albo string).
-    // Ląduje na WIERZCHU notatki ("Montaż planowany: …"), żeby handlowiec od razu
-    // widział, jak pilny jest lead. Fallback: surowy klucz pytania z data.
-    const priorityRaw = body.priority ?? d.priority ?? d['w_jakim_czasie_planujesz_zrealizować_montaż_oświetlenia?'];
+    // data.czas_realizacji (wcześniej data.priority — oba akceptujemy, plus
+    // surowy klucz pytania). Pole tablicowe FB przychodzi jako tablica albo
+    // string. Ląduje na WIERZCHU notatki ("Montaż planowany: …"), żeby handlowiec
+    // od razu widział, jak pilny jest lead.
+    const priorityRaw = body.czas_realizacji ?? d.czas_realizacji
+      ?? body.priority ?? d.priority
+      ?? d['w_jakim_czasie_planujesz_zrealizować_montaż_oświetlenia?'];
     const priorityAns = (Array.isArray(priorityRaw)
       ? priorityRaw.filter(Boolean).join(', ')
       : String(priorityRaw ?? '')).trim();
