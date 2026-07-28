@@ -7,7 +7,7 @@ const { getClient } = require('./supabase');
 const { registerLeadyEndpoints, NIE_TELEFON_ZRODLA } = require('../../shared/server/leady-endpoints');
 const { analyzeCall, statusRank, NO_ANSWER_ALLOWED_FROM, parseKwotaZlotych, isPlDateDue, addPlDays, czyZaopiekowaneDzis, przyszlosciowyRecall } = require('../../shared/server/call-analysis');
 const { zamknijWycenyStraconego } = require('../../shared/server/wyceny-sync');
-const { powodZRozmowy } = require('../../shared/server/stracony');
+const { powodZRozmowy, formatPowod } = require('../../shared/server/stracony');
 const rozmowy = require('./rozmowy');
 const { registerWycenyEndpoints } = require('../../shared/server/wyceny-endpoints');
 const { createAuth, clientPayload, panelLinks, isAdmin } = require('../../shared/server/auth');
@@ -207,6 +207,60 @@ async function pushToOwner(ownerName, { title, body, url, tag }) {
     console.warn('pushToOwner:', err.message);
     return 0;
   }
+}
+
+// Auto-domknięcie leada jako "Stracony" na podstawie JEDNOZNACZNEJ odmowy w
+// przychodzącym SMS-ie (analyzeCall.status === 'Stracony'). Robi DOKŁADNIE to
+// samo co ręczny POST /api/leady/stracony i telefoniczna ścieżka after_call:
+//   • RPC app_lead_stracony — status Stracony + Powód stracenia + historia +
+//     wyczyszczenie feedbacku/akcji (co przez trigger trg_feedback_watch_mirror
+//     gasi też watcha leada); RPC ma bypass_log_zmian, więc sam nie pisze do
+//     Log zmian — nasz wpis 'sms_stracony' jest jedynym.
+//   • zamknijWycenyStraconego — otwarta wycena tego numeru idzie na Stracone.
+//   • updateStatusInUmowa + markZamknieteInUmowa — TO zdejmuje case z planu dnia
+//     / Backlogu (Umowa to migawka z rana, sam status w bazie by nie wystarczył).
+// ⚠️ Źródło 'sms_stracony' MUSI być w NIE_TELEFON_ZRODLA (4 kopie) i
+// NIE_ROZMOWA_ZRODLA (3 kopie) — inaczej domknięcie policzyłoby się jako telefon.
+// Powód: kanoniczny kod (formatPowod) gdy AI go poda, inaczej wolny tekst.
+async function domknijLeadStraconyZeSms(supabase, lead, analysis, tresc) {
+  const kod = analysis && analysis.powod_straty_kod;
+  const tekst = analysis && analysis.powod_straty;
+  const powod = kod ? formatPowod(kod, tekst) : powodZRozmowy(tekst);
+  if (!powod) return null; // bez powodu nie domykamy — bezpiecznik
+
+  const statusPrzed = lead['Deal stage'] || null;
+  const telefonDigits = normalizePhoneDigits(lead['Phone number']);
+  const smsSnippet = String(tresc || '').replace(/\s+/g, ' ').slice(0, 120);
+  const historiaEntry = `${warsawDateTimeStr(new Date())} - [Stracony] ${powod} — SMS: ${smsSnippet}`;
+
+  const { error: rpcErr } = await supabase.rpc('app_lead_stracony', {
+    p_id_leada: Number(lead['ID Leada']),
+    p_powod: powod,
+    p_historia: lead['Historia rozmów'] ? `${historiaEntry}\n${lead['Historia rozmów']}` : historiaEntry,
+  });
+  if (rpcErr) throw rpcErr;
+
+  const { ids: wycenyZamkniete } = await zamknijWycenyStraconego(supabase, {
+    leadId: lead['ID Leada'], telefon: telefonDigits, powod,
+  });
+
+  const { error: logErr } = await supabase.from(LOG_ZMIAN_TABLE).insert({
+    zrodlo: 'sms_stracony',
+    telefon: telefonDigits || null,
+    status_przed: statusPrzed,
+    status_po: 'Stracony',
+    opis: `[Stracony] ${powod}`,
+    handlowiec: null,
+    dopasowano_tabela: LEADY_B2C_TABLE,
+    dopasowano_id: String(lead['ID'] ?? ''),
+  });
+  if (logErr) console.error('sms_stracony: Log zmian:', logErr.message);
+
+  if (telefonDigits) {
+    await updateStatusInUmowa(supabase, telefonDigits, 'Stracony');
+    await markZamknieteInUmowa(supabase, telefonDigits);
+  }
+  return { powod, wyceny_zamkniete: wycenyZamkniete };
 }
 
 const PROMPT_INTRO = {
@@ -1190,7 +1244,12 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
         // wypełnia ręczne domknięcie (POST /api/leady/stracony). Osobny update
         // zamiast RPC: dotyka wyłącznie "Powód stracenia", więc trigger
         // log_zmian_from_leady nie ma na co zareagować i nie zdubluje wpisu.
-        const powod = powodZRozmowy(analysis && analysis.powod_straty);
+        // Kanoniczny kod (powod_straty_kod) → formatPowod jak w popupie, żeby
+        // powód liczył się do statystyk tak samo jak ręczny; brak kodu (starszy
+        // model/edge) → fallback na wolny tekst "(z rozmowy)" jak dotąd.
+        const powod = (analysis && analysis.powod_straty_kod)
+          ? formatPowod(analysis.powod_straty_kod, analysis.powod_straty)
+          : powodZRozmowy(analysis && analysis.powod_straty);
         if (powod) {
           const { error: powodErr } = await supabase.from(LEADY_B2C_TABLE)
             .update({ 'Powód stracenia': powod })
@@ -1367,8 +1426,13 @@ app.all('/api/webhooks/zadarma-sms', async (req, res) => {
       console.warn('zadarma-sms: recordInboundSms:', e.message);
     }
 
-    // 2) Ekstrakcja terminu + akcja - tylko gdy mamy leada do zaktualizowania.
+    // 2) Analiza treści SMS-a i rozgałęzienie (tylko gdy mamy leada):
+    //    • JEDNOZNACZNA odmowa (analysis.status === 'Stracony') → auto-domknięcie
+    //      (zamyka case, zdejmuje z Backlogu, push "cofnij, jeśli błąd"),
+    //    • inaczej → jak dotąd: data feedbacku + akcja + push "klient odpisał".
+    //    Gałęzie rozłączne: przy Stracony analyzeCall i tak daje data_feedbacku=null.
     let feedback = null;
+    let stracony = null;
     if (lead) {
       const analysis = await analyzeCall(tresc, {
         kierunek: 'przychodzące',
@@ -1377,38 +1441,56 @@ app.all('/api/webhooks/zadarma-sms', async (req, res) => {
         poprzedniaAkcja: lead['Najbliższa akcja'] || null,
       }).catch((e) => { console.warn('zadarma-sms: analyzeCall:', e.message); return null; });
 
-      const dataFeedbacku = analysis?.data_feedbacku || null;
-      const godzina = dataFeedbacku ? (analysis?.godzina_feedbacku || null) : null;
-      const akcja = analysis?.najblizsza_akcja || null;
-      const linia = `${warsawDateTimeStr(new Date())} - [SMS←] ${tresc.replace(/\s+/g, ' ').slice(0, 200)}`;
-      const { error: rpcErr } = await supabase.rpc('app_update_leady_notatka', {
-        p_phone: lead['Phone number'],
-        p_historia: lead['Historia rozmów'] ? `${linia}\n${lead['Historia rozmów']}` : linia,
-        p_set_akcja: Boolean(akcja),
-        p_akcja: akcja,
-        p_akcja_termin: akcja ? (analysis?.najblizsza_akcja_termin || null) : null,
-        p_akcja_owner: null,
-        p_data_feedbacku: dataFeedbacku,
-        p_godzina_feedbacku: godzina,
-      });
-      if (rpcErr) console.warn('zadarma-sms: app_update_leady_notatka:', rpcErr.message);
-      feedback = { data_feedbacku: dataFeedbacku, godzina_feedbacku: godzina, najblizsza_akcja: akcja };
+      const juzZamkniety = ['Sprzedane', 'Stracony'].includes(String(lead['Deal stage'] || ''));
+      if (analysis && analysis.status === 'Stracony' && !juzZamkniety) {
+        try {
+          stracony = await domknijLeadStraconyZeSms(supabase, lead, analysis, tresc);
+        } catch (e) {
+          console.error('zadarma-sms: auto-stracony:', e.message);
+        }
+        if (stracony) {
+          const kto = lead['Name'] || `+${lead['Phone number'] || fromDigits}`;
+          await pushToOwner(lead['Owner'], {
+            title: 'Lead sam się zamknął (Stracony)',
+            body: `${kto} — ${stracony.powod}. Cofnij, jeśli błąd.`,
+            url: '/backlog-b2c/',
+            tag: `sms-stracony-${lead['ID Leada']}`,
+          });
+        }
+      }
 
-      // (a) Push OD RAZU do ownera: klient odpisał SMS-em. Idzie na każdą
-      // przychodzącą wiadomość od znanego leada (odpowiedzi na nasz outreach są
-      // rzadkie i cenne), z wyciągniętym terminem w treści, gdy AI go znalazło.
-      // Nie blokuje odpowiedzi webhooka — pushToOwner łyka własne błędy.
-      const terminTxt = dataFeedbacku ? ` — prosi o kontakt ${dataFeedbacku}${godzina ? ` ${godzina}` : ''}` : '';
-      const kto = lead['Name'] || `+${lead['Phone number'] || fromDigits}`;
-      await pushToOwner(lead['Owner'], {
-        title: 'Klient odpisał SMS-em',
-        body: `${kto}${terminTxt}: ${tresc.replace(/\s+/g, ' ').slice(0, 120)}`,
-        url: '/backlog-b2c/',
-        tag: `sms-in-${lead['ID Leada']}`,
-      });
+      if (!stracony) {
+        const dataFeedbacku = analysis?.data_feedbacku || null;
+        const godzina = dataFeedbacku ? (analysis?.godzina_feedbacku || null) : null;
+        const akcja = analysis?.najblizsza_akcja || null;
+        const linia = `${warsawDateTimeStr(new Date())} - [SMS←] ${tresc.replace(/\s+/g, ' ').slice(0, 200)}`;
+        const { error: rpcErr } = await supabase.rpc('app_update_leady_notatka', {
+          p_phone: lead['Phone number'],
+          p_historia: lead['Historia rozmów'] ? `${linia}\n${lead['Historia rozmów']}` : linia,
+          p_set_akcja: Boolean(akcja),
+          p_akcja: akcja,
+          p_akcja_termin: akcja ? (analysis?.najblizsza_akcja_termin || null) : null,
+          p_akcja_owner: null,
+          p_data_feedbacku: dataFeedbacku,
+          p_godzina_feedbacku: godzina,
+        });
+        if (rpcErr) console.warn('zadarma-sms: app_update_leady_notatka:', rpcErr.message);
+        feedback = { data_feedbacku: dataFeedbacku, godzina_feedbacku: godzina, najblizsza_akcja: akcja };
+
+        // (a) Push OD RAZU do ownera: klient odpisał SMS-em (z terminem, gdy AI go
+        // znalazło). Nie blokuje odpowiedzi webhooka — pushToOwner łyka błędy.
+        const terminTxt = dataFeedbacku ? ` — prosi o kontakt ${dataFeedbacku}${godzina ? ` ${godzina}` : ''}` : '';
+        const kto = lead['Name'] || `+${lead['Phone number'] || fromDigits}`;
+        await pushToOwner(lead['Owner'], {
+          title: 'Klient odpisał SMS-em',
+          body: `${kto}${terminTxt}: ${tresc.replace(/\s+/g, ' ').slice(0, 120)}`,
+          url: '/backlog-b2c/',
+          tag: `sms-in-${lead['ID Leada']}`,
+        });
+      }
     }
 
-    return res.json({ status: 'ok', lead: Boolean(lead), threadId, feedback });
+    return res.json({ status: 'ok', lead: Boolean(lead), threadId, feedback, stracony });
   } catch (err) {
     console.error('zadarma-sms webhook:', err.message);
     return res.status(200).json({ status: 'error', error: err.message });

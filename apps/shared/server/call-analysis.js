@@ -14,6 +14,11 @@
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const UMOWA_MODEL = process.env.OPENAI_UMOWA_MODEL || 'gpt-5-mini';
+// Słownik powodów straty = jedno źródło prawdy (apps/shared/server/stracony.js),
+// ten sam, z którego front renderuje 7 kafelków w popupie "Stracony". AI dostaje
+// listę kodów w prompcie i zwraca powod_straty_kod, żeby auto-domknięcie z SMS-a
+// (i rozmowy) wybierało dokładnie ten sam kafelek co ręczne domknięcie.
+const { POWODY_STRATY } = require('./stracony');
 
 function buildCallAnalysisPrompt(dzisiaj, kierunek, poprzedniOpis, poprzedniaAkcja) {
   const kierunekOpis = kierunek === 'wychodzące'
@@ -21,6 +26,7 @@ function buildCallAnalysisPrompt(dzisiaj, kierunek, poprzedniOpis, poprzedniaAkc
     : kierunek === 'przychodzące'
       ? 'To klient dzwoni do handlowca (połączenie przychodzące).'
       : 'Kierunek połączenia nieznany — nie zakładaj kto do kogo dzwonił, opieraj się wyłącznie na treści rozmowy.';
+  const powodyKody = POWODY_STRATY.map((p) => `- ${p.kod} — ${p.opis}`).join('\n');
   return `Jesteś asystentem CRM firmy LumLum (oświetlenie LED premium).
 Analizujesz transkrypcję rozmowy telefonicznej handlowca z klientem.
 Zwróć WYŁĄCZNIE jeden obiekt JSON. Bez komentarzy, bez markdownu, bez tekstu przed ani po.
@@ -59,6 +65,14 @@ odpowiedź na pytanie "dlaczego go straciliśmy", czytana za pół roku:
 - "Rezygnuje z LED-ów w tym remoncie"
 NIE zgaduj i nie moralizuj ("klient niezdecydowany" to nie powód). Gdy klient
 odmówił bez podania przyczyny → "Odmowa bez podania powodu".
+
+===== ZASADY powod_straty_kod =====
+Wypełnij WYŁĄCZNIE gdy status = "Stracony" (przy każdym innym statusie → null).
+Wybierz DOKŁADNIE JEDEN kod pasujący do powodu:
+${powodyKody}
+Kod ma opisywać to samo co powod_straty. Uwaga: klient, który znalazł / kupił /
+zamówił u innej firmy albo "taniej gdzie indziej" → konkurencja (nawet gdy
+głównym argumentem była cena). Gdy nic nie pasuje jednoznacznie → inny.
 
 ===== ZASADY data_feedbacku =====
 Data feedbacku to WYŁĄCZNIE termin kolejnego kontaktu telefonicznego lub umówionej rozmowy.
@@ -272,6 +286,7 @@ Prawdziwa, choćby krótka wymiana zdań z klientem → false.
 {
   "status": "",
   "powod_straty": "max 6-8 słów lub null (tylko dla statusu Stracony)",
+  "powod_straty_kod": "jeden kod z listy powyżej lub null (tylko dla statusu Stracony)",
   "data_feedbacku": "DD.MM.YYYY lub null",
   "godzina_feedbacku": "HH:MM lub null",
   "opis": "",
@@ -323,7 +338,7 @@ async function analyzeCall(transcript, { kierunek, dzisiaj, poprzedniOpis, poprz
   // false znaczy "AI stwierdziła, że coś zostało na dziś"; padnięta analiza
   // nie może udawać takiego stwierdzenia. Boolean(...) w Log zmian daje z tego
   // false jak dotąd, więc kolumna boolean nie zobaczy różnicy.
-  const fallback = { status: null, powod_straty: null, data_feedbacku: null, godzina_feedbacku: null, opis: transcript ? transcript.slice(0, 200) : null, skrocony_opis: null, produkty: '', cena_zaproponowana: null, jakosc_leada: null, uzasadnienie_jakosci: '', zamkniete_dzis: null, najblizsza_akcja: null, najblizsza_akcja_termin: null, poczta_glosowa: false };
+  const fallback = { status: null, powod_straty: null, powod_straty_kod: null, data_feedbacku: null, godzina_feedbacku: null, opis: transcript ? transcript.slice(0, 200) : null, skrocony_opis: null, produkty: '', cena_zaproponowana: null, jakosc_leada: null, uzasadnienie_jakosci: '', zamkniete_dzis: null, najblizsza_akcja: null, najblizsza_akcja_termin: null, poczta_glosowa: false };
   if (!OPENAI_API_KEY || !transcript) return fallback;
   try {
     const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {

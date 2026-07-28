@@ -15,7 +15,7 @@ window.WycenaKarta = (() => {
   // renderują się jak notatka (etykieta zamiast czasu połączenia). Kopia
   // zbioru z apps/shared/server/leady-endpoints.js (NIE_TELEFON_ZRODLA) bez
   // 'facebook_lead_webhook', który ma własną etykietę "nowy lead".
-  const NIE_ROZMOWA_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'manual_stracony', 'wycena_stracona']);
+  const NIE_ROZMOWA_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'manual_stracony', 'wycena_stracona', 'sms_stracony']);
 
   // Baza publicznych linków PDF (etykieta/faktura) — funkcja formularza,
   // ten sam origin co panele na prod (lumlum.dev). Nadpisywalne globalną

@@ -4143,7 +4143,7 @@
     // Wpisy Log zmian, które NIE są telefonami (mirror NIE_TELEFON_ZRODLA z
     // backendu) — nie liczą się do "Zadzwoniono dziś" i nie są renderowane jako
     // rozmowa. facebook_lead_webhook to moment wpadnięcia nowego leada.
-    const NIE_TELEFON_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'manual_stracony', 'wycena_stracona', 'facebook_lead_webhook']);
+    const NIE_TELEFON_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'manual_stracony', 'wycena_stracona', 'sms_stracony', 'facebook_lead_webhook']);
 
     function polaczenieKierunekLabel(row) {
       if (row.zrodlo === 'notatka_handlowca') return 'notatka';
