@@ -271,6 +271,31 @@ function trescWycena(proba, tor, wolacz, { dataSlownie, umowioneDzis }) {
     + `a nie udaje się nam połączyć. ${POZEGNANIE_V3}`;
 }
 
+// Scenariusz POMIĘDZY formularzem a wyceną: z klientem JUŻ rozmawialiśmy, ale
+// wyceny jeszcze nie ma. Nie udajemy pierwszego kontaktu ("zostawił Pan
+// formularz") — nawiązujemy do przebytej rozmowy o oświetleniu. Gdy Data
+// Feedbacku = dziś, mówimy wprost o umówionym terminie (jak w scenariuszu
+// wycena), inaczej neutralne "miałem się skontaktować".
+function trescRozmowa(proba, tor, wolacz, { umowioneDzis = false } = {}) {
+  const zKim = tor === 'pan' ? ' z Panem' : tor === 'pani' ? ' z Panią' : '';
+  if (proba <= 1) {
+    const kontakt = umowioneDzis
+      ? 'Umawialiśmy się, że odezwę się dzisiaj, ale nie udało się nam połączyć.'
+      : `Miałem się${zKim} skontaktować, ale nie udało się nam połączyć.`;
+    return `${otwarcie(tor, wolacz, 'pelne')} Rozmawialiśmy ostatnio w sprawie oświetlenia LED. `
+      + `${kontakt} Proszę o informację, jaki dzień i godzina będą dogodne - wtedy zadzwonię. `
+      + `Można też oddzwonić na ten numer.`;
+  }
+  if (proba === 2) {
+    const dlaKogo = tor === 'pan' ? 'dla Pana ' : tor === 'pani' ? 'dla Pani ' : '';
+    return `${otwarcie(tor, wolacz, 'ponownie')} Wracam do naszej rozmowy o oświetleniu LED, ale nie udało się nam połączyć. `
+      + `Proszę o informację, kiedy będzie ${dlaKogo}dogodny moment na rozmowę - zadzwonię w tym terminie. `
+      + `Można też oddzwonić na ten numer.`;
+  }
+  return `${otwarcie(tor, wolacz, 'tu')} Nie chciałbym zostawić naszej rozmowy o oświetleniu LED bez ciągu dalszego, `
+    + `a nie udaje się nam połączyć. ${POZEGNANIE_V3}`;
+}
+
 // Buduje treść auto-SMS-a. Nigdy nie renderuje "null"/pustych wtrąceń: brak
 // imienia/płci → tor Państwo, brak daty wyceny → zdanie bez daty, Data
 // Feedbacku ≠ dziś → bez zdania o umówionym terminie.
@@ -279,7 +304,9 @@ function zbudujTrescAutoSms({ scenariusz, proba, name, wycenaCreatedAt = null, u
   const p = Math.min(Math.max(Number(proba) || 1, 1), 3);
   const tresc = scenariusz === 'wycena'
     ? trescWycena(p, tor, wolacz, { dataSlownie: wycenaCreatedAt ? plDataSlownie(wycenaCreatedAt, now) : null, umowioneDzis })
-    : trescFormularz(p, tor, wolacz);
+    : scenariusz === 'rozmowa'
+      ? trescRozmowa(p, tor, wolacz, { umowioneDzis })
+      : trescFormularz(p, tor, wolacz);
   return { tresc, tor, wolacz, proba: p, segmenty: policzSegmenty(tresc) };
 }
 
@@ -290,11 +317,28 @@ function zbudujTrescAutoSms({ scenariusz, proba, name, wycenaCreatedAt = null, u
 const OKNO_OD_MIN = 8 * 60; // 8:00
 const OKNO_DO_MIN = 20 * 60 + 30; // 20:30 włącznie
 const MAX_AUTO_SMS = 3;
-const OKNO_ZYCIA_DNI = 7;
+const DZIEN_MS = 86400000;
+const ODSTEP_SMS_MS = 7 * DZIEN_MS; // min. 7 dni między auto-SMS-ami
+const SWIEZY_TELEFON_MS = 3 * DZIEN_MS; // telefon w ostatnich 3 dniach blokuje SMS
+
+// Statusy, przy których z klientem JESZCZE nie rozmawialiśmy (pierwszy kontakt)
+// → auto-SMS bez wyceny może brzmieć "zostawił Pan formularz". Wszystko inne
+// (zaangażowane etapy lejka) = już rozmawialiśmy → scenariusz "rozmowa".
+// Denylistą, nie allowlistą: łapie literówkę "Lekko zaintereswoany" (żyje w
+// bazie) i przyszłe statusy zaangażowania; zamknięte (Sprzedane/Stracony)
+// odpadają wcześniej przez leadClosed. Uwaga: "Nie odebrał" = próbowaliśmy,
+// ale rozmowy NIE było → traktujemy jak brak kontaktu (decyzja Antoniego).
+const NIE_ROZMAWIANO_STATUSY = new Set(['nowy', 'nie odebrał', 'nie odebral', 'błędne dane', 'bledne dane']);
+
+function juzRozmawialismy(dealStage) {
+  const s = String(dealStage || '').trim().toLowerCase();
+  return s.length > 0 && !NIE_ROZMAWIANO_STATUSY.has(s);
+}
 
 function ocenBramke({
   wlaczone, label, kierunek, digits, leadClosed, maLeada, leadZrodlo, maWycene,
-  hh, mm, dzisOut, autoCount, pierwszyAutoAt, nowMs,
+  hh, mm, dzisOut, autoCount, nowMs,
+  juzRozmawiano = false, ostatniAutoAt = null, ostatniTelefonAt = null,
 }) {
   const skip = (powod) => ({ wysylac: false, powod });
   if (!wlaczone) return skip('wylaczone_env');
@@ -307,18 +351,28 @@ function ocenBramke({
   // zupełnie obcy numer) nie mamy prawdziwego zdania do powiedzenia.
   if (!maLeada && !maWycene) return skip('brak_dopasowania');
   // Lead spoza formularza (Źródło ustawione = "Zadarma — rozmowa bez
-  // dopasowania…") bez wyceny: tekst "zostawił Pan kontakt w formularzu"
-  // byłby kłamstwem. Z wyceną — scenariusz WYCENA jest prawdziwy, wolno.
-  if (!maWycene && maLeada && leadZrodlo != null) return skip('lead_spoza_formularza');
+  // dopasowania…") bez wyceny: gdy NIE rozmawialiśmy, tekst "zostawił Pan
+  // kontakt w formularzu" byłby kłamstwem. Z wyceną (wycena) albo po rozmowie
+  // (rozmowa) mamy prawdziwe zdanie — wolno.
+  if (!maWycene && !juzRozmawiano && maLeada && leadZrodlo != null) return skip('lead_spoza_formularza');
   const minuty = hh * 60 + mm;
   if (minuty < OKNO_OD_MIN || minuty > OKNO_DO_MIN) return skip('poza_godzinami');
+  // Świeży telefon: nie dobijamy SMS-em, gdy właśnie dzwoniliśmy. Telefon (poza
+  // tym bieżącym nieodebranym) w ostatnich 3 dniach → cisza. Dotyczy też
+  // pierwszego SMS-a — jeśli aktywnie dzwonimy, SMS jest zbędny.
+  if (ostatniTelefonAt) {
+    const odTelefonu = nowMs - Date.parse(ostatniTelefonAt);
+    if (odTelefonu >= 0 && odTelefonu < SWIEZY_TELEFON_MS) return skip('niedawny_telefon');
+  }
   if (dzisOut > 0) return skip('sms_dzis_juz_byl');
   if (autoCount >= MAX_AUTO_SMS) return skip('limit_3_wyczerpany');
-  if (autoCount > 0 && pierwszyAutoAt) {
-    const wiekMs = nowMs - Date.parse(pierwszyAutoAt);
-    if (wiekMs > OKNO_ZYCIA_DNI * 86400000) return skip('okno_7_dni_minelo');
+  // Kolejny auto-SMS dopiero ≥7 dni po poprzednim (min. odstęp między SMS-ami).
+  if (autoCount > 0 && ostatniAutoAt) {
+    const odSms = nowMs - Date.parse(ostatniAutoAt);
+    if (odSms < ODSTEP_SMS_MS) return skip('za_wczesnie_po_smsie');
   }
-  return { wysylac: true, scenariusz: maWycene ? 'wycena' : 'formularz', proba: autoCount + 1 };
+  const scenariusz = maWycene ? 'wycena' : juzRozmawiano ? 'rozmowa' : 'formularz';
+  return { wysylac: true, scenariusz, proba: autoCount + 1 };
 }
 
 // ── Liczniki z kom_messages (jedno źródło prawdy o SMS-ach) ──────────────────
@@ -333,11 +387,11 @@ async function smsThreadIds(db, digits) {
 }
 
 // Historia WYCHODZĄCYCH SMS-ów na numer: ile dziś (dowolne źródło — ręczne z
-// karty i kampanie też blokują dzisiejszy auto-SMS), ile auto w ogóle i kiedy
-// był pierwszy (okno 7 dni).
+// karty i kampanie też blokują dzisiejszy auto-SMS), ile auto w ogóle oraz
+// kiedy był pierwszy i OSTATNI auto-SMS (ostatni = odstęp min. 7 dni).
 async function historiaSmsNumeru(db, digits, now = new Date()) {
   const ids = await smsThreadIds(db, digits);
-  if (!ids.length) return { dzisOut: 0, autoCount: 0, pierwszyAutoAt: null };
+  if (!ids.length) return { dzisOut: 0, autoCount: 0, pierwszyAutoAt: null, ostatniAutoAt: null };
   const { data, error } = await db.from('kom_messages')
     .select('created_at, meta')
     .in('thread_id', ids)
@@ -352,6 +406,38 @@ async function historiaSmsNumeru(db, digits, now = new Date()) {
     dzisOut: rows.filter((r) => warsawDateStr(new Date(r.created_at)) === dzis).length,
     autoCount: auto.length,
     pierwszyAutoAt: auto.length ? auto[0].created_at : null,
+    ostatniAutoAt: auto.length ? auto[auto.length - 1].created_at : null,
+  };
+}
+
+// Telefony do numeru z "Log zmian" (jedno źródło prawdy o połączeniach): ile
+// było realnych ROZMÓW (disposition='answered' — nieodebrane się nie liczą) i
+// kiedy był OSTATNI telefon POZA tym bieżącym nieodebranym, który właśnie
+// wyzwolił auto-SMS. Bieżący wykluczamy po pbx_call_id, a dodatkowo świeże
+// (<2 min) — inaczej "ostatni telefon" = teraz i reguła 3 dni blokowałaby
+// KAŻDY SMS. rozmowyCount służy do "czy już rozmawialiśmy" niezależnie od
+// statusu (lead po rozmowie, który spadł na "Nie odebrał", sam status by zgubił).
+const LOG_ZMIAN_TABLE = 'Log zmian';
+
+async function historiaTelefonow(db, digits, { excludePbxCallId = null, now = new Date() } = {}) {
+  const d = String(digits || '').replace(/\D/g, '');
+  if (d.length < 9) return { rozmowyCount: 0, ostatniTelefonAt: null };
+  const bez48 = d.length === 11 && d.startsWith('48') ? d.slice(2) : d;
+  const { data, error } = await db.from(LOG_ZMIAN_TABLE)
+    .select('data_zmiany, disposition, pbx_call_id')
+    .in('telefon', [bez48, `48${bez48}`])
+    .order('data_zmiany', { ascending: false })
+    .limit(50);
+  if (error) throw error;
+  const swiezyProg = now.getTime() - 2 * 60 * 1000;
+  const rows = (data || []).filter((r) => {
+    if (excludePbxCallId && r.pbx_call_id === excludePbxCallId) return false;
+    if (Date.parse(r.data_zmiany) > swiezyProg) return false; // bieżący nieodebrany
+    return true;
+  });
+  return {
+    rozmowyCount: rows.filter((r) => r.disposition === 'answered').length,
+    ostatniTelefonAt: rows.length ? rows[0].data_zmiany : null,
   };
 }
 
@@ -428,30 +514,38 @@ async function autoSmsPoNieodebranym(db, {
   const wlaczone = process.env.AUTO_SMS_NIEODEBRANE === '1';
   const czytajHistorie = deps.historiaSmsNumeru || historiaSmsNumeru;
   const czytajWycene = deps.znajdzOtwartaWycene || znajdzOtwartaWycene;
+  const czytajTelefony = deps.historiaTelefonow || historiaTelefonow;
   const wyslij = deps.send || sendSmsAndLog;
 
   // Tanie warunki przed odczytami z bazy: wyłączony/zły kierunek/zamknięty
-  // lead odpadają bez dwóch dodatkowych zapytań przy każdym połączeniu.
+  // lead odpadają bez trzech dodatkowych zapytań przy każdym połączeniu.
   const tanie = ocenBramke({
     wlaczone, label: 'no_answer', kierunek, digits, leadClosed,
     maLeada: Boolean(lead), leadZrodlo: null, maWycene: true, // reszta oceniana niżej
-    hh: 12, mm: 0, dzisOut: 0, autoCount: 0, pierwszyAutoAt: null, nowMs: now.getTime(),
+    hh: 12, mm: 0, dzisOut: 0, autoCount: 0, nowMs: now.getTime(),
   });
   if (!tanie.wysylac) return { status: 'skip', powod: tanie.powod };
 
-  // Odczyty liczników i wyceny: fail-closed — błąd odczytu = brak wysyłki
-  // (bez liczników moglibyśmy zaspamować klienta).
+  // Odczyty liczników, wyceny i telefonów: fail-closed — błąd odczytu = brak
+  // wysyłki (bez liczników moglibyśmy zaspamować klienta).
   let historia;
   let wycena;
+  let telefony;
   try {
-    [historia, wycena] = await Promise.all([
+    [historia, wycena, telefony] = await Promise.all([
       czytajHistorie(db, digits, now),
       czytajWycene(db, { digits, leadId: lead ? lead['ID Leada'] : null }),
+      czytajTelefony(db, digits, { excludePbxCallId: pbxCallId, now }),
     ]);
   } catch (err) {
-    console.warn(LOG_PREFIX, 'odczyt liczników/wyceny nie powiódł się — nie wysyłam:', err.message);
+    console.warn(LOG_PREFIX, 'odczyt liczników/wyceny/telefonów nie powiódł się — nie wysyłam:', err.message);
     return { status: 'skip', powod: `blad_odczytu: ${err.message}` };
   }
+
+  // "Już rozmawialiśmy" = status zaangażowania LUB realna rozmowa w historii
+  // (disposition='answered'). Drugi warunek łapie leada, który rozmawiał, a po
+  // nieodebranym telefonie spadł na status "Nie odebrał" — sam status by to zgubił.
+  const juzRozmawiano = juzRozmawialismy(lead && lead['Deal stage']) || (telefony.rozmowyCount > 0);
 
   const w = warsawParts(now);
   const decyzja = ocenBramke({
@@ -459,8 +553,8 @@ async function autoSmsPoNieodebranym(db, {
     maLeada: Boolean(lead), leadZrodlo: lead ? (lead['Źródło'] ?? null) : null,
     maWycene: Boolean(wycena),
     hh: w.hh, mm: w.mm,
-    dzisOut: historia.dzisOut, autoCount: historia.autoCount,
-    pierwszyAutoAt: historia.pierwszyAutoAt, nowMs: now.getTime(),
+    dzisOut: historia.dzisOut, autoCount: historia.autoCount, nowMs: now.getTime(),
+    juzRozmawiano, ostatniAutoAt: historia.ostatniAutoAt, ostatniTelefonAt: telefony.ostatniTelefonAt,
   });
   if (!decyzja.wysylac) return { status: 'skip', powod: decyzja.powod };
 
@@ -503,7 +597,9 @@ module.exports = {
   policzSegmenty,
   zbudujTrescAutoSms,
   ocenBramke,
+  juzRozmawialismy,
   historiaSmsNumeru,
+  historiaTelefonow,
   numeryZeSmsemOd,
   znajdzOtwartaWycene,
   autoSmsPoNieodebranym,

@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
 
 const {
   dopasujZwrot, plDataSlownie, policzSegmenty, zbudujTrescAutoSms,
-  ocenBramke, autoSmsPoNieodebranym, warsawDateStr,
+  ocenBramke, juzRozmawialismy, autoSmsPoNieodebranym, warsawDateStr,
 } = require('./auto-sms');
 
 // Lipiec = UTC+2 w Warszawie: godzina warszawska H == H-2 UTC.
@@ -131,15 +131,66 @@ test('WYCENA próba 2: stara wycena dostaje rok w dacie', () => {
     + 'Proszę o informację, kiedy będzie dla Pani dogodny moment na rozmowę.');
 });
 
-test('wszystkie 18 kombinacji: bez null/undefined/podwójnych spacji/em dash, rozsądna długość', () => {
+test('ROZMOWA próba 1, tor Pan, umówiony termin na dziś — pełna treść', () => {
+  const { tresc } = zbudujTrescAutoSms({ scenariusz: 'rozmowa', proba: 1, name: 'Tomasz', umowioneDzis: true });
+  assert.equal(tresc,
+    'Dzień dobry Panie Tomaszu, z tej strony Lorenzo z LumLum. '
+    + 'Rozmawialiśmy ostatnio w sprawie oświetlenia LED. '
+    + 'Umawialiśmy się, że odezwę się dzisiaj, ale nie udało się nam połączyć. '
+    + 'Proszę o informację, jaki dzień i godzina będą dogodne - wtedy zadzwonię. '
+    + 'Można też oddzwonić na ten numer.');
+});
+
+test('ROZMOWA próba 1, tor Pan, bez umówionego terminu — pełna treść', () => {
+  const { tresc } = zbudujTrescAutoSms({ scenariusz: 'rozmowa', proba: 1, name: 'Tomasz', umowioneDzis: false });
+  assert.equal(tresc,
+    'Dzień dobry Panie Tomaszu, z tej strony Lorenzo z LumLum. '
+    + 'Rozmawialiśmy ostatnio w sprawie oświetlenia LED. '
+    + 'Miałem się z Panem skontaktować, ale nie udało się nam połączyć. '
+    + 'Proszę o informację, jaki dzień i godzina będą dogodne - wtedy zadzwonię. '
+    + 'Można też oddzwonić na ten numer.');
+});
+
+test('ROZMOWA próba 1, tor Państwo (brak imienia) — pełna treść', () => {
+  const { tresc, tor } = zbudujTrescAutoSms({ scenariusz: 'rozmowa', proba: 1, name: 'Firma XYZ' });
+  assert.equal(tor, 'panstwo');
+  assert.equal(tresc,
+    'Dzień dobry, z tej strony Lorenzo z LumLum. '
+    + 'Rozmawialiśmy ostatnio w sprawie oświetlenia LED. '
+    + 'Miałem się skontaktować, ale nie udało się nam połączyć. '
+    + 'Proszę o informację, jaki dzień i godzina będą dogodne - wtedy zadzwonię. '
+    + 'Można też oddzwonić na ten numer.');
+});
+
+test('ROZMOWA próba 2, tor Pani — pełna treść', () => {
+  const { tresc } = zbudujTrescAutoSms({ scenariusz: 'rozmowa', proba: 2, name: 'Zofia' });
+  assert.equal(tresc,
+    'Dzień dobry Pani Zofio, tu ponownie Lorenzo z LumLum. '
+    + 'Wracam do naszej rozmowy o oświetleniu LED, ale nie udało się nam połączyć. '
+    + 'Proszę o informację, kiedy będzie dla Pani dogodny moment na rozmowę - zadzwonię w tym terminie. '
+    + 'Można też oddzwonić na ten numer.');
+});
+
+test('ROZMOWA próba 3 — pożegnanie z ":)" (dokładnie ASCII)', () => {
+  const { tresc } = zbudujTrescAutoSms({ scenariusz: 'rozmowa', proba: 3, name: 'Grzegorz' });
+  assert.equal(tresc,
+    'Dzień dobry Panie Grzegorzu, tu Lorenzo z LumLum. '
+    + 'Nie chciałbym zostawić naszej rozmowy o oświetleniu LED bez ciągu dalszego, a nie udaje się nam połączyć. '
+    + 'Jeśli temat jest nadal aktualny, proszę o wiadomość lub telefon na ten numer. '
+    + 'Jeśli nie, proszę o krótką informację - wtedy nie będę już wracał do tematu :)');
+  assert.ok(tresc.endsWith(':)'));
+  assert.ok(!tresc.includes('😊'));
+});
+
+test('wszystkie 27 kombinacji: bez null/undefined/podwójnych spacji/em dash, rozsądna długość', () => {
   const wyniki = [];
-  for (const scenariusz of ['formularz', 'wycena']) {
+  for (const scenariusz of ['formularz', 'wycena', 'rozmowa']) {
     for (const proba of [1, 2, 3]) {
       for (const name of ['Włodzimierz Brzęczyszczykiewicz', 'Zofia', 'Firma XYZ']) {
         const { tresc, segmenty, tor } = zbudujTrescAutoSms({
           scenariusz, proba, name,
           wycenaCreatedAt: scenariusz === 'wycena' ? '2026-07-03T08:00:00Z' : null,
-          umowioneDzis: false, now: warsawNoon(),
+          umowioneDzis: scenariusz === 'rozmowa' && proba === 1, now: warsawNoon(),
         });
         assert.ok(!/null|undefined/.test(tresc), `${scenariusz}/${proba}/${tor}: śmieć w treści`);
         assert.ok(!tresc.includes('  '), `${scenariusz}/${proba}/${tor}: podwójna spacja`);
@@ -159,7 +210,8 @@ test('wszystkie 18 kombinacji: bez null/undefined/podwójnych spacji/em dash, ro
 const BAZOWA = {
   wlaczone: true, label: 'no_answer', kierunek: 'wychodzące', digits: '48604650590',
   leadClosed: false, maLeada: true, leadZrodlo: null, maWycene: false,
-  hh: 12, mm: 0, dzisOut: 0, autoCount: 0, pierwszyAutoAt: null,
+  hh: 12, mm: 0, dzisOut: 0, autoCount: 0,
+  juzRozmawiano: false, ostatniAutoAt: null, ostatniTelefonAt: null,
   nowMs: Date.parse('2026-07-23T10:00:00Z'),
 };
 
@@ -167,9 +219,19 @@ test('bramka: happy path → formularz, próba 1', () => {
   assert.deepEqual(ocenBramke(BAZOWA), { wysylac: true, scenariusz: 'formularz', proba: 1 });
 });
 
-test('bramka: wycena wygrywa nad formularzem, próba = liczba auto+1', () => {
-  const r = ocenBramke({ ...BAZOWA, maWycene: true, autoCount: 1, pierwszyAutoAt: '2026-07-22T10:00:00Z' });
+test('bramka: wycena wygrywa nad formularzem/rozmową, próba = liczba auto+1', () => {
+  const r = ocenBramke({ ...BAZOWA, maWycene: true, juzRozmawiano: true, autoCount: 1, ostatniAutoAt: '2026-07-10T10:00:00Z' });
   assert.deepEqual(r, { wysylac: true, scenariusz: 'wycena', proba: 2 });
+});
+
+test('bramka: brak wyceny + już rozmawialiśmy → scenariusz rozmowa', () => {
+  assert.deepEqual(ocenBramke({ ...BAZOWA, juzRozmawiano: true }),
+    { wysylac: true, scenariusz: 'rozmowa', proba: 1 });
+});
+
+test('bramka: rozmowa wygrywa nad "lead spoza formularza" (już rozmawialiśmy → to nie kłamstwo)', () => {
+  const r = ocenBramke({ ...BAZOWA, leadZrodlo: 'Zadarma — rozmowa bez dopasowania w bazie', juzRozmawiano: true });
+  assert.deepEqual(r, { wysylac: true, scenariusz: 'rozmowa', proba: 1 });
 });
 
 test('bramka: każda reguła odmawia z własnym powodem', () => {
@@ -183,15 +245,34 @@ test('bramka: każda reguła odmawia z własnym powodem', () => {
     [{ leadZrodlo: 'Zadarma — rozmowa bez dopasowania w bazie' }, 'lead_spoza_formularza'],
     [{ hh: 7, mm: 59 }, 'poza_godzinami'],
     [{ hh: 20, mm: 31 }, 'poza_godzinami'],
+    // telefon 1 dzień temu (poza bieżącym nieodebranym) → nie dobijamy SMS-em
+    [{ ostatniTelefonAt: '2026-07-22T10:00:00Z' }, 'niedawny_telefon'],
     [{ dzisOut: 1 }, 'sms_dzis_juz_byl'],
-    [{ autoCount: 3, pierwszyAutoAt: '2026-07-22T10:00:00Z' }, 'limit_3_wyczerpany'],
-    [{ autoCount: 1, pierwszyAutoAt: '2026-07-10T10:00:00Z' }, 'okno_7_dni_minelo'],
+    [{ autoCount: 3, ostatniAutoAt: '2026-07-01T10:00:00Z' }, 'limit_3_wyczerpany'],
+    // 2. SMS < 7 dni od poprzedniego (poprzedni 2 dni temu) → za wcześnie
+    [{ autoCount: 1, ostatniAutoAt: '2026-07-21T10:00:00Z' }, 'za_wczesnie_po_smsie'],
   ];
   for (const [zmiana, powod] of przypadki) {
     const r = ocenBramke({ ...BAZOWA, ...zmiana });
     assert.equal(r.wysylac, false, JSON.stringify(zmiana));
     assert.equal(r.powod, powod, JSON.stringify(zmiana));
   }
+});
+
+test('bramka: świeży telefon — 3 dni to granica (4 dni przepuszcza, jak lead 471)', () => {
+  // ostatni telefon 4 dni temu (23.07, now 27.07) → SMS wolno (471)
+  assert.equal(ocenBramke({ ...BAZOWA, nowMs: Date.parse('2026-07-27T10:00:00Z'), ostatniTelefonAt: '2026-07-23T10:00:00Z' }).wysylac, true);
+  // dokładnie 3 dni temu → jeszcze blokada (< 3 dni to skip, tu równo 3 dni = wolno? sprawdź: 3*24h)
+  assert.equal(ocenBramke({ ...BAZOWA, nowMs: Date.parse('2026-07-27T10:00:00Z'), ostatniTelefonAt: '2026-07-24T10:00:01Z' }).powod, 'niedawny_telefon');
+});
+
+test('bramka: 2. auto-SMS dopiero ≥7 dni po poprzednim', () => {
+  const now = Date.parse('2026-07-23T10:00:00Z');
+  // 6 dni temu → za wcześnie
+  assert.equal(ocenBramke({ ...BAZOWA, nowMs: now, autoCount: 1, ostatniAutoAt: '2026-07-17T10:00:00Z' }).powod, 'za_wczesnie_po_smsie');
+  // 8 dni temu → wolno (i nadal formularz, bo maWycene/juzRozmawiano false)
+  assert.deepEqual(ocenBramke({ ...BAZOWA, nowMs: now, autoCount: 1, ostatniAutoAt: '2026-07-15T10:00:00Z' }),
+    { wysylac: true, scenariusz: 'formularz', proba: 2 });
 });
 
 test('bramka: granice okna godzin (8:00 i 20:30 włącznie)', () => {
@@ -204,6 +285,18 @@ test('bramka: lead spoza formularza Z wyceną dostaje scenariusz wycena', () => 
   assert.deepEqual(r, { wysylac: true, scenariusz: 'wycena', proba: 1 });
 });
 
+// ── juzRozmawialismy: status → czy była już rozmowa ──────────────────────────
+
+test('juzRozmawialismy: statusy zaangażowania = true, pierwszy kontakt = false', () => {
+  for (const s of ['Po pierwszym tel', 'Zadzwonić jeszcze raz', 'Przyszłościowy',
+    'Lekko zainteresowany', 'Lekko zaintereswoany', 'Wycena wysłana']) {
+    assert.equal(juzRozmawialismy(s), true, `talked: ${s}`);
+  }
+  for (const s of ['Nowy', 'Nie odebrał', 'Błędne dane', '', null, undefined]) {
+    assert.equal(juzRozmawialismy(s), false, `first-contact: ${JSON.stringify(s)}`);
+  }
+});
+
 // ── Orkiestrator (deps wstrzykiwane — bez bazy i bez Zadarmy) ────────────────
 
 function leadFixture(extra = {}) {
@@ -214,7 +307,11 @@ function leadFixture(extra = {}) {
 }
 
 function zerowaHistoria() {
-  return async () => ({ dzisOut: 0, autoCount: 0, pierwszyAutoAt: null });
+  return async () => ({ dzisOut: 0, autoCount: 0, pierwszyAutoAt: null, ostatniAutoAt: null });
+}
+
+function zeroTelefony() {
+  return async () => ({ rozmowyCount: 0, ostatniTelefonAt: null });
 }
 
 test('orkiestrator: wysyłka formularz p1 — send dostaje auto_sms i świeżego leada', async () => {
@@ -229,6 +326,7 @@ test('orkiestrator: wysyłka formularz p1 — send dostaje auto_sms i świeżego
       refetchLead: async () => freshLead,
       deps: {
         historiaSmsNumeru: zerowaHistoria(),
+        historiaTelefonow: zeroTelefony(),
         znajdzOtwartaWycene: async () => null,
         send: async (db, args) => { wyslane.push(args); return { ok: true, koszt: 0.35 }; },
       },
@@ -253,6 +351,7 @@ test('orkiestrator: wycena → scenariusz wycena z datą i terminem dziś', asyn
       feedbackBefore: warsawDateStr(warsawNoon()), now: warsawNoon(),
       deps: {
         historiaSmsNumeru: zerowaHistoria(),
+        historiaTelefonow: zeroTelefony(),
         znajdzOtwartaWycene: async () => ({ id: 1975, created_at: '2026-07-03T08:00:00Z', imie_nazwisko: 'Grzegorz Kowalski' }),
         send: async () => ({ ok: true }),
       },
@@ -284,7 +383,8 @@ test('orkiestrator: SMS dziś już był → skip, send nietknięty', async () =>
     const wynik = await autoSmsPoNieodebranym({}, {
       digits: '48604650590', kierunek: 'wychodzące', lead: leadFixture(), now: warsawNoon(),
       deps: {
-        historiaSmsNumeru: async () => ({ dzisOut: 1, autoCount: 1, pierwszyAutoAt: '2026-07-23T06:00:00Z' }),
+        historiaSmsNumeru: async () => ({ dzisOut: 1, autoCount: 1, pierwszyAutoAt: '2026-07-23T06:00:00Z', ostatniAutoAt: '2026-07-23T06:00:00Z' }),
+        historiaTelefonow: zeroTelefony(),
         znajdzOtwartaWycene: async () => null,
         send: async () => { sendCalls += 1; return { ok: true }; },
       },
@@ -301,6 +401,7 @@ test('orkiestrator: błąd odczytu liczników → fail-closed skip', async () =>
       digits: '48604650590', kierunek: 'wychodzące', lead: leadFixture(), now: warsawNoon(),
       deps: {
         historiaSmsNumeru: async () => { throw new Error('baza padła'); },
+        historiaTelefonow: zeroTelefony(),
         znajdzOtwartaWycene: async () => null,
         send: async () => { throw new Error('nie powinno się wydarzyć'); },
       },
@@ -317,6 +418,7 @@ test('orkiestrator: błąd wysyłki → status error z treścią (do sms_wyslany
       digits: '48604650590', kierunek: 'wychodzące', lead: leadFixture(), now: warsawNoon(),
       deps: {
         historiaSmsNumeru: zerowaHistoria(),
+        historiaTelefonow: zeroTelefony(),
         znajdzOtwartaWycene: async () => null,
         send: async () => { throw new Error('Zadarma SMS: not enough money'); },
       },
@@ -335,6 +437,7 @@ test('orkiestrator: poza godzinami (21:00 Warszawa) → skip', async () => {
       now: new Date('2026-07-23T19:00:00Z'), // 21:00 WAW
       deps: {
         historiaSmsNumeru: zerowaHistoria(),
+        historiaTelefonow: zeroTelefony(),
         znajdzOtwartaWycene: async () => null,
         send: async () => { throw new Error('nie powinno się wydarzyć'); },
       },
@@ -365,6 +468,7 @@ test('orkiestrator: kontakt bez leada i bez wyceny → skip brak_dopasowania', a
       digits: '48604650590', kierunek: 'wychodzące', lead: null, now: warsawNoon(),
       deps: {
         historiaSmsNumeru: zerowaHistoria(),
+        historiaTelefonow: zeroTelefony(),
         znajdzOtwartaWycene: async () => null,
         send: async () => { throw new Error('nie powinno się wydarzyć'); },
       },
@@ -380,6 +484,7 @@ test('orkiestrator: wycena-sierota (bez leada) → scenariusz wycena, imię z wy
       digits: '48604650590', kierunek: 'wychodzące', lead: null, now: warsawNoon(),
       deps: {
         historiaSmsNumeru: zerowaHistoria(),
+        historiaTelefonow: zeroTelefony(),
         znajdzOtwartaWycene: async () => ({ id: 2001, created_at: '2026-07-20T08:00:00Z', imie_nazwisko: 'Zofia Nowak' }),
         send: async () => ({ ok: true }),
       },
@@ -387,5 +492,80 @@ test('orkiestrator: wycena-sierota (bez leada) → scenariusz wycena, imię z wy
     assert.equal(wynik.status, 'sent');
     assert.equal(wynik.scenariusz, 'wycena');
     assert.ok(wynik.tresc.startsWith('Dzień dobry Pani Zofio'));
+  } finally { delete process.env.AUTO_SMS_NIEODEBRANE; }
+});
+
+test('orkiestrator: lead po rozmowie bez wyceny → scenariusz rozmowa (jak lead 471)', async () => {
+  process.env.AUTO_SMS_NIEODEBRANE = '1';
+  try {
+    const wynik = await autoSmsPoNieodebranym({}, {
+      digits: '48575271953', kierunek: 'wychodzące',
+      lead: leadFixture({ Name: 'Tomasz Rzeszotarski', 'Deal stage': 'Zadzwonić jeszcze raz' }),
+      feedbackBefore: warsawDateStr(warsawNoon()), now: warsawNoon(),
+      deps: {
+        historiaSmsNumeru: zerowaHistoria(),
+        // 471: ostatni telefon 4 dni temu (>3) + 2 realne rozmowy
+        historiaTelefonow: async () => ({ rozmowyCount: 2, ostatniTelefonAt: '2026-07-19T10:00:00Z' }),
+        znajdzOtwartaWycene: async () => null,
+        send: async () => ({ ok: true }),
+      },
+    });
+    assert.equal(wynik.status, 'sent');
+    assert.equal(wynik.scenariusz, 'rozmowa');
+    assert.ok(wynik.tresc.startsWith('Dzień dobry Panie Tomaszu'));
+    assert.ok(wynik.tresc.includes('Rozmawialiśmy ostatnio w sprawie oświetlenia LED'));
+    assert.ok(!wynik.tresc.includes('formularzu'));
+  } finally { delete process.env.AUTO_SMS_NIEODEBRANE; }
+});
+
+test('orkiestrator: status "Nie odebrał", ale były rozmowy → rozmowa (licznik ratuje status)', async () => {
+  process.env.AUTO_SMS_NIEODEBRANE = '1';
+  try {
+    const wynik = await autoSmsPoNieodebranym({}, {
+      digits: '48604650590', kierunek: 'wychodzące',
+      lead: leadFixture({ 'Deal stage': 'Nie odebrał' }), now: warsawNoon(),
+      deps: {
+        historiaSmsNumeru: zerowaHistoria(),
+        historiaTelefonow: async () => ({ rozmowyCount: 1, ostatniTelefonAt: '2026-07-18T10:00:00Z' }),
+        znajdzOtwartaWycene: async () => null,
+        send: async () => ({ ok: true }),
+      },
+    });
+    assert.equal(wynik.status, 'sent');
+    assert.equal(wynik.scenariusz, 'rozmowa');
+  } finally { delete process.env.AUTO_SMS_NIEODEBRANE; }
+});
+
+test('orkiestrator: świeży telefon (2 dni temu) → skip niedawny_telefon, send nietknięty', async () => {
+  process.env.AUTO_SMS_NIEODEBRANE = '1';
+  try {
+    let sendCalls = 0;
+    const wynik = await autoSmsPoNieodebranym({}, {
+      digits: '48604650590', kierunek: 'wychodzące', lead: leadFixture(), now: warsawNoon(),
+      deps: {
+        historiaSmsNumeru: zerowaHistoria(),
+        historiaTelefonow: async () => ({ rozmowyCount: 0, ostatniTelefonAt: '2026-07-21T10:00:00Z' }),
+        znajdzOtwartaWycene: async () => null,
+        send: async () => { sendCalls += 1; return { ok: true }; },
+      },
+    });
+    assert.deepEqual(wynik, { status: 'skip', powod: 'niedawny_telefon' });
+    assert.equal(sendCalls, 0);
+  } finally { delete process.env.AUTO_SMS_NIEODEBRANE; }
+});
+
+test('orkiestrator: 2. auto-SMS za wcześnie (<7 dni od poprzedniego) → skip', async () => {
+  process.env.AUTO_SMS_NIEODEBRANE = '1';
+  try {
+    const wynik = await autoSmsPoNieodebranym({}, {
+      digits: '48604650590', kierunek: 'wychodzące', lead: leadFixture(), now: warsawNoon(),
+      deps: {
+        historiaSmsNumeru: async () => ({ dzisOut: 0, autoCount: 1, pierwszyAutoAt: '2026-07-19T10:00:00Z', ostatniAutoAt: '2026-07-19T10:00:00Z' }),
+        historiaTelefonow: zeroTelefony(),
+        znajdzOtwartaWycene: async () => null,
+        send: async () => { throw new Error('nie powinno się wydarzyć'); },
+      },
+    });
+    assert.deepEqual(wynik, { status: 'skip', powod: 'za_wczesnie_po_smsie' });
   } finally { delete process.env.AUTO_SMS_NIEODEBRANE; }
 });
