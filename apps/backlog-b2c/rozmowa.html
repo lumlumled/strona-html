@@ -125,6 +125,30 @@
     .rz-kontakt-body { display: none; margin-top: 0.4rem; color: var(--text-secondary); line-height: 1.5; white-space: pre-wrap; }
     .rz-kontakt.open .rz-kontakt-body { display: block; }
     .rz-empty { color: var(--text-muted); font-style: italic; font-size: 0.85rem; }
+    /* Panel „Wykryliśmy wycenę" — pozycje z rozmowy + puste ceny do wpisania. */
+    .rz-wyc { border-color: var(--accent); }
+    .rz-wyc h2 { font-size: 0.95rem; }
+    .rz-wyc-sub { font-size: 0.82rem; color: var(--text-muted); line-height: 1.5; }
+    .rz-wyc-poz { display: grid; grid-template-columns: 3.2rem 1fr 6.5rem; gap: 0.5rem; align-items: center; }
+    .rz-wyc-poz input { padding: 0.4rem 0.5rem; font-size: 0.9rem; }
+    .rz-wyc-poz .qty { text-align: center; font-variant-numeric: tabular-nums; }
+    .rz-wyc-poz .nazwa { font-size: 0.9rem; color: var(--text-primary); }
+    .rz-wyc-poz .cena-wrap { position: relative; }
+    .rz-wyc-poz .cena-wrap::after { content: 'zł'; position: absolute; right: 0.55rem; top: 50%; transform: translateY(-50%); font-size: 0.78rem; color: var(--text-muted); pointer-events: none; }
+    .rz-wyc-poz .cena { padding-right: 1.7rem; text-align: right; font-variant-numeric: tabular-nums; }
+    .rz-wyc-head { display: grid; grid-template-columns: 3.2rem 1fr 6.5rem; gap: 0.5rem; font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+    .rz-wyc-head span:last-child { text-align: right; }
+    .rz-wyc-sum { display: flex; justify-content: space-between; align-items: baseline; border-top: 1px solid var(--border); padding-top: 0.6rem; font-size: 0.9rem; }
+    .rz-wyc-sum b { font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+    .rz-wyc-actions { display: flex; gap: 0.5rem; }
+    .rz-wyc-actions button { flex: 1; }
+    .rz-ghost {
+      font: inherit; font-size: 0.9rem; font-weight: 600; padding: 0.7rem 1rem;
+      border: 1px solid var(--border); border-radius: 999px; background: transparent;
+      color: var(--text-secondary); cursor: pointer;
+    }
+    .rz-wyc-done { font-size: 0.88rem; color: var(--good); font-weight: 600; }
+    .rz-wyc-done a { color: var(--accent); }
   </style>
 </head>
 <body>
@@ -170,6 +194,20 @@
 
     <div class="rz-card rz-wynik" id="rz-wynik" hidden></div>
 
+    <div class="rz-card rz-wyc" id="rz-wyc" hidden>
+      <h2>💡 Wykryliśmy wycenę</h2>
+      <p class="rz-wyc-sub">Z rozmowy wyszły konkretne produkty. Wpisz ceny — utworzymy szkic wyceny
+        (status Open) i podepniemy go pod ten kontakt. Nic nie leci do klienta.</p>
+      <div class="rz-wyc-head"><span>Ilość</span><span>Produkt</span><span>Cena</span></div>
+      <div id="rz-wyc-pozycje"></div>
+      <div class="rz-wyc-sum"><span>Razem</span><b id="rz-wyc-suma">0 zł</b></div>
+      <div class="rz-wyc-actions">
+        <button type="button" class="rz-ghost" id="rz-wyc-pomin">Pomiń</button>
+        <button type="button" class="rz-submit" id="rz-wyc-utworz">Utwórz szkic</button>
+      </div>
+      <div class="rz-msg" id="rz-wyc-msg"></div>
+    </div>
+
     <div class="rz-card rz-lista">
       <h2>Kontakty organic</h2>
       <div id="rz-lista"></div>
@@ -188,6 +226,12 @@
       const msgEl = $('rz-msg');
       const wynikEl = $('rz-wynik');
       const submitEl = $('rz-submit');
+      const wycEl = $('rz-wyc');
+      const wycPozEl = $('rz-wyc-pozycje');
+      const wycSumaEl = $('rz-wyc-suma');
+      const wycMsgEl = $('rz-wyc-msg');
+      const wycUtworzEl = $('rz-wyc-utworz');
+      let wycCtx = null; // { telefon, imie } ostatniej analizy z produktami
 
       // Prefill z karty leada: /rozmowa?telefon=48...
       const params = new URLSearchParams(location.search);
@@ -276,6 +320,7 @@
         submitEl.disabled = true;
         setMsg('Analizuję rozmowę…');
         wynikEl.hidden = true;
+        wycEl.hidden = true;
         try {
           const res = await fetch(`${API}/api/rozmowy/reczna`, {
             method: 'POST',
@@ -302,6 +347,10 @@
             + pole('Najbliższa akcja', body.akcja)
             + pole('Data feedbacku', body.data_feedbacku);
           wynikEl.hidden = false;
+          // Produkty w rozmowie, brak podpiętej wyceny → zaproponuj szkic.
+          if (body.wycena_proponowana && Array.isArray(body.pozycje) && body.pozycje.length) {
+            showWycenaPanel(digits, body.nazwa || (nowyPola.hidden ? '' : $('rz-imie').value.trim()), body.pozycje);
+          }
           trescEl.value = '';
           checkMatch();
           loadKontakty();
@@ -309,6 +358,92 @@
           setMsg(`Nie zapisano: ${err.message}`, true);
         } finally {
           submitEl.disabled = false;
+        }
+      });
+
+      // ── Panel „Wykryliśmy wycenę" ──────────────────────────────────────────
+      function fmtZl(n) {
+        return (Math.round(n * 100) / 100).toLocaleString('pl-PL', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + ' zł';
+      }
+      function liczbaZ(el) { return Number(String(el.value).replace(',', '.').trim()) || 0; }
+      function recomputeSuma() {
+        let s = 0;
+        wycPozEl.querySelectorAll('.rz-wyc-poz').forEach((row) => {
+          s += liczbaZ(row.querySelector('.qty')) * liczbaZ(row.querySelector('.cena'));
+        });
+        wycSumaEl.textContent = fmtZl(s);
+        return s;
+      }
+      function showWycenaPanel(telefon, imie, pozycje) {
+        wycCtx = { telefon, imie };
+        wycPozEl.innerHTML = '';
+        pozycje.forEach((p) => {
+          const row = document.createElement('div');
+          row.className = 'rz-wyc-poz';
+          row.dataset.name = p.name;
+          const qty = document.createElement('input');
+          qty.className = 'qty'; qty.value = p.quantity; qty.inputMode = 'decimal';
+          qty.addEventListener('input', recomputeSuma);
+          const nazwa = document.createElement('div');
+          nazwa.className = 'nazwa'; nazwa.textContent = p.name;
+          const cenaWrap = document.createElement('div');
+          cenaWrap.className = 'cena-wrap';
+          const cena = document.createElement('input');
+          cena.className = 'cena'; cena.inputMode = 'decimal'; cena.placeholder = '0';
+          cena.addEventListener('input', recomputeSuma);
+          cenaWrap.appendChild(cena);
+          row.append(qty, nazwa, cenaWrap);
+          wycPozEl.appendChild(row);
+        });
+        wycMsgEl.textContent = ''; wycMsgEl.className = 'rz-msg';
+        wycUtworzEl.disabled = false;
+        $('rz-wyc-pomin').style.display = '';
+        wycUtworzEl.style.display = '';
+        recomputeSuma();
+        wycEl.hidden = false;
+        wycEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+
+      $('rz-wyc-pomin').addEventListener('click', () => { wycEl.hidden = true; });
+
+      wycUtworzEl.addEventListener('click', async () => {
+        if (!wycCtx) return;
+        const items = [];
+        wycPozEl.querySelectorAll('.rz-wyc-poz').forEach((row) => {
+          const q = liczbaZ(row.querySelector('.qty'));
+          const cenaRaw = String(row.querySelector('.cena').value).replace(',', '.').trim();
+          items.push({ name: row.dataset.name, quantity: q, price: cenaRaw === '' ? '' : Number(cenaRaw) });
+        });
+        const suma = recomputeSuma();
+        if (suma <= 0) { wycMsgEl.textContent = 'Wpisz przynajmniej jedną cenę.'; wycMsgEl.className = 'rz-msg err'; return; }
+        wycUtworzEl.disabled = true;
+        wycMsgEl.textContent = 'Tworzę szkic…'; wycMsgEl.className = 'rz-msg';
+        try {
+          const telE164 = '48' + String(wycCtx.telefon).replace(/\D/g, '').replace(/^48/, '');
+          const payload = { typ: 'WYCENA', status: 'Open', source: 'quick-add', telefon_e164: telE164, items };
+          if (wycCtx.imie) payload.imie_nazwisko = wycCtx.imie;
+          if (suma > 0) payload.kwota_proponowana_brutto = suma;
+          const res = await fetch(`${API}/api/wyceny`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+          });
+          const b = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(b.error || `Błąd ${res.status}`);
+          const wycId = b.data && b.data.id;
+          // Most do kontaktu organic (karta pokaże sekcję Wycena). Best-effort —
+          // sama wycena istnieje niezależnie od tego, czy podpięcie się uda.
+          await fetch(`${API}/api/rozmowy/podpnij-wycene`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ telefon: wycCtx.telefon, wycena_id: wycId }),
+          }).catch(() => {});
+          const wycBase = (window.LUMLUM_LINKS && window.LUMLUM_LINKS.wyceny) || '/wyceny/';
+          $('rz-wyc-pomin').style.display = 'none';
+          wycUtworzEl.style.display = 'none';
+          wycMsgEl.className = 'rz-wyc-done';
+          wycMsgEl.innerHTML = `✓ Szkic wyceny #${wycId} utworzony. <a href="${wycBase}" target="_blank" rel="noopener">Otwórz w Wycenach →</a>`;
+          loadKontakty();
+        } catch (err) {
+          wycUtworzEl.disabled = false;
+          wycMsgEl.textContent = `Nie utworzono: ${err.message}`; wycMsgEl.className = 'rz-msg err';
         }
       });
 

@@ -558,6 +558,30 @@
 
     .org-link:hover { background: var(--accent-soft); }
 
+    /* ── Karta Organic w strukturze leada (Etap 3, 2026-07-29) ────────────── */
+    .org-sekcja-tytul {
+      font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-muted);
+      border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; margin-bottom: 0.1rem;
+    }
+    .org-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.55rem 0.9rem; }
+    .org-cell .k { font-size: 0.68rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.1rem; }
+    .org-cell .v { line-height: 1.4; }
+    @media (max-width: 480px) { .org-grid { grid-template-columns: 1fr; } }
+    /* Produkty = twardy dowód pod wycenę — lekko wyróżnione. */
+    .org-produkty { background: var(--accent-soft); border-radius: 10px; padding: 0.55rem 0.7rem; }
+    .org-produkty .org-text { font-variant-numeric: tabular-nums; }
+    /* Sekcja Wycena */
+    .org-wycena { border-top: 1px solid var(--border); padding-top: 0.65rem; display: flex; flex-direction: column; gap: 0.5rem; }
+    .org-wycena-pill { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.84rem; }
+    .org-wycena-kwota { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .org-utworz-wyc {
+      align-self: flex-start; font: inherit; font-size: 0.84rem; font-weight: 700;
+      border: none; border-radius: 999px; padding: 0.45rem 0.95rem; cursor: pointer;
+      background: var(--accent); color: var(--accent-contrast);
+    }
+    .org-utworz-wyc:disabled { opacity: 0.5; cursor: default; }
+
     .empty-note { color: var(--text-muted); font-style: italic; font-size: 0.85rem; }
 
     @media (max-width: 720px) {
@@ -1203,6 +1227,139 @@
       return wrap;
     }
 
+    // ── Karta Organic w strukturze leada (Etap 3) ───────────────────────────
+    function orgSekcjaTytul(text) {
+      const d = document.createElement('div');
+      d.className = 'org-sekcja-tytul';
+      d.textContent = text;
+      return d;
+    }
+    function orgGrid(pary) {
+      const grid = document.createElement('div');
+      grid.className = 'org-grid';
+      pary.filter(Boolean).forEach(([k, v]) => {
+        const cell = document.createElement('div');
+        cell.className = 'org-cell';
+        const kk = document.createElement('div'); kk.className = 'k'; kk.textContent = k;
+        const vv = document.createElement('div'); vv.className = 'v'; vv.textContent = v || '—';
+        cell.append(kk, vv);
+        grid.appendChild(cell);
+      });
+      return grid;
+    }
+    // Oś czasu jak na karcie leada — reuse parseHistoriaRozmow + klasy
+    // lk-historia-* z apps/shared/lead-card.css (ładowane w <head>).
+    function orgHistoriaTimeline(entries) {
+      const list = document.createElement('div');
+      list.className = 'lk-historia-rozmow-list';
+      entries.forEach((r) => {
+        const nieodebrane = /^nie odebra/i.test(r.tresc || '');
+        const entry = document.createElement('div');
+        entry.className = 'lk-historia-rozmow-entry' + (nieodebrane ? ' nieodebrane' : '');
+        const head = document.createElement('div'); head.className = 'lk-historia-rozmow-head';
+        const when = document.createElement('span'); when.className = 'lk-historia-rozmow-data';
+        when.textContent = r.data ? `${r.data}${r.czas ? ` ${r.czas}` : ''}` : '—';
+        head.appendChild(when);
+        const note = document.createElement('div'); note.className = 'lk-historia-rozmow-notatka';
+        note.textContent = r.tresc || 'Odebrane — brak zapisanego podsumowania (starszy wpis)';
+        if (!r.tresc || nieodebrane) note.classList.add('brak-tresci');
+        entry.append(head, note);
+        list.appendChild(entry);
+      });
+      return list;
+    }
+    // Parser produktów po stronie frontu — lustro parseProduktyToItems z
+    // apps/backlog-b2c/server/rozmowy.js (prefill "Utwórz wycenę").
+    function parseProduktyToItemsFront(produkty) {
+      return String(produkty || '').split('\n').map((l) => l.trim()).filter(Boolean).map((line) => {
+        const m = line.match(/^(\d+(?:[.,]\d+)?)\s*m?\b\s*(.+)$/i);
+        if (m && m[2]) return { name: m[2].trim(), quantity: Number(String(m[1]).replace(',', '.')) || 1, price: '' };
+        return { name: line, quantity: 1, price: '' };
+      }).filter((p) => p.name);
+    }
+    // "Utwórz wycenę" z produktów rozmowy → edytor wyceny (prefilled) →
+    // po zapisie podpięcie pod kontakt organic (karta pokaże sekcję Wycena).
+    function otworzNowaWycena(row, details) {
+      if (!window.WycenaEditor) { alert('Edytor wyceny niedostępny'); return; }
+      const digits = row._telefon_digits || String(row._telefon_formatted || '').replace(/\D/g, '').replace(/^48/, '');
+      window.WycenaEditor.openNew({
+        apiBase: API_BASE,
+        prefill: {
+          typ: 'WYCENA',
+          telefon_e164: digits ? ('48' + digits) : undefined,
+          imie_nazwisko: row.imie || undefined,
+          items: parseProduktyToItemsFront(row.produkty),
+        },
+        onSaved: async (w) => {
+          if (!w || !w.id) return;
+          row.wycena_id = w.id;
+          if (row.kontakt_id) {
+            try {
+              await fetch(`${API_BASE}/api/organic/${row.kontakt_id}/wycena`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ wycena_id: w.id }),
+              });
+            } catch (_) { /* wycena istnieje niezależnie od podpięcia */ }
+          }
+          // Odśwież kartę w miejscu (podmiana details na nowy render).
+          const swap = organicRow(row);
+          swap.open = true;
+          details.replaceWith(swap);
+        },
+      });
+    }
+    function orgWycenaSekcja(row, details) {
+      const wrap = document.createElement('div');
+      wrap.className = 'org-wycena';
+      wrap.append(orgSekcjaTytul('Wycena'));
+      if (row.wycena_id) {
+        // Pigułka od razu; pełny podgląd (WycenaKarta) doładowany leniwie przy
+        // pierwszym otwarciu karty — bez blokowania renderu listy.
+        const holder = document.createElement('div');
+        const pill = document.createElement('div');
+        pill.className = 'org-wycena-pill';
+        const chip = document.createElement('span'); chip.className = 'org-chip'; chip.textContent = `Wycena #${row.wycena_id}`;
+        pill.append(chip);
+        if (row.kwota) { const kw = document.createElement('span'); kw.className = 'org-wycena-kwota'; kw.textContent = row.kwota; pill.append(kw); }
+        holder.append(pill);
+        const link = document.createElement('a');
+        link.className = 'org-link';
+        link.href = (window.LUMLUM_LINKS && window.LUMLUM_LINKS['wyceny']) || '/wyceny/';
+        link.target = '_blank'; link.rel = 'noopener';
+        link.textContent = 'Otwórz w Wycenach →';
+        wrap.append(holder, link);
+        let loaded = false;
+        details.addEventListener('toggle', async () => {
+          if (!details.open || loaded) return;
+          loaded = true;
+          try {
+            const res = await fetch(`${API_BASE}/api/wyceny/${row.wycena_id}`);
+            const b = await res.json().catch(() => ({}));
+            const wyc = b && b.data;
+            if (res.ok && wyc && window.WycenaKarta) {
+              const card = window.WycenaKarta.buildBody(wyc, { apiBase: API_BASE, readOnly: true, mode: 'crm' });
+              holder.innerHTML = '';
+              holder.append(card.el);
+            }
+          } catch (_) { /* pigułka zostaje jako fallback */ }
+        });
+      } else if (row.produkty) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'org-utworz-wyc';
+        btn.textContent = '+ Utwórz wycenę';
+        if (ORGANIC_READ_ONLY) { btn.disabled = true; btn.title = 'Brak uprawnień do edycji wycen'; }
+        else btn.addEventListener('click', () => otworzNowaWycena(row, details));
+        wrap.append(btn);
+      } else {
+        const hint = document.createElement('div');
+        hint.className = 'org-meta';
+        hint.textContent = 'Brak ustalonych produktów — dodaj rozmowę z konkretami, żeby powstała wycena.';
+        wrap.append(hint);
+      }
+      return wrap;
+    }
+
     function organicRow(row) {
       const details = document.createElement('details');
       details.className = 'lead';
@@ -1254,20 +1411,38 @@
       body.className = 'org-body';
 
       if (row._typ === 'telefon') {
-        if (row.ocena_ai) body.append(orgField('Ocena AI', row.ocena_ai));
+        // Struktura karty leada (Etap 3): Podsumowanie AI → Najbliższa akcja →
+        // Produkty (twardy dowód) → Kontakt (siatka) → Historia (oś czasu) →
+        // Wycena (podpięta albo "Utwórz wycenę").
+        if (row.ocena_ai) body.append(orgField('Podsumowanie AI', row.ocena_ai));
         if (row.najblizsza_akcja) {
           const extra = [row.najblizsza_akcja_termin, row.najblizsza_akcja_owner].filter(Boolean).join(' · ');
           body.append(orgField('Najbliższa akcja', extra ? `${row.najblizsza_akcja} (${extra})` : row.najblizsza_akcja));
         }
-        if (row.historia_rozmow) body.append(orgField('Historia rozmów', row.historia_rozmow));
-        const meta = document.createElement('div');
-        meta.className = 'org-meta';
-        meta.textContent = [
-          `Źródło: ${organicChipLabel(row)}`,
-          `Rozmów: ${row.ilosc_rozmow || 0}`,
-          row.owner ? `Owner: ${row.owner}` : null,
-        ].filter(Boolean).join(' · ');
-        body.append(meta);
+        if (row.produkty) {
+          const p = orgField('Produkty', row.produkty);
+          p.classList.add('org-produkty');
+          body.append(p);
+        }
+
+        body.append(orgSekcjaTytul('Kontakt'));
+        body.append(orgGrid([
+          ['Telefon', row._telefon_formatted],
+          ['Źródło', organicChipLabel(row)],
+          ['Kiedy przyszło', formatKiedy(row.kiedy_przyszlo)],
+          ['Ostatni kontakt', formatKiedy(row.ostatni_kontakt)],
+          ['Rozmów', String(row.ilosc_rozmow || 0)],
+          row.owner ? ['Owner', row.owner] : null,
+          row.kwota ? ['Kwota z rozmowy', row.kwota] : null,
+        ]));
+
+        const histEntries = LeadKarta.utils.parseHistoriaRozmow(row.historia_rozmow || '');
+        if (histEntries.length) {
+          body.append(orgSekcjaTytul(`Historia rozmów · ${histEntries.length}`));
+          body.append(orgHistoriaTimeline(histEntries));
+        }
+
+        body.append(orgWycenaSekcja(row, details));
       } else {
         if (row.ostatnia_wiadomosc) {
           const kier = row.ostatnia_wiadomosc.kierunek === 'in' ? 'od klienta' : 'nasza';

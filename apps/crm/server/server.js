@@ -221,8 +221,10 @@ registerKontaktEndpoints(app, { getClient, requireView: requireLeadyView, requir
 //   • kontakty_organic — telefony "z ulicy" zasilane przez /backlog-b2c/rozmowa
 //     i webhook Zadarmy (mają status/ocenę AI/historię jak lead);
 //   • kom_customers bez crm_lead_id — klienci komunikatora niepowiązani
-//     z żadnym leadem; liczą się tylko wątki triage='inbox' (spam i szumowe
-//     komentarze odsiewa triage AI), kanał 'note' to notatki własne, nie kontakt.
+//     z żadnym leadem; liczą się TYLKO wątki triage='inbox' ORAZ z intencją
+//     wyceny (wycena_intent=true) — konkretna rozmowa o produkcie/wykończeniu,
+//     nie luźne "ile kosztuje" (decyzja Antoniego 2026-07-29); kanał 'note'
+//     to notatki własne, nie kontakt.
 
 // Klucz telefonu do dopasowań między źródłami: cyfry BEZ prefiksu 48 —
 // kontakty_organic.telefon bywa w obu wariantach (695…, 48577…), tożsamości
@@ -265,6 +267,12 @@ async function fetchOrganicRows() {
         .select('id, customer_id, channel, last_message_at')
         .in('customer_id', custIds)
         .eq('triage', 'inbox')
+        // Bramka intencji (decyzja Antoniego 2026-07-29): do Organic wchodzą
+        // TYLKO rozmowy zmierzające do wyceny (konkretny produkt / pytanie o
+        // wykończenie/montaż), nie luźne "ile kosztuje ten sterownik". Sam
+        // triage='inbox' jest za szeroki (obejmuje każdą trwającą rozmowę) —
+        // węższy sygnał wycena_intent liczy klasyfikator triage (migracja 016).
+        .eq('wycena_intent', true)
         .neq('channel', 'note'),
       supabase.from('kom_customer_identities')
         .select('customer_id, type, value')
@@ -333,16 +341,24 @@ async function fetchOrganicRows() {
       kontakt_id: k.id,
       imie: k.imie || null,
       _telefon_formatted: formatPhonePlus(k.telefon),
+      _telefon_digits: phoneKey(k.telefon),
       email: null,
       zrodlo: k.zrodlo,
       status: k.status || null,
       ocena_ai: k.ocena_ai || null,
       historia_rozmow: k.historia_rozmow || null,
+      // Produkty/kwota/wycena — karta Organic ma strukturę leada (Etap 3):
+      // sekcja Wycena pokazuje podpiętą wycenę albo przycisk "Utwórz wycenę".
+      produkty: k.produkty || null,
+      kwota: k.kwota || null,
+      wycena_id: k.wycena_id || null,
       najblizsza_akcja: k.najblizsza_akcja || null,
       najblizsza_akcja_termin: k.najblizsza_akcja_termin || null,
       najblizsza_akcja_owner: k.najblizsza_akcja_owner || null,
       ilosc_rozmow: Number(k.ilosc_rozmow) || 0,
       ostatni_kontakt: k.ostatni_kontakt || null,
+      // "Kiedy przyszło" — data założenia kontaktu (jak "Data dodania" leada).
+      kiedy_przyszlo: k.created_at || null,
       owner: k.owner || null,
       kanaly: ['telefon'],
       _sort: k.updated_at || '',
@@ -404,6 +420,30 @@ app.put('/api/organic/:id', requireOrganicEdit, async (req, res) => {
     const { data, error } = await supabase
       .from(KONTAKTY_ORGANIC_TABLE)
       .update({ status, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select('id');
+    if (error) throw error;
+    if (!data || !data.length) return res.status(404).json({ error: 'Nie ma takiego kontaktu' });
+    res.json({ ok: true });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// POST /api/organic/:id/wycena — podpięcie utworzonej wyceny pod kontakt organic
+// (przycisk "Utwórz wycenę" na karcie tworzy szkic przez POST /api/wyceny, a
+// potem woła to, żeby karta pokazywała sekcję Wycena). Odpowiednik
+// /api/rozmowy/podpnij-wycene z Backlogu.
+app.post('/api/organic/:id/wycena', requireOrganicEdit, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Złe ID kontaktu' });
+    const wycenaId = Number(req.body?.wycena_id);
+    if (!Number.isFinite(wycenaId)) return res.status(400).json({ error: 'Brak ID wyceny' });
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from(KONTAKTY_ORGANIC_TABLE)
+      .update({ wycena_id: wycenaId, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select('id');
     if (error) throw error;

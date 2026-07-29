@@ -76,8 +76,16 @@ function buildSystem(kind, examples) {
     '  reklamacja/problem, cokolwiek, na co klient realnie czeka.',
     '- W razie wątpliwości: true (lepiej pokazać kartę niż zgubić klienta).',
     '',
+    'Oceń też "intencja_wyceny": czy ta rozmowa ZMIERZA DO WYCENY konkretnego projektu klienta?',
+    '- true: klient pyta o dobór/ilości pod SWÓJ projekt, o konkretny produkt do zamówienia, o wykończenie /',
+    '  montaż / jak zrobić instalację u siebie, podaje metraż/wymiary, chce zamówić, prosi o wycenę.',
+    '- false: luźne pytanie bez intencji zakupowej ("fajny ten sterownik, ile kosztuje?"), ogólne',
+    '  porównywanie cen bez projektu, hejt, komplement, spam, small talk. Sama ciekawość ceny to jeszcze',
+    '  NIE intencja wyceny — musi być konkret pod realny projekt.',
+    '- Gdy kategoria to "notification" lub "archive" → intencja_wyceny zawsze false.',
+    '',
     'Odpowiedz WYŁĄCZNIE JSON-em bez żadnego innego tekstu:',
-    '{"category":"inbox"|"notification"|"archive","reason":"uzasadnienie po polsku, max 12 słów","wymaga_odpowiedzi":true|false}',
+    '{"category":"inbox"|"notification"|"archive","reason":"uzasadnienie po polsku, max 12 słów","wymaga_odpowiedzi":true|false,"intencja_wyceny":true|false}',
   ].join('\n');
 }
 
@@ -93,6 +101,9 @@ function parseVerdict(text) {
     reason: String(parsed.reason || '').slice(0, 200),
     // Domyślnie true — brak pola / dziwna wartość nie może schować klienta.
     needsReply: parsed.wymaga_odpowiedzi !== false,
+    // Intencja wyceny (bramka do listy Organic) — domyślnie false; poza 'inbox'
+    // z definicji nie ma intencji zakupowej.
+    wycenaIntent: parsed.category === 'inbox' && parsed.intencja_wyceny === true,
   };
 }
 
@@ -137,8 +148,13 @@ async function applyTriage(db, thread, messageId, result) {
   }).eq('id', messageId);
 
   if (thread.meta?.triage_locked) return;
+  const patch = { triage: result.triage, triage_reason: result.reason };
+  // Intencja wyceny jest "lepka" — raz wykryta zostaje na wątku (późniejsze
+  // "ok, dziękuję" nie odbiera kwalifikacji do listy Organic). Zapisujemy więc
+  // TYLKO true, nigdy nie cofamy do false (patrz gate w apps/crm fetchOrganicRows).
+  if (result.wycenaIntent) patch.wycena_intent = true;
   await db.from('kom_threads')
-    .update({ triage: result.triage, triage_reason: result.reason })
+    .update(patch)
     .eq('id', thread.id);
 
   // Karty „Do odpisania" = status attention. Grzecznościowe zamknięcie

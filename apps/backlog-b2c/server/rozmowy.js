@@ -26,6 +26,30 @@ function normalizePhoneDigits(v) {
   return String(v || '').replace(/\D/g, '');
 }
 
+// Tekst "Produkty" z analizy (analyzeCall.produkty) → pozycje wyceny
+// [{name, quantity, price}]. Format wejścia jest ścisły (patrz ZASADY POLA
+// produkty w call-analysis.js): jedna pozycja na linię, "[ilość][jednostka]
+// [nazwa]", jednostka "m" tylko dla taśm, bez myślnika. Parsujemy go
+// deterministycznie — zamiast dokładać pole do wspólnego promptu (ryzyko dla
+// pipeline'u leada) — więc działa też na produktach zapisanych wcześniej.
+// Cena zostaje pusta: to handlowiec ją wpisuje w panelu "Wykryliśmy wycenę".
+function parseProduktyToItems(produkty) {
+  return String(produkty || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((line) => {
+      // "10m Cyfrowa taśma…" / "2 Sterownik LumControl" — wiodąca liczba to
+      // ilość (jednostka "m" jest częścią ilości taśmy, nie nazwy).
+      const m = line.match(/^(\d+(?:[.,]\d+)?)\s*m?\b\s*(.+)$/i);
+      if (m && m[2]) {
+        return { name: m[2].trim(), quantity: Number(String(m[1]).replace(',', '.')) || 1, price: '' };
+      }
+      return { name: line, quantity: 1, price: '' };
+    })
+    .filter((p) => p.name);
+}
+
 async function findKontaktOrganic(supabase, phoneDigits) {
   if (!phoneDigits) return null;
   const { data, error } = await supabase
@@ -84,6 +108,12 @@ async function applyRozmowaDoKontaktu(supabase, kontakt, { analysis, transcript,
     updated_at: new Date().toISOString(),
   };
   if (analysis?.skrocony_opis) patch.ocena_ai = analysis.skrocony_opis;
+  // Produkty/kwota z analizy — to samo, co lead trzyma w "Produkty z wyceny" /
+  // "Kwota wyceny". Wcześniej ginęły, przez co karta Organic nie miała z czego
+  // zaproponować wyceny. Nie zerujemy przy pustej analizie (rozmowa bez ustaleń
+  // nie kasuje wcześniej wyłapanych produktów).
+  if (analysis?.produkty) patch.produkty = analysis.produkty;
+  if (analysis?.cena_zaproponowana) patch.kwota = analysis.cena_zaproponowana;
   // Ten sam ślad co na leadzie: skoro rozmowa domknęła temat, zapisz dlaczego.
   if (statusAfter === 'Stracony' && kontakt.status !== 'Stracony') {
     const powod = powodZRozmowy(analysis && analysis.powod_straty);
@@ -333,6 +363,9 @@ function registerRozmowyEndpoints(app, deps) {
           dopasowano_id: String(kontakt.id),
         });
         if (logErr) console.error('Błąd zapisu Log zmian (kontakt organic):', logErr.message);
+        // Produkty ustalone w rozmowie → propozycja szkicu wyceny na /rozmowa,
+        // chyba że kontakt już ma podpiętą wycenę (nie mnożymy szkiców).
+        const pozycje = parseProduktyToItems(analysis?.produkty);
         return res.json({
           dopasowanie: 'kontakt_organic',
           nazwa: kontakt.imie || null,
@@ -340,6 +373,9 @@ function registerRozmowyEndpoints(app, deps) {
           skrocony_opis: analysis?.skrocony_opis || null,
           opis: wynik.opis,
           akcja: analysis?.najblizsza_akcja || null,
+          produkty: analysis?.produkty || null,
+          pozycje,
+          wycena_proponowana: pozycje.length > 0 && !kontakt.wycena_id,
         });
       }
 
@@ -350,9 +386,11 @@ function registerRozmowyEndpoints(app, deps) {
       const zWyceny = wyceny[0] || null;
       const zrodlo = String(req.body?.zrodlo || '').trim() || (zWyceny ? 'wycena' : 'organic');
       const imie = String(req.body?.imie || '').trim() || (zWyceny ? (zWyceny.imie_nazwisko || null) : null);
+      // Numer znany już z tabeli `wyceny` dostaje most do niej od razu — karta
+      // Organic pokaże sekcję Wycena zamiast proponować tworzenie nowej.
       const { data: created, error: createErr } = await supabase
         .from(KONTAKTY_ORGANIC_TABLE)
-        .insert({ telefon: digits, imie, zrodlo, owner: handlowiec })
+        .insert({ telefon: digits, imie, zrodlo, owner: handlowiec, wycena_id: zWyceny ? zWyceny.id : null })
         .select('*')
         .single();
       if (createErr) throw new Error(`Nie utworzono kontaktu: ${createErr.message}`);
@@ -371,6 +409,8 @@ function registerRozmowyEndpoints(app, deps) {
         dopasowano_id: String(created.id),
       });
       if (logErr) console.error('Błąd zapisu Log zmian (nowy kontakt):', logErr.message);
+      // Produkty z rozmowy → propozycja szkicu, o ile numer nie ma już wyceny.
+      const pozycje = parseProduktyToItems(analysis?.produkty);
       res.json({
         dopasowanie: 'nowy_kontakt',
         nazwa: imie,
@@ -380,7 +420,36 @@ function registerRozmowyEndpoints(app, deps) {
         skrocony_opis: analysis?.skrocony_opis || null,
         opis: wynik.opis,
         akcja: analysis?.najblizsza_akcja || null,
+        produkty: analysis?.produkty || null,
+        pozycje,
+        wycena_proponowana: pozycje.length > 0 && !zWyceny,
       });
+    } catch (err) {
+      console.error(err);
+      res.status(502).json({ error: err.message });
+    }
+  });
+
+  // POST /api/rozmowy/podpnij-wycene — { telefon, wycena_id }. Most między
+  // szkicem wyceny (utworzonym przez POST /api/wyceny z panelu "Wykryliśmy
+  // wycenę") a kontaktem organic: karta Organic pokaże wtedy sekcję Wycena.
+  // Wycenę tworzy kanoniczny endpoint /api/wyceny (ID z sekwencji, owner,
+  // form_token, eventy) — tu tylko zapinamy referencję.
+  app.post('/api/rozmowy/podpnij-wycene', async (req, res) => {
+    try {
+      const digits = normalizePhoneDigits(req.body?.telefon);
+      const wycenaId = Number(req.body?.wycena_id);
+      if (!digits || digits.length < 9) return res.status(400).json({ error: 'Podaj poprawny numer telefonu' });
+      if (!Number.isFinite(wycenaId)) return res.status(400).json({ error: 'Brak ID wyceny' });
+      const supabase = getClient();
+      const kontakt = await findKontaktOrganic(supabase, digits);
+      if (!kontakt) return res.status(404).json({ error: 'Nie ma kontaktu organic dla tego numeru' });
+      const { error } = await supabase
+        .from(KONTAKTY_ORGANIC_TABLE)
+        .update({ wycena_id: wycenaId, updated_at: new Date().toISOString() })
+        .eq('id', kontakt.id);
+      if (error) throw new Error(`Nie podpięto wyceny: ${error.message}`);
+      res.json({ ok: true, kontakt_id: kontakt.id, wycena_id: wycenaId });
     } catch (err) {
       console.error(err);
       res.status(502).json({ error: err.message });
@@ -388,4 +457,4 @@ function registerRozmowyEndpoints(app, deps) {
   });
 }
 
-module.exports = { registerRozmowyEndpoints, findKontaktOrganic, applyRozmowaDoKontaktu };
+module.exports = { registerRozmowyEndpoints, findKontaktOrganic, applyRozmowaDoKontaktu, parseProduktyToItems };
