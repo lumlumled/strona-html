@@ -24,6 +24,19 @@ const GRAPH_VERSION = 'v21.0';
 // gdyby nazwa po stronie Meta była inna niż nasz domyślny zapis.
 const STAGE_WYCENA_WYSLANA = process.env.META_STAGE_WYCENA || 'Wycena wysłana';
 const STAGE_SPRZEDANE = process.env.META_STAGE_SPRZEDANE || 'Sprzedane';
+// Wczesny, wysokowolumenowy etap: doszło do realnej rozmowy i lead NIE jest
+// odmową/złym numerem. Pod niego optymalizuje się kampania (zamiast pod rzadką
+// "Wycenę wysłaną"), więc Meta ma z czego się uczyć zamiast pokazywać 0.
+const STAGE_KONTAKT_JAKOSCIOWY = process.env.META_STAGE_KONTAKT || 'Kontakt jakościowy';
+
+// Statusy leada, które NIE liczą się jako jakościowy kontakt: brak realnej
+// rozmowy albo temat martwy. Wszystko poza nimi (Po pierwszym tel, Lekko
+// zainteresowany, Przyszłościowy, Zadzwonić jeszcze raz, Wycena wysłana,
+// Sprzedane) = dobry kontakt, który chcemy zgłosić Mecie.
+const NIE_KONTAKT_JAKOSCIOWY = new Set(['Nowy', 'Nie odebrał', 'Stracony', 'Błędne dane']);
+function isQualifiedContactStatus(status) {
+  return Boolean(status) && !NIE_KONTAKT_JAKOSCIOWY.has(String(status).trim());
+}
 
 function enabled() {
   return Boolean(process.env.META_CAPI_TOKEN && process.env.META_DATASET_ID)
@@ -127,6 +140,23 @@ async function markSent(db, wycenaId, kind, payload) {
   if (error) console.error(`Meta CAPI ślad ${kind} wyceny ${wycenaId}:`, error.message);
 }
 
+// Idempotencja na poziomie LEADA (nie wyceny): ślad w meta_lead_events, raz na
+// leada na dany etap. Osobno od wyceny_events, bo "Kontakt jakościowy" pada
+// jeszcze zanim istnieje jakakolwiek wycena.
+async function alreadySentLead(db, leadId, kind) {
+  if (leadId == null) return false;
+  const { data } = await db.from('meta_lead_events')
+    .select('id').eq('lead_id', leadId).eq('kind', kind).limit(1);
+  return Boolean(data && data.length);
+}
+
+async function markSentLead(db, leadId, kind, payload) {
+  if (leadId == null) return;
+  const { error } = await db.from('meta_lead_events').insert({ lead_id: leadId, kind, payload: payload || null });
+  // 23505 = unique_violation: inny równoległy webhook zdążył pierwszy — OK.
+  if (error && error.code !== '23505') console.error(`Meta CAPI ślad ${kind} leada ${leadId}:`, error.message);
+}
+
 // "Wycena wysłana" — wołane z linkWycenaToLead, gdzie mamy już wiersz leada
 // (z Facebook Leads ID). Best-effort, NIGDY nie rzuca.
 async function notifyQuoteSent(db, lead, wycena) {
@@ -171,7 +201,37 @@ async function notifyPurchase(db, wycena, value) {
   }
 }
 
+// "Kontakt jakościowy" — wczesny sygnał dla Lead Ads. Wołane z webhooka Zadarmy
+// i z ręcznej rozmowy, PO zapisie statusu leada, gdy: (1) była realna rozmowa,
+// (2) status po rozmowie jest jakościowy (isQualifiedContactStatus), (3) lead
+// pochodzi z reklamy (ma Facebook Leads ID — inaczej Meta nie ma czego
+// dopasować). Raz na leada (dedup meta_lead_events). NIGDY nie rzuca.
+async function notifyQualifiedContact(db, lead, { statusAfter, phone, email } = {}) {
+  try {
+    if (!enabled()) return;
+    if (!isQualifiedContactStatus(statusAfter)) return;
+    const leadgenId = lead && lead['Facebook Leads ID'];
+    if (!leadgenId) return;                          // nie z Lead Ads → nic do dopasowania
+    const leadId = lead && lead['ID Leada'];
+    if (await alreadySentLead(db, leadId, 'meta.kontakt_jakosciowy')) return;
+    const r = await postEvent({
+      eventName: STAGE_KONTAKT_JAKOSCIOWY,
+      leadgenId,
+      email: email || (lead && lead.Email),
+      phone: phone || (lead && lead['Phone number']),
+    });
+    if (r && r.ok) {
+      await markSentLead(db, leadId, 'meta.kontakt_jakosciowy', {
+        events_received: r.events_received, leadgen_id: String(leadgenId), status: statusAfter,
+      });
+    }
+  } catch (err) {
+    console.error('Meta CAPI Kontakt jakościowy:', err.message);
+  }
+}
+
 module.exports = {
-  notifyQuoteSent, notifyPurchase, postEvent, enabled,
-  STAGE_WYCENA_WYSLANA, STAGE_SPRZEDANE,
+  notifyQuoteSent, notifyPurchase, notifyQualifiedContact, postEvent, enabled,
+  isQualifiedContactStatus,
+  STAGE_WYCENA_WYSLANA, STAGE_SPRZEDANE, STAGE_KONTAKT_JAKOSCIOWY,
 };

@@ -14,6 +14,7 @@ const { createAuth, clientPayload, panelLinks, isAdmin } = require('../../shared
 const { servePushWorker, registerPushEndpoints, notifyUser } = require('../../shared/server/push');
 const { recordInboundSms } = require('../../shared/server/kontakt-send');
 const { autoSmsPoNieodebranym } = require('../../shared/server/auto-sms');
+const metaCapi = require('../../shared/server/meta-capi');
 const { scoreCase, applyScoring, normalizeTemperatura, SCORED_CATEGORIES } = require('./scoring');
 
 const app = express();
@@ -1216,6 +1217,22 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
         p_temperatura: temperaturaPoRozmowie,
       });
       if (updateErr) console.error('Błąd update Leady B2C:', updateErr.message);
+
+      // ── Meta CAPI: "Kontakt jakościowy" (Lead Ads / Conversion Leads) ──────
+      // Wczesny, wysokowolumenowy sygnał jakości: odebrana rozmowa, która NIE
+      // skończyła się odmową/złym numerem = dobry kontakt. Dosyłamy DUŻO
+      // wcześniej niż "Wycena wysłana", żeby kampania miała pod co się
+      // optymalizować (inaczej Meta pokazuje 0). Tylko leady z reklam (mają
+      // Facebook Leads ID), raz na leada (dedup meta_lead_events). W tle po
+      // odpowiedzi — nie spowalnia webhooka i nie łamie 40 s timeoutu Make'a.
+      if (label === 'answered' && analysis && lead['Facebook Leads ID']
+        && metaCapi.isQualifiedContactStatus(statusAfter)) {
+        scheduleAfterResponse(() => metaCapi.notifyQualifiedContact(supabase, lead, {
+          statusAfter,
+          phone: lead['Phone number'],
+          email: lead['Email'],
+        }));
+      }
 
       // Zsynchronizuj status case'a w dzisiejszej Umowie (plan dnia to
       // zamrożona migawka z rana). Po rozmowie plan ma pokazać AKTUALNY status
