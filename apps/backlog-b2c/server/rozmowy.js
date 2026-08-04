@@ -17,6 +17,7 @@ const { analyzeCall, statusRank, NO_ANSWER_ALLOWED_FROM, parseKwotaZlotych, isPl
 const { normalizeTemperatura } = require('./scoring');
 const { zamknijWycenyStraconego } = require('../../shared/server/wyceny-sync');
 const { powodZRozmowy } = require('../../shared/server/stracony');
+const metaCapi = require('../../shared/server/meta-capi');
 
 const LEADY_B2C_TABLE = 'Leady B2C';
 const LOG_ZMIAN_TABLE = 'Log zmian';
@@ -333,6 +334,18 @@ function registerRozmowyEndpoints(app, deps) {
         if (statusAfter) await updateStatusInUmowa(supabase, digits, statusAfter);
         if (temperaturaPoRozmowie && patchScoreInUmowa) await patchScoreInUmowa(supabase, digits, temperaturaPoRozmowie);
         if (zaopiekowaneDzis) await markZamknieteInUmowa(supabase, digits);
+
+        // Meta CAPI "Kontakt jakościowy": ręczna wklejka to z definicji odebrana
+        // rozmowa (disposition 'answered'), więc jak status jest jakościowy i
+        // lead pochodzi z reklamy — dosyłamy wczesny sygnał do Lead Ads. Raz na
+        // leada (dedup meta_lead_events). Best-effort, nigdy nie rzuca.
+        if (analysis && lead['Facebook Leads ID'] && metaCapi.isQualifiedContactStatus(statusAfter)) {
+          await metaCapi.notifyQualifiedContact(supabase, lead, {
+            statusAfter,
+            phone: lead['Phone number'],
+            email: lead['Email'],
+          });
+        }
 
         return res.json({
           dopasowanie: 'lead',
