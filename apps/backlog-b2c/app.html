@@ -2287,16 +2287,20 @@
       alerty_watchdoga: '🚨 Alerty — temat ucieka',
       leady_do_odswiezenia: '🌡️ Leady do odświeżenia (cisza po rozmowie)',
       nowe: 'Nowe',
+      nowe_nie_dodzwonione: '🆕 Nowe – nie dodzwonione',
       wyceny_do_domkniecia: '💰 Wyceny do domknięcia',
       reszta_lejka: '📞 Reszta lejka',
       zalegle_feedbacki: 'Zaległe feedbacki',
       dodane_recznie: 'Dodane ręcznie',
     };
 
-    // Kolejność 3 głównych kategorii (Priorytet dziś to osobna sekcja WYŻEJ):
-    // Nowe → Wyceny do domknięcia → Reszta lejka; Zaległe feedbacki na samym
-    // dole (siatka bezpieczeństwa, zwinięte).
-    const KATEGORIA_ORDER = ['nowe', 'wyceny_do_domkniecia', 'reszta_lejka', 'zalegle_feedbacki', 'dodane_recznie'];
+    // Kolejność głównych kategorii (Priorytet dziś to osobna sekcja WYŻEJ):
+    // Nowe → Nowe – nie dodzwonione → Wyceny do domknięcia → Reszta lejka;
+    // Zaległe feedbacki na samym dole (siatka bezpieczeństwa, zwinięte).
+    // „Nowe – nie dodzwonione" tuż pod „Nowe": świeży lead, którego jeszcze nie
+    // złapaliśmy (same nieodebrane), to wciąż „nowy" — ma być na górze, nie
+    // zepchnięty do reszty lejka (decyzja Antoniego 2026-08-05).
+    const KATEGORIA_ORDER = ['nowe', 'nowe_nie_dodzwonione', 'wyceny_do_domkniecia', 'reszta_lejka', 'zalegle_feedbacki', 'dodane_recznie'];
 
     // Kategorie ukryte w widoku Backlog B2C (nadal budowane po stronie serwera,
     // po prostu nie renderowane) — oba warianty watchdoga chowamy na prośbę
@@ -2417,6 +2421,7 @@
     // nieznane klucze dostają etykietę z klucza (podkreślenia → spacje).
     const PLAN_TILE_LABELS = {
       nowe_count: 'Nowe',
+      nowe_nie_dodzwonione_count: '🆕 Nie dodzwonione',
       wyceny_domkniecia_count: '💰 Wyceny do domknięcia',
       reszta_lejka_count: '📞 Reszta lejka',
       zalegle_feedbacki_count: 'Zaległe feedbacki',

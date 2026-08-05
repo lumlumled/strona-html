@@ -2280,6 +2280,35 @@ async function fetchNowe(supabase, wycenaByPhone, callCountByPhone, excludePhone
   return sortByScore(cases).slice(0, 10);
 }
 
+// Świeżość leada „nie dodzwonionego" (dni od UTWORZENIA). Ten sam próg dzieli
+// fetchNoweNieDodzwonione (≤ próg → osobna pod-sekcja „Nowe – nie dodzwonione")
+// od fetchNieodebrane (> próg → „Reszta lejka") — jedno miejsce prawdy, żeby
+// oba fetche się nie rozjechały i lead nie wpadł w dziurę / dwa miejsca naraz.
+const NOWE_NIE_DODZWONIONE_DNI = 7;
+
+// „Nowe – nie dodzwonione" (decyzja Antoniego 2026-08-05): świeży lead
+// (utworzony ≤ NOWE_NIE_DODZWONIONE_DNI temu), z którym jeszcze NIE było
+// prawdziwej rozmowy — status „Nie odebrał", same nieodebrane próby. Taki lead
+// to wciąż „nowy": ma wracać codziennie na GÓRĘ planu (osobna pod-sekcja tuż
+// pod „Nowe"), dopóki go nie złapiemy albo się nie zestarzeje (po progu schodzi
+// do „Reszta lejka" przez fetchNieodebrane). Świeżość liczona od utworzenia
+// (`Date`), nie od ostatniej próby — inaczej codzienne dzwonienie trzymałoby go
+// tu bez końca. Kubełek budowany deterministycznie (jak wyceny_do_domkniecia).
+async function fetchNoweNieDodzwonione(supabase, wycenaByPhone, callCountByPhone, excludePhones) {
+  const rows = await fetchLeadyByStage(supabase, 'Nie odebrał');
+  const now = Date.now();
+  const cutoff = now - NOWE_NIE_DODZWONIONE_DNI * 24 * 60 * 60 * 1000;
+  const cases = rows
+    .filter((row) => !isExcludedPhone(row, excludePhones))
+    // „Nie odebrał" + umówiony PRZYSZŁY termin ("dzwońcie we wrześniu") = UMÓWIONY,
+    // nie zaległy telefon na dziś. Wraca w dniu terminu przez fetchZalegleFeedbacki.
+    .filter((row) => !hasFutureFeedback(row['Data Feedbacku'], now))
+    .map((row) => ({ row, date: parseLeadDate(row['Date']) }))
+    .filter(({ date }) => date && date.getTime() >= cutoff)
+    .map(({ row }) => mapLeadRow(row, wycenaByPhone, callCountByPhone));
+  return sortByScore(cases).slice(0, 10);
+}
+
 async function fetchInneZFeedbackiem(supabase, wycenaByPhone, callCountByPhone, excludePhones) {
   const rows = await fetchLeadyByStage(supabase, null, ['Wycena wysłana', 'Stracony', 'Sprzedane']);
   const now = Date.now();
@@ -2299,11 +2328,21 @@ async function fetchNieodebrane(supabase, wycenaByPhone, callCountByPhone, exclu
   const rows = await fetchLeadyByStage(supabase, 'Nie odebrał');
   const now = Date.now();
   const cutoff = now - 7 * 24 * 60 * 60 * 1000;
+  // Świeże (utworzone ≤ NOWE_NIE_DODZWONIONE_DNI) żyją w osobnej pod-sekcji
+  // „Nowe – nie dodzwonione" (fetchNoweNieDodzwonione) — tu zostają dopiero
+  // STARSZE leady, które wciąż nie odbierają. Bez tego świeży lead byłby w
+  // dwóch miejscach (dedupeKategorie i tak by go uciął, ale nie chcemy go w
+  // ogóle pokazywać modelowi w „nieodebrane").
+  const freshCutoff = now - NOWE_NIE_DODZWONIONE_DNI * 24 * 60 * 60 * 1000;
   const cases = rows
     .filter((row) => !isExcludedPhone(row, excludePhones))
     // Nie odebrał + umówiony PRZYSZŁY termin ("dzwońcie we wrześniu") = UMÓWIONY,
     // nie zaległy telefon na dziś. Wraca w dniu terminu przez fetchZalegleFeedbacki.
     .filter((row) => !hasFutureFeedback(row['Data Feedbacku'], now))
+    .filter((row) => {
+      const created = parseLeadDate(row['Date']);
+      return !(created && created.getTime() >= freshCutoff);
+    })
     .map((row) => ({ row, date: parseLeadDate(row['Ostatni kontakt']) }))
     .filter(({ date }) => date && date.getTime() >= cutoff)
     .map(({ row }) => mapLeadRow(row, wycenaByPhone, callCountByPhone));
@@ -2642,6 +2681,30 @@ function applyWycenyDoDomkniecia(parsed, wycenyCases, phoneToLp, nextLp) {
   return next;
 }
 
+// Kubełek „Nowe – nie dodzwonione" — deterministyczny (dane z
+// fetchNoweNieDodzwonione), model go NIE buduje (dostaje listę tylko do wglądu,
+// żeby móc wciągnąć świeży, gorący case do priorytet_dzis). Ten sam wzorzec co
+// applyWycenyDoDomkniecia: jeśli case jest już w priorytecie (ten sam telefon w
+// phoneToLp), dostaje TEN SAM lp (bliźniak — checkbox zamyka oba naraz); inaczej
+// świeży lp. Uruchamiane PO reassignLps (żeby telefony trafiły do phoneToLp i
+// nie zdublowały się w reszcie lejka / zaległych feedbackach).
+function applyNoweNieDodzwonione(parsed, cases, phoneToLp, nextLp) {
+  let next = nextLp;
+  const result = (cases || []).map((c) => {
+    const digits = normalizePhoneDigits(c.telefon);
+    let lp = digits ? phoneToLp.get(digits) : undefined;
+    if (lp === undefined) {
+      lp = next;
+      next += 1;
+      if (digits) phoneToLp.set(digits, lp);
+    }
+    return { ...c, lp, row_number: 0, zamkniete: 0, zadzwonil_dzis: false };
+  });
+  parsed.kategorie = parsed.kategorie || {};
+  parsed.kategorie.nowe_nie_dodzwonione = result;
+  return next;
+}
+
 // Scala inne_z_feedbackiem + nieodebrane + rozmowy_spoza_bazy w jeden kubełek
 // "reszta_lejka" (Reżim B). Zachowuje lp i wszystkie pola case'a; dedup po
 // telefonie (kategorie źródłowe są rozłączne po statusie — to siatka
@@ -2676,7 +2739,7 @@ function mergeRestaLejka(parsed) {
 // swojej kategorii, front synchronizuje je po lp) — NIE ruszamy go. Kategorie
 // spoza głównego lejka (dodane_recznie = ręczne, alerty_watchdoga/
 // leady_do_odswiezenia = watchdog, osobny podsystem) zostają nietknięte.
-const DEDUP_KATEGORIE = ['nowe', 'wyceny_do_domkniecia', 'reszta_lejka', 'zalegle_feedbacki'];
+const DEDUP_KATEGORIE = ['nowe', 'nowe_nie_dodzwonione', 'wyceny_do_domkniecia', 'reszta_lejka', 'zalegle_feedbacki'];
 
 function dedupeKategorie(parsed) {
   const kat = parsed.kategorie;
@@ -2969,6 +3032,7 @@ function postProcessCounts(parsed) {
   const len = (key) => (Array.isArray(kat[key]) ? kat[key].length : 0);
   parsed.plan = parsed.plan || {};
   parsed.plan.nowe_count = len('nowe');
+  parsed.plan.nowe_nie_dodzwonione_count = len('nowe_nie_dodzwonione');
   // wyceny_do_domkniecia: count z długości kategorii, backlog wstrzykiwany w
   // orkiestracji (zna total wszystkich otwartych wycen, nie tylko top-N w planie).
   parsed.plan.wyceny_domkniecia_count = len('wyceny_do_domkniecia');
@@ -3166,11 +3230,12 @@ app.all('/api/cron/umowa-draft', async (req, res) => {
     const wycenyDoDomkniecia = await fetchWycenyDoDomkniecia(supabase, leadIndex, callCountByPhone);
     const excludePhones = wycenyDoDomkniecia.excludePhones;
 
-    const [standupLog, logZmianWczoraj, logZmianDzis, nowe, inneZFeedbackiem, nieodebrane, zalegleRaw, rozmowySpozaBazyRaw, alertyWatchdogaRaw] = await Promise.all([
+    const [standupLog, logZmianWczoraj, logZmianDzis, nowe, noweNieDodzwonione, inneZFeedbackiem, nieodebrane, zalegleRaw, rozmowySpozaBazyRaw, alertyWatchdogaRaw] = await Promise.all([
       fetchStandupLog3(supabase),
       fetchLogZmianRange(supabase, wczoraj.start, wczoraj.end),
       fetchLogZmianRange(supabase, dzis.start, dzis.end),
       fetchNowe(supabase, wycenaByPhone, callCountByPhone, excludePhones),
+      fetchNoweNieDodzwonione(supabase, wycenaByPhone, callCountByPhone, excludePhones),
       fetchInneZFeedbackiem(supabase, wycenaByPhone, callCountByPhone, excludePhones),
       fetchNieodebrane(supabase, wycenaByPhone, callCountByPhone, excludePhones),
       fetchZalegleFeedbacki(supabase, wycenaByPhone, callCountByPhone),
@@ -3211,6 +3276,9 @@ app.all('/api/cron/umowa-draft', async (req, res) => {
       'LOG TELEFONÓW DZIŚ (Zadarma):', JSON.stringify(logZmianDzis),
       '',
       'LEADY NOWE:', JSON.stringify(nowe),
+      '',
+      `LEADY NOWE – NIE DODZWONIONE (świeże ≤${NOWE_NIE_DODZWONIONE_DNI} dni, status „Nie odebrał", jeszcze bez rozmowy — kategoria budowana automatycznie, tu tylko do wglądu, żebyś mógł wciągnąć gorący case do priorytet_dzis):`,
+      JSON.stringify(noweNieDodzwonione),
       '',
       `WYCENY DO DOMKNIĘCIA (top ${wycenyDoDomkniecia.cases.length} z ${wycenyDoDomkniecia.total} otwartych, wg score — tylko do wglądu, kategoria budowana automatycznie po twojej odpowiedzi):`,
       JSON.stringify(wycenyDoDomkniecia.cases),
@@ -3259,7 +3327,8 @@ app.all('/api/cron/umowa-draft', async (req, res) => {
     // Kubełek wyceny_do_domkniecia zaraz po reassignLps — jego telefony wchodzą
     // do phoneToLp, więc applyZalegleFeedbacki (niżej) je pominie (bez dubla).
     const nextLpPoWyceny = applyWycenyDoDomkniecia(parsed, wycenyDoDomkniecia.cases, phoneToLp, nextLp);
-    const nextLpPoBazie = applyRozmowySpozaBazy(parsed, rozmowySpozaBazyRaw, phoneToLp, nextLpPoWyceny);
+    const nextLpPoNieDodzw = applyNoweNieDodzwonione(parsed, noweNieDodzwonione, phoneToLp, nextLpPoWyceny);
+    const nextLpPoBazie = applyRozmowySpozaBazy(parsed, rozmowySpozaBazyRaw, phoneToLp, nextLpPoNieDodzw);
     const nextLpPoZaleglych = applyZalegleFeedbacki(parsed, zalegleRaw, phoneToLp, nextLpPoBazie);
     applyAlertyWatchdoga(parsed, alertyWatchdogaRaw, phoneToLp, nextLpPoZaleglych);
     // Scal inne_z_feedbackiem + nieodebrane + rozmowy_spoza_bazy w reszta_lejka
@@ -3273,7 +3342,7 @@ app.all('/api/cron/umowa-draft', async (req, res) => {
     postProcessCounts(parsed);
     // Backlog kubełka wycen: total wszystkich otwartych minus pokazane w planie.
     parsed.plan.wyceny_domkniecia_backlog = Math.max(0, wycenyDoDomkniecia.total - (parsed.plan.wyceny_domkniecia_count || 0));
-    const leadyStatusByPhone = buildStatusByPhone([...nowe, ...wycenyDoDomkniecia.cases, ...inneZFeedbackiem, ...nieodebrane, ...zalegleRaw]);
+    const leadyStatusByPhone = buildStatusByPhone([...nowe, ...noweNieDodzwonione, ...wycenyDoDomkniecia.cases, ...inneZFeedbackiem, ...nieodebrane, ...zalegleRaw]);
     postProcessStatus(parsed, leadyStatusByPhone);
     postProcessCallCounts(parsed, callCountByPhone);
     applyNaJutroCarryover(parsed, carryPhones);
