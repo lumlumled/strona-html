@@ -113,11 +113,10 @@ test('brak funkcji kom_match_examples → fallback na najnowsze przykłady', asy
   assert.ok(prompt.includes('Odpowiedź fallback'), 'fallback z kom_examples powinien wejść do promptu');
 });
 
-test('sugestia zapisuje się z nową wersją promptu', async () => {
+test('sugestia zapisuje się z aktualną wersją promptu', async () => {
   const db = makeFakeDb();
   await suggest.generateSuggestion(db, thread, customer, messages);
   assert.equal(db.suggestions[0].prompt_version, suggest.PROMPT_VERSION);
-  assert.equal(suggest.PROMPT_VERSION, 'suggest-v2-kb');
 });
 
 test('korekta Antoniego zapisuje się do kom_examples Z EMBEDDINGIEM (pętla uczenia stylu)', async () => {

@@ -22,6 +22,8 @@ const media = require('./media');
 const settings = require('./settings');
 const autoreply = require('./autoreply');
 const followups = require('./followups');
+const kontaktSend = require('../../shared/server/kontakt-send');
+const { callZadarma } = require('../../backlog-b2c/server/zadarma');
 
 const app = express();
 // rawBody potrzebny do weryfikacji X-Zernio-Signature (HMAC surowego body).
@@ -348,6 +350,14 @@ function computeSendState(thread, messagesAsc) {
     };
   }
 
+  // SMS przez Zadarmę: bez okien Meta — odpisać można zawsze, byle był numer
+  // (external_thread_id wątku SMS = telefon w formacie 48XXXXXXXXX).
+  if (thread.channel === 'sms') {
+    const number = String(thread.external_thread_id || '').replace(/\D/g, '');
+    if (!number || number.length < 9) return { mode: 'closed', reason: 'no_number' };
+    return { mode: 'sms', sms: { number } };
+  }
+
   if (isCommentsThread(thread)) {
     const lastComment = [...messagesAsc].reverse()
       .find((m) => m.direction === 'in' && m.meta?.kind === 'comment');
@@ -416,10 +426,12 @@ app.get('/api/threads', async (req, res) => {
     const lastMsg = new Map();
     const lastIn = new Map();
     const lastInbound = new Map();
+    const msgCount = new Map();
     (messagesRes.data || []).forEach((m) => {
       if (!lastMsg.has(m.thread_id)) lastMsg.set(m.thread_id, m);
       if (m.direction === 'in' && !lastIn.has(m.thread_id)) lastIn.set(m.thread_id, m);
       if (opensWindow(m) && !lastInbound.has(m.thread_id)) lastInbound.set(m.thread_id, m.created_at);
+      msgCount.set(m.thread_id, (msgCount.get(m.thread_id) || 0) + 1);
     });
     const pendingMerge = new Set((proposalsRes.data || []).map((p) => p.thread_id));
 
@@ -465,11 +477,18 @@ app.get('/api/threads', async (req, res) => {
               kind: lastInMsg.meta?.kind || null,
               attachments: attsByMsg.get(lastInMsg.id) || [],
             } : null,
+            messages_total: msgCount.get(t.id) || 0,
           } : {}),
           window_expires_at: windowExpiresAt(t, lastInbound.get(t.id)),
           has_pending_merge: pendingMerge.has(t.id),
         };
-      }),
+      })
+        // Karta „Do odpisania" tylko, gdy jest na co odpowiadać: realna
+        // wiadomość OD klienta z treścią (albo załącznikiem). Puste wątki
+        // i atrapy („Rozpocznij") nie robią kart, niezależnie od statusu.
+        .filter((row) => view !== 'reply'
+          || (row.last_inbound
+            && (row.last_inbound.attachments.length || !triage.isStub(row.last_inbound.body)))),
     });
   } catch (err) {
     handleError(res, err, 502);
@@ -699,6 +718,14 @@ app.post('/api/threads/:id/suggestion', async (req, res) => {
     if (identitiesRes.error) throw identitiesRes.error;
     customer.identities = identitiesRes.data || [];
 
+    // Sugestia TYLKO na wiadomość klienta. Gdy ostatnie słowo należy do nas
+    // (odpowiedź z telefonu, własny komentarz pod postem), propozycja byłaby
+    // odpowiedzią na własną odpowiedź — dokładnie to, co wkurzyło Antoniego.
+    const lastReal = [...(messagesRes.data || [])].reverse().find((m) => m.direction !== 'internal');
+    if (!lastReal || lastReal.direction !== 'in') {
+      return res.status(409).json({ error: 'Ostatnia wiadomość jest od nas — czekamy na klienta' });
+    }
+
     const result = await suggest.generateSuggestion(db, thread, customer, messagesRes.data || []);
     res.json(result);
   } catch (err) {
@@ -901,6 +928,7 @@ async function sendPrivateReply(thread, comment, text) {
 }
 
 const SEND_CLOSED_MESSAGES = {
+  no_number: 'Wątek SMS bez numeru telefonu — nie ma dokąd wysłać.',
   no_inbound: 'Klient nie napisał jeszcze DM — nie można wysłać wiadomości. Poczekaj na jego wiadomość albo zadzwoń.',
   no_comment: 'Brak komentarza, na który dałoby się odpowiedzieć.',
   already_replied: 'Private reply do tego komentarza już poszedł (Meta pozwala na 1 na komentarz). Poczekaj, aż klient odpisze w DM.',
@@ -954,6 +982,17 @@ app.post('/api/threads/:id/messages', async (req, res) => {
       } else if (sendState.mode === 'private_reply') {
         await sendPrivateReply(thread, sendState.comment, text);
         outMeta.private_reply_to = sendState.comment.commentId;
+      } else if (sendState.mode === 'sms') {
+        // Ta sama droga co karta leada/kampanie (Zadarma), nadawca = numer
+        // zalogowanego handlowca (resolveSmsCaller), fallback numer firmowy.
+        const caller = kontaktSend.resolveSmsCaller(req.user?.name || req.user?.email);
+        const params = { number: sendState.sms.number, message: text };
+        if (caller) params.caller_id = caller;
+        const wynik = await callZadarma('/v1/sms/send/', params, 'POST');
+        if (!wynik || wynik.status !== 'success') {
+          throw new Error(`Zadarma SMS: ${(wynik && (wynik.message || wynik.status)) || 'brak odpowiedzi'}`);
+        }
+        outMeta.sms = { messages: wynik.messages ?? null, cost: wynik.cost ?? null, nadawca: caller || null, zrodlo: 'komunikator' };
       } else {
         await sendViaZernio(thread, text, { humanAgent: sendState.mode === 'human_agent' });
         if (sendState.mode === 'human_agent') outMeta.human_agent = true;

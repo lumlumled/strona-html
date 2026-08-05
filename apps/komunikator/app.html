@@ -120,6 +120,17 @@
       padding: .6rem .75rem; overflow: hidden;
     }
     .card-note { font-size: .74rem; color: var(--text-muted); }
+    .card-expand {
+      justify-self: start; border: none; background: transparent; color: var(--text-secondary);
+      font: inherit; font-size: .78rem; font-weight: 600; cursor: pointer; padding: 0;
+    }
+    .card-expand:hover { color: var(--text-primary); }
+    .card-convo {
+      display: flex; flex-direction: column; gap: .5rem; max-height: 340px; overflow-y: auto;
+      border: 1px solid var(--border); border-radius: 12px; padding: .6rem;
+    }
+    /* display:flex wygrywa z atrybutem hidden (reguła UA) — jak .main[hidden]. */
+    .card-convo[hidden] { display: none; }
     .card-actions { display: flex; gap: .5rem; flex-wrap: wrap; justify-content: flex-end; }
     .card-actions .btn.left { margin-right: auto; }
     .card-empty { text-align: center; padding: 2.2rem 1rem; color: var(--text-muted); font-size: .95rem; }
@@ -334,7 +345,7 @@
     const API = (window.API_BASE || '') + '/api';
     const CHANNEL_LABELS = {
       messenger: 'Messenger', instagram: 'Instagram', whatsapp: 'WhatsApp',
-      tiktok: 'TikTok', phone: 'Telefon', email: 'E-mail', note: 'Notatki',
+      tiktok: 'TikTok', phone: 'Telefon', email: 'E-mail', note: 'Notatki', sms: 'SMS',
     };
 
     const state = {
@@ -635,6 +646,28 @@
       $('tab-reply').textContent = n ? `Do odpisania (${n})` : 'Do odpisania';
     }
 
+    // Mini-oś rozmowy wewnątrz karty (te same dymki co widok wątku).
+    function renderCardConvo(box, d) {
+      box.innerHTML = '';
+      const attByMsg = new Map();
+      (d.attachments || []).forEach((a) => {
+        if (!attByMsg.has(a.message_id)) attByMsg.set(a.message_id, []);
+        attByMsg.get(a.message_id).push(a);
+      });
+      (d.messages || []).forEach((m) => {
+        const div = document.createElement('div');
+        div.className = `msg ${m.direction}`;
+        const label = m.direction === 'internal' ? '📝 ' : (m.meta?.kind === 'comment' ? '💬 ' : '');
+        div.textContent = `${label}${m.body || ''}`;
+        (attByMsg.get(m.id) || []).forEach((a) => div.appendChild(renderAttachment(a)));
+        const time = document.createElement('span');
+        time.className = 'msg-time';
+        time.textContent = fmtTime(m.created_at);
+        div.appendChild(time);
+        box.appendChild(div);
+      });
+    }
+
     function buildCard(t) {
       const el = document.createElement('div');
       el.className = 'card';
@@ -666,6 +699,40 @@
       msg.className = 'card-msg';
       msg.textContent = t.last_inbound?.body || '(brak treści)';
       (t.last_inbound?.attachments || []).forEach((a) => msg.appendChild(renderAttachment(a)));
+
+      // Rozwijana PEŁNA rozmowa: przy wątkach z historią ostatni dymek to za
+      // mało kontekstu (propozycja AI i tak powstaje z całej rozmowy — tu widać,
+      // do czego się odnosi). Rozwinięcie podmienia pojedynczy dymek na oś.
+      if ((t.messages_total || 0) > 1) {
+        const convo = document.createElement('div');
+        convo.className = 'card-convo';
+        convo.hidden = true;
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'card-expand';
+        const closedLabel = `▸ Pokaż całą rozmowę (${t.messages_total})`;
+        toggle.textContent = closedLabel;
+        let loaded = false;
+        toggle.addEventListener('click', async () => {
+          const open = convo.hidden;
+          convo.hidden = !open;
+          msg.hidden = open;
+          toggle.textContent = open ? '▾ Zwiń rozmowę' : closedLabel;
+          if (open && !loaded) {
+            loaded = true;
+            convo.textContent = 'Wczytywanie…';
+            try {
+              const d = await api(`/threads/${t.id}`);
+              renderCardConvo(convo, d);
+            } catch (err) {
+              convo.textContent = `Błąd wczytywania: ${err.message}`;
+              loaded = false;
+            }
+          }
+          if (open) convo.scrollTop = convo.scrollHeight;
+        });
+        el.append(toggle, convo);
+      }
       el.append(msg);
 
       const ta = document.createElement('textarea');
@@ -996,6 +1063,8 @@
       } else if (send.mode === 'gmail') {
         const skrzynka = send.email?.mailbox ? ` ze skrzynki ${send.email.mailbox}` : '';
         note.textContent = `Odpowiedź pójdzie mailem do ${send.email?.to || 'klienta'}${skrzynka}, w tym samym wątku Gmaila.`;
+      } else if (send.mode === 'sms') {
+        note.textContent = `Odpowiedź pójdzie SMS-em (Zadarma) na numer ${send.sms?.number || 'klienta'}.`;
       } else if (send.mode === 'open') {
         note.textContent = `Okno odpowiedzi Meta zamyka się za ${hoursLeft(send.window_expires_at).toFixed(1)} h.`;
       } else if (send.mode === 'human_agent') {

@@ -22,8 +22,8 @@ const PUSH_FRESH_MS = 60 * 60 * 1000;
 
 const KIND_POLICY = {
   comment: 'comment: BARDZO selektywnie. Domyślnie "archive". "inbox" TYLKO przy jasnych przesłankach, że autor chce kupić albo pyta o produkt pod zakup (cena, dostępność, zamówienie, wysyłka, dobór pod swoją sytuację).',
-  dm: 'dm: domyślnie "inbox" — wiadomość prywatna od człowieka zostaje, nawet niejednoznaczna. "archive" tylko przy JASNYCH przesłankach spamu/scamu/masowej oferty współpracy. "notification" dla wiadomości automatycznych.',
-  email: 'email: jak dm dla ludzi. Automaty rozdzielaj surowo: "notification" TYLKO gdy wymaga działania właściciela (błąd krytyczny do naprawienia, faktura do zaksięgowania, alert billingowy, odpowiedź supportu na nasze zgłoszenie); cykliczne raporty, newslettery, onboarding narzędzi, marketing, powiadomienia informacyjne bez potrzeby działania → "archive". Adres typu no-reply sam w sobie NIE przesądza — automat może przekazywać wiadomość OD KLIENTA (np. "Przychodząca wiadomość SMS od ..."), a taka jest "inbox".',
+  dm: 'dm: domyślnie "inbox" — wiadomość prywatna od człowieka zostaje, nawet niejednoznaczna. "archive" tylko przy JASNYCH przesłankach spamu/scamu/masowej oferty współpracy. "notification" dla wiadomości automatycznych ORAZ dla indywidualnych propozycji współpracy/reklamy/influencerki (człowiek, ale nie klient).',
+  email: 'email: jak dm dla ludzi (współpraca/marketing od człowieka → "notification"). Automaty rozdzielaj surowo: "notification" TYLKO gdy wymaga działania właściciela (błąd krytyczny do naprawienia, faktura do zaksięgowania, alert billingowy, odpowiedź supportu na nasze zgłoszenie); cykliczne raporty, newslettery, onboarding narzędzi, marketing, powiadomienia informacyjne bez potrzeby działania → "archive". Adres typu no-reply sam w sobie NIE przesądza — automat może przekazywać wiadomość OD KLIENTA (np. "Przychodząca wiadomość SMS od ..."), a taka jest "inbox".',
 };
 
 // Wiadomości-atrapy: kliknięcie „Rozpocznij" na Messengerze, pusty SMS itp.
@@ -58,9 +58,9 @@ function buildSystem(kind, examples) {
   return [
     'Jesteś filtrem skrzynki firmy LumLum (polski sklep z oświetleniem LED: lampy, sterowniki, taśmy; klienci detaliczni). Klasyfikujesz JEDNĄ przychodzącą wiadomość.',
     'Kategorie:',
-    '- "inbox" — realne zapytanie produktowe / sygnał zainteresowania zakupem albo trwająca rozmowa z klientem.',
-    '- "notification" — automatyczne powiadomienie (platforma, narzędzie, system), które może wymagać uwagi właściciela.',
-    '- "archive" — nie wymaga odpowiedzi handlowca: hejt/kłótnie ("strasznie drogo", "w Chinach taniej"), komplementy bez pytania, emotki, spam, scam, masowe oferty współpracy/marketingu, szum.',
+    '- "inbox" — realne zapytanie produktowe / sygnał zainteresowania zakupem albo trwająca rozmowa SPRZEDAŻOWA z klientem. WYŁĄCZNIE obsługa klienta detalicznego — nic innego.',
+    '- "notification" — automatyczne powiadomienie (platforma, narzędzie, system), które może wymagać uwagi właściciela, ALBO ludzka rozmowa niezwiązana ze sprzedażą do klienta: indywidualna propozycja współpracy/reklamy/barteru, influencer, agencja marketingowa, rekrutacja, sprawy administracyjne. Taka rozmowa NIE jest obsługą klienta i nie może trafić do "inbox", nawet gdy jest uprzejma, konkretna i trwa od dawna.',
+    '- "archive" — nie wymaga odpowiedzi handlowca: hejt/kłótnie ("strasznie drogo", "w Chinach taniej"), komplementy bez pytania, emotki, spam, scam, masowe/szablonowe oferty współpracy i marketingu, szum.',
     '',
     `Polityka dla tego typu wiadomości → ${KIND_POLICY[kind] || KIND_POLICY.dm}`,
     ...(examples.length
@@ -298,4 +298,4 @@ async function muteFromThread(db, thread, exampleText) {
   return { senderMuted: Boolean(senderValue) };
 }
 
-module.exports = { classifyMessage, classifyInWebhook, applyTriage, sweep, muteFromThread, fallbackTriage };
+module.exports = { classifyMessage, classifyInWebhook, applyTriage, sweep, muteFromThread, fallbackTriage, isStub };

@@ -28,6 +28,16 @@ const PLATFORM_MAP = {
   whatsapp: { channel: 'whatsapp', identityType: 'wa' },
 };
 
+// Identyfikatory NASZYCH stron/kont na platformach (FB page LumLum itd.).
+// Zernio wysyła comment.received także dla komentarzy pisanych przez samą
+// stronę — bez tej listy odpowiedź Antoniego pod postem robiła się
+// "wiadomością od klienta" i AI proponowało odpowiedź na jego własne słowa.
+// Nowe konto (np. IG) dopisujemy w env, po przecinku.
+const OWN_AUTHOR_IDS = new Set(
+  String(process.env.ZERNIO_OWN_AUTHOR_IDS || '379092038630635')
+    .split(',').map((s) => s.trim()).filter(Boolean)
+);
+
 // HMAC-SHA256 surowego body, hex — nagłówek X-Zernio-Signature.
 function verifySignature(rawBody, signature, secret) {
   if (!signature || !secret || !rawBody) return false;
@@ -236,6 +246,51 @@ async function handleConversationStarted(db, payload) {
   return { ok: true, customer: customer.public_id, threadId: thread.id };
 }
 
+// Komentarz napisany przez NASZĄ stronę (odpowiedź Antoniego pod postem):
+// dopinamy go jako 'out' do wątku autora komentarza-rodzica — w historii
+// widać, że odpowiedź już padła, a wątek schodzi z „Do odpisania". Własny
+// komentarz najwyższego poziomu (pod firmowym postem, bez rodzica u nas)
+// pomijamy — nie ma klienta, do którego by należał.
+async function handleOwnComment(db, payload) {
+  const comment = payload.comment || {};
+  const text = (comment.text || '').trim() || '[pusty komentarz]';
+  if (!comment.parentCommentId) return { ok: true, skipped: 'własny komentarz bez rodzica' };
+
+  const { data: parents, error: findErr } = await db.from('kom_messages')
+    .select('id,thread_id').eq('external_message_id', String(comment.parentCommentId)).limit(1);
+  if (findErr) throw findErr;
+  const parent = parents && parents[0];
+  if (!parent) return { ok: true, skipped: 'własna odpowiedź: komentarz-rodzic nieznany' };
+
+  const { error: msgErr } = await db.from('kom_messages').insert({
+    thread_id: parent.thread_id,
+    direction: 'out',
+    body: text,
+    sent_by: 'antoni',
+    external_message_id: comment.id,
+    triage: 'inbox',
+    meta: {
+      kind: 'comment',
+      zernio: {
+        commentId: comment.id,
+        postId: comment.platformPostId,
+        platform: comment.platform,
+        isReply: true,
+        parentCommentId: comment.parentCommentId,
+        eventId: payload.id,
+      },
+    },
+  });
+  if (msgErr) {
+    if (/duplicate|unique/i.test(msgErr.message)) return { ok: true, duplicate: true };
+    throw msgErr;
+  }
+  await db.from('kom_threads')
+    .update({ status: 'waiting', last_message_at: new Date().toISOString() })
+    .eq('id', parent.thread_id);
+  return { ok: true, ownReply: true, threadId: parent.thread_id };
+}
+
 // ── comment.received ─────────────────────────────────────────────────────────
 // Pełna treść + autor (przewaga Zernio nad ManyChat). Komentarz NIE otwiera
 // okna DM Meta → osobny wątek 'comments:<authorId>', status 'waiting' dla
@@ -249,6 +304,7 @@ async function handleComment(db, payload) {
 
   const author = comment.author || {};
   if (!author.id) throw new Error('Brak comment.author.id w payloadzie');
+  if (OWN_AUTHOR_IDS.has(String(author.id))) return handleOwnComment(db, payload);
   const text = (comment.text || '').trim() || attachmentSummary([comment.attachment].filter(Boolean)) || '[pusty komentarz]';
 
   const { customer, created } = await identity.resolveCustomer(db, {

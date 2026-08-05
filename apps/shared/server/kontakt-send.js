@@ -158,7 +158,9 @@ async function sendSmsAndLog(db, { telefonDigits, tresc, senderName, lead = null
     meta: { sms: { messages: wynik.messages ?? null, cost: wynik.cost ?? null, nadawca: callerDigits || null }, zrodlo, ...metaExtra },
   });
   if (msgErr) console.warn('kontakt: zapis kom_messages (sms):', msgErr.message);
-  await db.from('kom_threads').update({ last_message_at: new Date().toISOString() }).eq('id', thread.id);
+  // Po naszym SMS-ie piłka jest u klienta — wątek NIE wisi jako karta
+  // „Do odpisania" (out-only wątki SMS robiły ~20 pustych kart).
+  await db.from('kom_threads').update({ status: 'waiting', last_message_at: new Date().toISOString() }).eq('id', thread.id);
 
   await appendHistoriaLine(db, lead, `[SMS→] ${body.replace(/\s+/g, ' ').slice(0, 160)}`);
 
@@ -258,7 +260,10 @@ async function recordInboundSms(db, { fromDigits, tresc, lead = null, displayNam
     meta: { sms: { nadawca: komPhone }, zrodlo: 'zadarma_sms', ...metaExtra },
   });
   if (msgErr) console.warn('kontakt: zapis kom_messages (sms in):', msgErr.message);
-  await db.from('kom_threads').update({ last_message_at: new Date().toISOString() }).eq('id', thread.id);
+  // Klient odpisał SMS-em → karta „Do odpisania" w Wiadomościach. Wiadomość
+  // ma triage NULL, więc sweep triage (cron */2) doklasyfikuje ją i sam zdejmie
+  // kartę, gdy to grzecznościowe „ok, dziękuję" (needsReply=false → waiting).
+  await db.from('kom_threads').update({ status: 'attention', last_message_at: new Date().toISOString() }).eq('id', thread.id);
   return { threadId: thread.id, customerId: customer.id };
 }
 
