@@ -10,6 +10,7 @@ const assert = require('node:assert/strict');
 const {
   dopasujZwrot, plDataSlownie, policzSegmenty, zbudujTrescAutoSms,
   ocenBramke, juzRozmawialismy, autoSmsPoNieodebranym, warsawDateStr,
+  historiaTelefonow,
 } = require('./auto-sms');
 
 // Lipiec = UTC+2 w Warszawie: godzina warszawska H == H-2 UTC.
@@ -283,6 +284,55 @@ test('bramka: granice okna godzin (8:00 i 20:30 włącznie)', () => {
 test('bramka: lead spoza formularza Z wyceną dostaje scenariusz wycena', () => {
   const r = ocenBramke({ ...BAZOWA, leadZrodlo: 'Zadarma — rozmowa bez dopasowania w bazie', maWycene: true });
   assert.deepEqual(r, { wysylac: true, scenariusz: 'wycena', proba: 1 });
+});
+
+// ── historiaTelefonow: tylko REALNE połączenia z "Log zmian" ─────────────────
+// "Log zmian" to dziennik WSZYSTKICH zmian numeru (telefony, utworzenie leada z
+// FB, ręczne zmiany statusu). Historia telefonów musi liczyć TYLKO połączenia —
+// inaczej świeży wpis facebook_lead_webhook / manual_crm udaje "ostatni telefon"
+// i blokuje pierwszy auto-SMS powodem niedawny_telefon (regresja z 05.08.2026).
+
+function fakeDbLogZmian(rows) {
+  // Minimalny builder pod db.from(...).select(...).in(...).order(...).limit(...)
+  const chain = {
+    select: () => chain, in: () => chain, order: () => chain,
+    limit: async () => ({ data: rows, error: null }),
+  };
+  return { from: () => chain };
+}
+
+test('historiaTelefonow: wpis FB (null->Nowy) NIE jest telefonem → ostatniTelefonAt null', async () => {
+  // Dokładnie przypadek z produkcji: lead z FB utworzony wczoraj, dziś jeden
+  // nieodebrany wychodzący (bieżący, wykluczany po pbx). Żadnego innego telefonu.
+  const now = new Date('2026-08-05T16:03:38Z');
+  const db = fakeDbLogZmian([
+    { data_zmiany: '2026-08-05T16:02:34Z', disposition: 'no_answer', pbx_call_id: 'out_biezacy' },
+    { data_zmiany: '2026-08-04T19:45:21Z', disposition: null, pbx_call_id: null }, // facebook_lead_webhook
+  ]);
+  const r = await historiaTelefonow(db, '48798999126', { excludePbxCallId: 'out_biezacy', now });
+  assert.equal(r.ostatniTelefonAt, null, 'wpis FB nie może udawać telefonu');
+  assert.equal(r.rozmowyCount, 0);
+});
+
+test('historiaTelefonow: wpis manual_crm (zmiana statusu) NIE jest telefonem', async () => {
+  const now = new Date('2026-08-05T16:03:38Z');
+  const db = fakeDbLogZmian([
+    { data_zmiany: '2026-08-05T09:00:00Z', disposition: null, pbx_call_id: null }, // manual_crm
+  ]);
+  const r = await historiaTelefonow(db, '48798999126', { now });
+  assert.equal(r.ostatniTelefonAt, null);
+});
+
+test('historiaTelefonow: realny wcześniejszy telefon nadal łapany (ostatniTelefonAt ustawiony)', async () => {
+  const now = new Date('2026-08-05T16:03:38Z');
+  const db = fakeDbLogZmian([
+    { data_zmiany: '2026-08-05T16:02:34Z', disposition: 'no_answer', pbx_call_id: 'out_biezacy' },
+    { data_zmiany: '2026-08-04T12:00:00Z', disposition: 'answered', pbx_call_id: 'out_wczoraj' }, // realna rozmowa
+    { data_zmiany: '2026-08-03T10:00:00Z', disposition: null, pbx_call_id: null }, // FB — ignorowany
+  ]);
+  const r = await historiaTelefonow(db, '48798999126', { excludePbxCallId: 'out_biezacy', now });
+  assert.equal(r.ostatniTelefonAt, '2026-08-04T12:00:00Z');
+  assert.equal(r.rozmowyCount, 1);
 });
 
 // ── juzRozmawialismy: status → czy była już rozmowa ──────────────────────────

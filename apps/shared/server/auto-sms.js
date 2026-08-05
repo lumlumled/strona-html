@@ -431,6 +431,15 @@ async function historiaTelefonow(db, digits, { excludePbxCallId = null, now = ne
   if (error) throw error;
   const swiezyProg = now.getTime() - 2 * 60 * 1000;
   const rows = (data || []).filter((r) => {
+    // "Log zmian" to dziennik WSZYSTKICH zmian numeru, nie tylko połączeń:
+    // wiersze `facebook_lead_webhook` (utworzenie leada, null→Nowy) i
+    // `manual_crm` (zmiana statusu/notatki/feedbacku) NIE są telefonami.
+    // Bez tego filtra świeży lead z FB (utworzony w ostatnich 3 dniach)
+    // wyglądał jak "ostatni telefon" i blokował PIERWSZY auto-SMS powodem
+    // niedawny_telefon — czyli dokładnie ten pierwszy kontakt, o który chodzi.
+    // Realny telefon (zadarma) zawsze ma pbx_call_id i disposition; zdarzenia
+    // nietelefoniczne mają oba null.
+    if (!r.pbx_call_id && !r.disposition) return false;
     if (excludePbxCallId && r.pbx_call_id === excludePbxCallId) return false;
     if (Date.parse(r.data_zmiany) > swiezyProg) return false; // bieżący nieodebrany
     return true;
