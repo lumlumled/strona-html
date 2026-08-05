@@ -452,6 +452,9 @@ app.get('/api/threads', async (req, res) => {
   try {
     const db = getClient();
     const view = String(req.query.view || req.query.status || 'main');
+    // „Tylko z odpowiedzią klienta": chowa wątki bez ŻADNEJ wiadomości
+    // przychodzącej (typowo outbound-only auto-SMS/kampanie bez reakcji).
+    const onlyReplied = ['1', 'true'].includes(String(req.query.zOdpowiedzia || ''));
     const restricted = !isAdmin(req.user);
     let query = db.from('kom_threads').select('*').order('last_message_at', { ascending: false, nullsFirst: false });
     if (restricted || view === 'sms') query = query.eq('channel', 'sms');
@@ -559,7 +562,8 @@ app.get('/api/threads', async (req, res) => {
         // i atrapy („Rozpocznij") nie robią kart, niezależnie od statusu.
         .filter((row) => view !== 'reply'
           || (row.last_inbound
-            && (row.last_inbound.attachments.length || !triage.isStub(row.last_inbound.body)))),
+            && (row.last_inbound.attachments.length || !triage.isStub(row.last_inbound.body))))
+        .filter((row) => !onlyReplied || lastIn.has(row.id)),
     });
   } catch (err) {
     handleError(res, err, 502);
@@ -882,10 +886,17 @@ app.get('/api/automat/feed', async (req, res) => {
     const threadIds = [...new Set([...autoRows, ...followRows].map((r) => r.thread_id).filter(Boolean))];
     const msgIds = [...new Set(autoRows.map((r) => r.in_message_id).filter(Boolean))];
     const commitIds = [...new Set(followRows.map((r) => r.commitment_id).filter(Boolean))];
-    const [threadsRes, msgsRes, commitsRes] = await Promise.all([
+    const [threadsRes, msgsRes, commitsRes, convRes] = await Promise.all([
       threadIds.length ? db.from('kom_threads').select('id,channel,customer_id').in('id', threadIds) : Promise.resolve({ data: [] }),
       msgIds.length ? db.from('kom_messages').select('id,body').in('id', msgIds) : Promise.resolve({ data: [] }),
       commitIds.length ? db.from('kom_commitments').select('id,description').in('id', commitIds) : Promise.resolve({ data: [] }),
+      // Kontekst rozmowy dla każdej karty: ostatnie wiadomości wątku, żeby przy
+      // follow-upie było widać CAŁĄ historię z klientem, a nie samą obietnicę.
+      threadIds.length ? db.from('kom_messages')
+        .select('thread_id,direction,body,created_at')
+        .in('thread_id', threadIds)
+        .order('created_at', { ascending: false })
+        .limit(Math.min(2000, threadIds.length * 30)) : Promise.resolve({ data: [] }),
     ]);
     const threads = new Map((threadsRes.data || []).map((t) => [t.id, t]));
     const custIds = [...new Set((threadsRes.data || []).map((t) => t.customer_id).filter(Boolean))];
@@ -899,6 +910,19 @@ app.get('/api/automat/feed', async (req, res) => {
       const c = t ? customers.get(t.customer_id) : null;
       return c ? (c.display_name || c.public_id) : null;
     };
+    // convRes jest desc (najnowsze pierwsze); grupujemy per wątek, bierzemy 15
+    // ostatnich i odwracamy do porządku chronologicznego (jak w rozmowie).
+    const convByThread = new Map();
+    for (const m of (convRes.data || [])) {
+      if (m.direction === 'internal') continue; // notatki wewnętrzne pomijamy
+      const arr = convByThread.get(m.thread_id) || [];
+      arr.push(m);
+      convByThread.set(m.thread_id, arr);
+    }
+    const conversationFor = (tid) => (convByThread.get(tid) || [])
+      .slice(0, 15)
+      .reverse()
+      .map((m) => ({ direction: m.direction, body: m.body, created_at: m.created_at }));
 
     const autoItems = autoRows.map((r) => {
       const t = threads.get(r.thread_id);
@@ -909,6 +933,7 @@ app.get('/api/automat/feed', async (req, res) => {
         created_at: r.created_at, send_after: r.send_after, sent_at: r.sent_at,
         generated_text: r.generated_text, error: r.error,
         customer_name: nameFor(t), inbound_text: inMsg ? inMsg.body : null,
+        thread_id: r.thread_id, conversation: conversationFor(r.thread_id),
       };
     });
     const followItems = followRows.map((r) => {

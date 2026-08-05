@@ -277,6 +277,11 @@
       </div>
       <!-- Skrzynki SMS per handlowiec (zakładka SMS): L = Lorenzo, A = Antoni. -->
       <div class="tabs" id="sms-users" hidden></div>
+      <!-- Filtr list: chowa wątki, w których klient nigdy nie odpisał. -->
+      <div class="tabs" id="list-filters" hidden>
+        <button class="tab" id="filter-replied" type="button"
+          title="Chowa wątki bez żadnej wiadomości od klienta (np. wysłane SMS-y bez reakcji)">Tylko z odpowiedzią klienta</button>
+      </div>
       <ul class="thread-list" id="thread-list">
         <li class="empty">Ładowanie…</li>
       </ul>
@@ -359,6 +364,7 @@
       statusFilter: 'reply', threads: [], selectedId: null, detail: null,
       suggestion: null, // { id, forThread } — sugestia AI załadowana do composera
       smsUser: (window.LUMLUM_SMS_USERS && window.LUMLUM_SMS_USERS[0]?.name) || 'Lorenzo', // skrzynka w zakładce SMS
+      onlyReplied: localStorage.getItem('kom_only_replied') === '1', // filtr „Tylko z odpowiedzią klienta"
     };
 
     const $ = (id) => document.getElementById(id);
@@ -374,6 +380,20 @@
         if (el) el.hidden = true;
       });
     }
+
+    // Filtr „Tylko z odpowiedzią klienta" — chowa wątki, w których klient
+    // nigdy nie odpisał (outbound-only). Wybór trzymany w localStorage.
+    const LIST_FILTER_VIEWS = ['main', 'notifications', 'closed', 'all', 'sms'];
+    function renderListFilter() {
+      $('filter-replied').classList.toggle('active', state.onlyReplied);
+    }
+    $('filter-replied').addEventListener('click', () => {
+      state.onlyReplied = !state.onlyReplied;
+      localStorage.setItem('kom_only_replied', state.onlyReplied ? '1' : '0');
+      renderListFilter();
+      loadThreads();
+    });
+    renderListFilter();
 
     // Przełącznik skrzynek SMS (L/A) w zakładce SMS.
     function renderSmsUsers() {
@@ -430,7 +450,8 @@
       if (state.statusFilter === 'czekaja') { loadWaiting(); return; }
       try {
         const smsParam = state.statusFilter === 'sms' ? `&smsUser=${encodeURIComponent(state.smsUser)}` : '';
-        const { data } = await api(`/threads?view=${state.statusFilter}${smsParam}`);
+        const repliedParam = state.onlyReplied && LIST_FILTER_VIEWS.includes(state.statusFilter) ? '&zOdpowiedzia=1' : '';
+        const { data } = await api(`/threads?view=${state.statusFilter}${smsParam}${repliedParam}`);
         state.threads = data;
         if (state.statusFilter === 'reply') renderCardsDiff();
         else renderThreads();
@@ -446,6 +467,7 @@
       const cardsMode = state.statusFilter === 'reply';
       const automatMode = state.statusFilter === 'automat' || state.statusFilter === 'followupy' || state.statusFilter === 'czekaja';
       $('sms-users').hidden = state.statusFilter !== 'sms';
+      $('list-filters').hidden = !LIST_FILTER_VIEWS.includes(state.statusFilter);
       $('layout').classList.toggle('cards-mode', cardsMode);
       $('cards').hidden = !cardsMode;
       $('automat').hidden = !automatMode;
