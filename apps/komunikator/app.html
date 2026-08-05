@@ -434,16 +434,20 @@
       const when = it.status === 'sent' ? ('wysłano ' + fmtTime(it.sent_at))
         : it.status === 'queued' ? ('planowo ' + fmtTime(it.send_after))
         : fmtTime(it.created_at);
+      const isFollow = it.source === 'followup';
+      const kindChip = isFollow ? ` · follow-up: ${it.purpose_label || ''}` : (it.kind === 'comment' ? ' · komentarz' : '');
+      const inIcon = isFollow ? '🤝' : '💬';
       return `<div class="automat-card">
         <div class="automat-card-top">
           <span class="badge">${AUTOMAT_STATUS[it.status] || it.status}</span>
-          <span class="chip">${CHANNEL_LABELS[it.channel] || it.channel || ''}${it.kind === 'comment' ? ' · komentarz' : ''}</span>
+          <span class="chip">${CHANNEL_LABELS[it.channel] || it.channel || ''}${kindChip}</span>
           <span class="automat-when">${when}</span>
           ${canCancel ? `<button class="btn" data-cancel="${it.id}">Cofnij</button>` : ''}
         </div>
         <div class="automat-who">${escapeHtml(it.customer_name || '(bez nazwy)')}</div>
-        <div class="automat-in">💬 ${escapeHtml((it.inbound_text || '').slice(0, 240))}</div>
+        <div class="automat-in">${inIcon} ${escapeHtml((it.inbound_text || '').slice(0, 240))}</div>
         ${it.generated_text ? `<div class="automat-out">↳ ${escapeHtml(it.generated_text)}</div>` : ''}
+        ${it.status === 'skipped' && it.reason ? `<div class="automat-reason">pominięte: ${escapeHtml(it.reason)}</div>` : ''}
         ${it.error ? `<div class="automat-reason">błąd: ${escapeHtml(it.error)}</div>` : ''}
       </div>`;
     }
@@ -456,7 +460,7 @@
       $('automat-panel').innerHTML = `
         <div class="automat-head">
           <div>
-            <strong>Automat - auto-odpowiedzi na nowe wiadomości</strong>
+            <strong>Automat - auto-odpowiedzi + follow-up obietnic</strong>
             <div class="automat-sub">${enabled ? '🟢 WŁĄCZONY - odpowiada sam' : '⚪ WYŁĄCZONY - tylko podgląd, nic nie wysyła'} · w kolejce: ${c.queued || 0} · „wysłałby": ${c.held || 0} · wysłane 24h: ${c.sent || 0}</div>
           </div>
           <button class="btn ${enabled ? 'primary' : ''}" id="automat-toggle" data-enabled="${enabled}">${enabled ? 'Wyłącz auto-wysyłkę' : 'Włącz auto-wysyłkę'}</button>

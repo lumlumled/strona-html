@@ -21,6 +21,7 @@ const suggest = require('./suggest');
 const media = require('./media');
 const settings = require('./settings');
 const autoreply = require('./autoreply');
+const followups = require('./followups');
 
 const app = express();
 // rawBody potrzebny do weryfikacji X-Zernio-Signature (HMAC surowego body).
@@ -142,6 +143,13 @@ async function runWorker(req, res) {
     console.error('Worker (outbox):', err.message);
     result.outbox = { error: err.message };
   }
+  try {
+    // Follow-up obietnic klienta (ten sam włącznik/okno/kanały co autoresponder).
+    result.followups = await followups.sweep(db, autoreplyCtx());
+  } catch (err) {
+    console.error('Worker (followups):', err.message);
+    result.followups = { error: err.message };
+  }
   console.log('Cron worker:', JSON.stringify(result));
   res.json(result);
 }
@@ -198,7 +206,13 @@ app.all('/api/cron/gmail', async (req, res) => {
 app.all('/api/cron/outbox', async (req, res) => {
   if (!isCronAuthorized(req)) return res.status(401).json({ error: 'Brak autoryzacji' });
   try {
-    res.json(await autoreply.sweep(getClient(), autoreplyCtx()));
+    const db = getClient();
+    const ctx = autoreplyCtx();
+    const [outbox, followup] = await Promise.all([
+      autoreply.sweep(db, ctx),
+      followups.sweep(db, ctx),
+    ]);
+    res.json({ outbox, followups: followup });
   } catch (err) {
     console.error('Cron outbox:', err.message);
     res.status(502).json({ ok: false, error: err.message });
@@ -698,15 +712,18 @@ app.get('/api/automat/status', async (req, res) => {
     const db = getClient();
     const enabled = (await settings.getSetting(db, autoreply.SETTING_KEY, false)) === true;
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const counts = {};
-    const queries = [
-      ['queued', db.from('kom_autoreply').select('id', { count: 'exact', head: true }).eq('status', 'queued')],
-      ['held', db.from('kom_autoreply').select('id', { count: 'exact', head: true }).eq('status', 'held')],
-      ['sent', db.from('kom_autoreply').select('id', { count: 'exact', head: true }).eq('status', 'sent').gte('created_at', since)],
-    ];
-    for (const [key, q] of queries) {
-      const { count } = await q;
-      counts[key] = count || 0;
+    // Liczniki sumują oba outboxy: pierwszy kontakt (kom_autoreply) + follow-upy.
+    const counts = { queued: 0, held: 0, sent: 0 };
+    for (const table of ['kom_autoreply', 'kom_followup']) {
+      const queries = [
+        ['queued', db.from(table).select('id', { count: 'exact', head: true }).eq('status', 'queued')],
+        ['held', db.from(table).select('id', { count: 'exact', head: true }).eq('status', 'held')],
+        ['sent', db.from(table).select('id', { count: 'exact', head: true }).eq('status', 'sent').gte('created_at', since)],
+      ];
+      for (const [key, q] of queries) {
+        const { count } = await q;
+        counts[key] += count || 0;
+      }
     }
     res.json({ enabled, counts });
   } catch (err) {
@@ -725,17 +742,28 @@ app.post('/api/automat/toggle', async (req, res) => {
   }
 });
 
+const FOLLOWUP_LABELS = { ack: 'potwierdzenie', nudge: 'przypomnienie', nudge2: 'przypomnienie #2' };
+
 app.get('/api/automat/feed', async (req, res) => {
   try {
     const db = getClient();
-    const { data: rows, error } = await db
-      .from('kom_autoreply').select('*').order('created_at', { ascending: false }).limit(60);
-    if (error) throw error;
-    const threadIds = [...new Set((rows || []).map((r) => r.thread_id).filter(Boolean))];
-    const msgIds = [...new Set((rows || []).map((r) => r.in_message_id).filter(Boolean))];
-    const [threadsRes, msgsRes] = await Promise.all([
+    // Dwa outboxy w jednym feedzie: pierwszy kontakt + follow-up obietnic.
+    const [autoRes, followRes] = await Promise.all([
+      db.from('kom_autoreply').select('*').order('created_at', { ascending: false }).limit(40),
+      db.from('kom_followup').select('*').order('created_at', { ascending: false }).limit(40),
+    ]);
+    if (autoRes.error) throw autoRes.error;
+    if (followRes.error) throw followRes.error;
+    const autoRows = autoRes.data || [];
+    const followRows = followRes.data || [];
+
+    const threadIds = [...new Set([...autoRows, ...followRows].map((r) => r.thread_id).filter(Boolean))];
+    const msgIds = [...new Set(autoRows.map((r) => r.in_message_id).filter(Boolean))];
+    const commitIds = [...new Set(followRows.map((r) => r.commitment_id).filter(Boolean))];
+    const [threadsRes, msgsRes, commitsRes] = await Promise.all([
       threadIds.length ? db.from('kom_threads').select('id,channel,customer_id').in('id', threadIds) : Promise.resolve({ data: [] }),
       msgIds.length ? db.from('kom_messages').select('id,body').in('id', msgIds) : Promise.resolve({ data: [] }),
+      commitIds.length ? db.from('kom_commitments').select('id,description').in('id', commitIds) : Promise.resolve({ data: [] }),
     ]);
     const threads = new Map((threadsRes.data || []).map((t) => [t.id, t]));
     const custIds = [...new Set((threadsRes.data || []).map((t) => t.customer_id).filter(Boolean))];
@@ -744,26 +772,40 @@ app.get('/api/automat/feed', async (req, res) => {
       : { data: [] };
     const customers = new Map((custRes.data || []).map((c) => [c.id, c]));
     const msgs = new Map((msgsRes.data || []).map((m) => [m.id, m]));
-    const items = (rows || []).map((r) => {
-      const t = threads.get(r.thread_id);
+    const commits = new Map((commitsRes.data || []).map((c) => [c.id, c]));
+    const nameFor = (t) => {
       const c = t ? customers.get(t.customer_id) : null;
+      return c ? (c.display_name || c.public_id) : null;
+    };
+
+    const autoItems = autoRows.map((r) => {
+      const t = threads.get(r.thread_id);
       const inMsg = r.in_message_id ? msgs.get(r.in_message_id) : null;
       return {
-        id: r.id,
-        status: r.status,
-        verdict: r.verdict,
-        reason: r.reason,
-        kind: r.kind,
+        id: r.id, source: 'reply', status: r.status, reason: r.reason, kind: r.kind,
         channel: r.channel || (t && t.channel) || null,
-        created_at: r.created_at,
-        send_after: r.send_after,
-        sent_at: r.sent_at,
-        generated_text: r.generated_text,
-        error: r.error,
-        customer_name: c ? (c.display_name || c.public_id) : null,
-        inbound_text: inMsg ? inMsg.body : null,
+        created_at: r.created_at, send_after: r.send_after, sent_at: r.sent_at,
+        generated_text: r.generated_text, error: r.error,
+        customer_name: nameFor(t), inbound_text: inMsg ? inMsg.body : null,
       };
     });
+    const followItems = followRows.map((r) => {
+      const t = threads.get(r.thread_id);
+      const commit = r.commitment_id ? commits.get(r.commitment_id) : null;
+      return {
+        id: r.id, source: 'followup', status: r.status, reason: r.reason,
+        purpose: r.purpose, purpose_label: FOLLOWUP_LABELS[r.purpose] || r.purpose,
+        channel: r.channel || (t && t.channel) || null,
+        created_at: r.created_at, send_after: r.send_after, sent_at: r.sent_at,
+        generated_text: r.generated_text, error: r.error,
+        customer_name: nameFor(t),
+        inbound_text: commit ? `obietnica: ${commit.description}` : null,
+      };
+    });
+
+    const items = [...autoItems, ...followItems]
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      .slice(0, 60);
     res.json({ items });
   } catch (err) {
     handleError(res, err, 502);
@@ -773,12 +815,15 @@ app.get('/api/automat/feed', async (req, res) => {
 app.post('/api/automat/:id/cancel', async (req, res) => {
   try {
     const db = getClient();
-    const { data, error } = await db
-      .from('kom_autoreply').update({ status: 'cancelled' })
-      .eq('id', req.params.id).in('status', ['queued', 'held']).select('id');
-    if (error) throw error;
-    if (!data || !data.length) return res.status(409).json({ error: 'Nie można anulować (już wysłane albo anulowane)' });
-    res.json({ ok: true });
+    // id może być z któregokolwiek outboxu (pierwszy kontakt / follow-up).
+    for (const table of ['kom_autoreply', 'kom_followup']) {
+      const { data, error } = await db
+        .from(table).update({ status: 'cancelled' })
+        .eq('id', req.params.id).in('status', ['queued', 'held']).select('id');
+      if (error) throw error;
+      if (data && data.length) return res.json({ ok: true });
+    }
+    res.status(409).json({ error: 'Nie można anulować (już wysłane albo anulowane)' });
   } catch (err) {
     handleError(res, err, 502);
   }
