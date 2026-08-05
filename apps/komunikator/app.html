@@ -73,6 +73,8 @@
     .sidebar-head { padding: .9rem 1rem .6rem; display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
     .sidebar-head h1 { font-size: 1.05rem; }
     .tabs { display: flex; gap: .35rem; padding: 0 1rem .7rem; flex-wrap: wrap; }
+    /* display:flex wygrywa z atrybutem hidden (reguła UA) — jak .main[hidden]. */
+    .tabs[hidden] { display: none; }
     .tab {
       border: 1px solid var(--border); background: transparent; color: var(--text-secondary);
       font: inherit; font-size: .78rem; font-weight: 600; padding: .3rem .7rem; border-radius: 999px; cursor: pointer;
@@ -102,6 +104,8 @@
     .layout.cards-mode .main { display: none; }
     .layout.cards-mode .sidebar { background: transparent; border: none; border-radius: 0; }
     .cards { display: grid; gap: .9rem; align-content: start; }
+    /* display:grid wygrywa z atrybutem hidden (reguła UA) — jak .main[hidden]. */
+    .cards[hidden] { display: none; }
     .card {
       background: var(--surface-1); border: 1px solid var(--border); border-radius: 16px;
       padding: 1rem 1.1rem; display: grid; gap: .6rem;
@@ -266,10 +270,13 @@
         <button class="tab" data-status="notifications">Powiadomienia</button>
         <button class="tab" data-status="closed">Zamknięte</button>
         <button class="tab" data-status="all">Wszystkie</button>
+        <button class="tab" data-status="sms" id="tab-sms">SMS</button>
         <button class="tab" data-status="automat" id="tab-automat">Automat <span class="tab-count" id="automat-count" hidden></span></button>
         <button class="tab" data-status="followupy" id="tab-followupy">Follow-upy <span class="tab-count" id="followupy-count" hidden></span></button>
         <button class="tab" data-status="czekaja" id="tab-czekaja">Czekają na Ciebie <span class="tab-count" id="czekaja-count" hidden></span></button>
       </div>
+      <!-- Skrzynki SMS per handlowiec (zakładka SMS): L = Lorenzo, A = Antoni. -->
+      <div class="tabs" id="sms-users" hidden></div>
       <ul class="thread-list" id="thread-list">
         <li class="empty">Ładowanie…</li>
       </ul>
@@ -351,6 +358,7 @@
     const state = {
       statusFilter: 'reply', threads: [], selectedId: null, detail: null,
       suggestion: null, // { id, forThread } — sugestia AI załadowana do composera
+      smsUser: (window.LUMLUM_SMS_USERS && window.LUMLUM_SMS_USERS[0]?.name) || 'Lorenzo', // skrzynka w zakładce SMS
     };
 
     const $ = (id) => document.getElementById(id);
@@ -360,11 +368,31 @@
     // notatki, wyciszanie), żeby nie klikał w 403.
     const IS_ADMIN = !!(window.LUMLUM_USER && window.LUMLUM_USER.isAdmin);
     if (!IS_ADMIN) {
-      ['tab-automat', 'tab-followupy', 'tab-czekaja', 'note-btn'].forEach((id) => {
+      // tab-sms też: handlowiec ma swoją skrzynkę SMS wprost w kartach.
+      ['tab-automat', 'tab-followupy', 'tab-czekaja', 'tab-sms', 'note-btn'].forEach((id) => {
         const el = document.getElementById(id);
         if (el) el.hidden = true;
       });
     }
+
+    // Przełącznik skrzynek SMS (L/A) w zakładce SMS.
+    function renderSmsUsers() {
+      const box = $('sms-users');
+      box.innerHTML = '';
+      (window.LUMLUM_SMS_USERS || []).forEach((u) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'tab' + (state.smsUser === u.name ? ' active' : '');
+        b.textContent = `${u.name[0]} · ${u.name}${u.suffix ? ` (…${u.suffix})` : ' (brak numeru)'}`;
+        b.addEventListener('click', () => {
+          state.smsUser = u.name;
+          renderSmsUsers();
+          loadThreads();
+        });
+        box.appendChild(b);
+      });
+    }
+    renderSmsUsers();
 
     function toast(msg) {
       const el = $('toast');
@@ -401,7 +429,8 @@
       if (state.statusFilter === 'followupy') { loadAutomatPanel('followup'); return; }
       if (state.statusFilter === 'czekaja') { loadWaiting(); return; }
       try {
-        const { data } = await api(`/threads?view=${state.statusFilter}`);
+        const smsParam = state.statusFilter === 'sms' ? `&smsUser=${encodeURIComponent(state.smsUser)}` : '';
+        const { data } = await api(`/threads?view=${state.statusFilter}${smsParam}`);
         state.threads = data;
         if (state.statusFilter === 'reply') renderCardsDiff();
         else renderThreads();
@@ -416,6 +445,7 @@
     function setMode() {
       const cardsMode = state.statusFilter === 'reply';
       const automatMode = state.statusFilter === 'automat' || state.statusFilter === 'followupy' || state.statusFilter === 'czekaja';
+      $('sms-users').hidden = state.statusFilter !== 'sms';
       $('layout').classList.toggle('cards-mode', cardsMode);
       $('cards').hidden = !cardsMode;
       $('automat').hidden = !automatMode;

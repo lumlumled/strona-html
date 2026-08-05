@@ -116,17 +116,54 @@ async function findMailThread(db, customerIds) {
   };
 }
 
+// Numery Zadarmy per handlowiec: jeden numer = jedna „skrzynka" SMS.
+// Ta sama mapa napędza wysyłkę (caller_id) i rozdział widoków w komunikatorze
+// (kom_threads.meta.sms_user — zakładka SMS z przełącznikiem L/A). Nowy
+// handlowiec = nowy wpis env <IMIĘ>_ZADARMA_NUMBER + pozycja tutaj.
+function smsUsers() {
+  const digits = (v) => String(v || '').replace(/\D/g, '');
+  return [
+    { name: 'Lorenzo', number: digits(process.env.LORENZO_ZADARMA_NUMBER) || null },
+    { name: 'Antoni', number: digits(process.env.ANTONI_ZADARMA_NUMBER) || null },
+  ];
+}
+
+function smsUserForNumber(number) {
+  const d = String(number || '').replace(/\D/g, '');
+  if (!d) return null;
+  const hit = smsUsers().find((u) => u.number && u.number === d);
+  return hit ? hit.name : null;
+}
+
+function canonicalSmsUser(name) {
+  const n = String(name || '').trim().toLowerCase();
+  const hit = smsUsers().find((u) => u.name.toLowerCase() === n);
+  return hit ? hit.name : null;
+}
+
 // Nadawca SMS-a: numer HANDLOWCA (Lorenzo → jego numer Zadarmy), fallback =
 // jawny override ZADARMA_SMS_CALLER_ID albo numer firmowy. Bez plusa: Zadarma
 // trzyma numery jako '48459567870' (tak zwraca /v1/direct_numbers) i dopasowuje
 // caller_id po dokładnym stringu — '+48…' nie łapie rejestracji i SMS wychodzi
 // jako domyślny nadawca "zadarma.com".
 function resolveSmsCaller(senderName) {
-  const perUser = { lorenzo: process.env.LORENZO_ZADARMA_NUMBER };
+  const perUser = {
+    lorenzo: process.env.LORENZO_ZADARMA_NUMBER,
+    antoni: process.env.ANTONI_ZADARMA_NUMBER,
+  };
   const rawCaller = perUser[String(senderName || '').trim().toLowerCase()]
     || process.env.ZADARMA_SMS_CALLER_ID
     || process.env.ZADARMA_OWN_NUMBER;
   return String(rawCaller || '').replace(/\D/g, '');
+}
+
+// Stempel właściciela wątku SMS: z numeru nadawcy (mapa wyżej), a gdy numer
+// nie jest przypisany (wysyłka z numeru firmowego) — z nazwy handlowca.
+async function stampSmsUser(db, thread, smsUser) {
+  if (!smsUser || thread.meta?.sms_user === smsUser) return;
+  const meta = { ...(thread.meta || {}), sms_user: smsUser };
+  await db.from('kom_threads').update({ meta }).eq('id', thread.id);
+  thread.meta = meta;
 }
 
 // Wysyłka SMS + pełny ślad. Rzuca Error, gdy Zadarma nie zwróci success
@@ -150,6 +187,8 @@ async function sendSmsAndLog(db, { telefonDigits, tresc, senderName, lead = null
     digits, email: null, displayName: (lead && lead['Name']) || displayName || null,
   });
   const { thread } = await identity.attachThread(db, customer, 'sms', komPhone);
+  await stampSmsUser(db, thread, smsUserForNumber(callerDigits) || canonicalSmsUser(senderName))
+    .catch((e) => console.warn('kontakt: stempel sms_user:', e.message));
   const { error: msgErr } = await db.from('kom_messages').insert({
     thread_id: thread.id,
     direction: 'out',
@@ -242,7 +281,7 @@ async function sendMailAndLog(db, { email, temat, tresc, senderUserId, senderNam
 // worker kampanii (odpowiedzialSmsem czyta kom_messages 'in') sam zatrzymuje
 // follow-upy po odpowiedzi. NIE dotyka feedbacku/akcji leada - to robi warstwa
 // wyżej (webhook) po analizie AI. Zwraca { threadId, customerId }.
-async function recordInboundSms(db, { fromDigits, tresc, lead = null, displayName = null, metaExtra = {} }) {
+async function recordInboundSms(db, { fromDigits, tresc, lead = null, displayName = null, didDigits = null, metaExtra = {} }) {
   const digits = normalizePhoneDigits(fromDigits);
   const body = String(tresc || '').trim();
   if (!digits || digits.length < 9) throw new Error('Brak poprawnego numeru nadawcy SMS');
@@ -252,6 +291,11 @@ async function recordInboundSms(db, { fromDigits, tresc, lead = null, displayNam
     digits, email: null, displayName: (lead && lead['Name']) || displayName || null,
   });
   const { thread } = await identity.attachThread(db, customer, 'sms', komPhone);
+  // Skrzynka wątku: numer, na który klient napisał (gdy Make go przekaże);
+  // bez niego zostaje dotychczasowy stempel z wysyłki, a na końcu 'Lorenzo' —
+  // dziś klienckie SMS-y przychodzą wyłącznie na jego numer.
+  await stampSmsUser(db, thread, smsUserForNumber(didDigits) || thread.meta?.sms_user || 'Lorenzo')
+    .catch((e) => console.warn('kontakt: stempel sms_user (in):', e.message));
   const { error: msgErr } = await db.from('kom_messages').insert({
     thread_id: thread.id,
     direction: 'in',
@@ -275,6 +319,10 @@ module.exports = {
   resolveCustomerForLead,
   findMailThread,
   resolveSmsCaller,
+  smsUsers,
+  smsUserForNumber,
+  canonicalSmsUser,
+  stampSmsUser,
   sendSmsAndLog,
   sendMailAndLog,
   recordInboundSms,

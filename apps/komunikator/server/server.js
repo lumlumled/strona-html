@@ -263,6 +263,12 @@ app.get('/', (req, res) => {
     LUMLUM_LINKS: panelLinks(),
     LUMLUM_PANELS: PANELS,
     LUMLUM_CRM_SHEETS: CRM_SHEETS,
+    // Skrzynki SMS (zakładka SMS z przełącznikiem L/A) — same końcówki
+    // numerów, pełne numery nie są frontowi potrzebne.
+    LUMLUM_SMS_USERS: kontaktSend.smsUsers().map((u) => ({
+      name: u.name,
+      suffix: u.number ? u.number.slice(-4) : null,
+    })),
   };
   const script = Object.entries(payload)
     .map(([key, value]) => `window.${key} = ${JSON.stringify(value)};`)
@@ -307,25 +313,24 @@ async function expireStaleCards(db) {
   return { expired: (data || []).length };
 }
 
-// ── Widok handlowca (nie-admin): WYŁĄCZNIE wątki SMS jego leadów B2C ─────────
-// Decyzja Antoniego 2026-08-05: Lorenzo w Wiadomościach widzi same SMS-y do
-// swoich leadów (kolumna Owner w "Leady B2C"); jego odpowiedzi wychodzą z jego
-// numeru Zadarmy (resolveSmsCaller po nazwie użytkownika). Admin bez zmian.
-async function allowedSmsPhones(db, user) {
-  const { data, error } = await db.from('Leady B2C')
-    .select('"Phone number"')
-    .ilike('Owner', String(user?.name || ''));
-  if (error) throw error;
-  return new Set((data || []).map((r) => String(r['Phone number'] || '')).filter(Boolean));
+// ── Skrzynki SMS per handlowiec ──────────────────────────────────────────────
+// Decyzja Antoniego 2026-08-05: SMS-y są rozdzielone po numerze Zadarmy —
+// wątek należy do handlowca, z którego numeru szła korespondencja
+// (kom_threads.meta.sms_user, stemplowany w kontakt-send). Lorenzo (nie-admin)
+// widzi WYŁĄCZNIE swoją skrzynkę; admin nie dostaje kart z cudzych skrzynek
+// (SMS-y Lorenza obsługuje Lorenzo), a całość przegląda w zakładce SMS (L/A).
+function threadSmsUser(thread) {
+  // Bez stempla = skrzynka Lorenza: dziś klienckie SMS-y przychodzą wyłącznie
+  // na jego numer (backfill ustawił stempel wszystkim istniejącym wątkom).
+  return thread.meta?.sms_user || 'Lorenzo';
 }
 
 async function threadAccessError(db, user, thread) {
   if (isAdmin(user)) return null;
   if (thread.channel !== 'sms') return 'Ten widok obejmuje tylko wątki SMS';
-  const phones = await allowedSmsPhones(db, user);
-  return phones.has(String(thread.external_thread_id || ''))
+  return threadSmsUser(thread) === String(user?.name || '')
     ? null
-    : 'Ten numer nie należy do Twoich leadów';
+    : 'Ten wątek należy do skrzynki innego handlowca';
 }
 
 function windowExpiresAt(thread, lastInboundAt) {
@@ -440,18 +445,25 @@ app.get('/api/threads', async (req, res) => {
     const view = String(req.query.view || req.query.status || 'main');
     const restricted = !isAdmin(req.user);
     let query = db.from('kom_threads').select('*').order('last_message_at', { ascending: false, nullsFirst: false });
-    if (restricted) query = query.eq('channel', 'sms');
+    if (restricted || view === 'sms') query = query.eq('channel', 'sms');
     if (view === 'reply') query = query.eq('status', 'attention').eq('triage', 'inbox');
     else if (view === 'main' || view === 'open') query = query.in('status', ['attention', 'waiting']).eq('triage', 'inbox');
     else if (view === 'notifications') query = query.in('status', ['attention', 'waiting']).eq('triage', 'notification');
+    else if (view === 'sms') { /* cała skrzynka handlowca, bez filtra statusu */ }
     else if (view !== 'all') query = query.eq('status', view);
     const { data: fetched, error } = await query.limit(200);
     if (error) throw error;
 
     let threads = fetched || [];
     if (restricted) {
-      const phones = await allowedSmsPhones(db, req.user);
-      threads = threads.filter((t) => phones.has(String(t.external_thread_id || '')));
+      threads = threads.filter((t) => threadSmsUser(t) === String(req.user?.name || ''));
+    } else if (view === 'sms') {
+      // Zakładka SMS admina: skrzynka wskazanego handlowca (L/A).
+      const smsUser = kontaktSend.canonicalSmsUser(req.query.smsUser) || 'Lorenzo';
+      threads = threads.filter((t) => threadSmsUser(t) === smsUser);
+    } else if (view === 'reply') {
+      // Karty admina bez cudzych skrzynek SMS — SMS-y Lorenza obsługuje Lorenzo.
+      threads = threads.filter((t) => t.channel !== 'sms' || threadSmsUser(t) === String(req.user?.name || ''));
     }
 
     const customerIds = [...new Set(threads.map((t) => t.customer_id))];
@@ -1059,6 +1071,10 @@ app.post('/api/threads/:id/messages', async (req, res) => {
           throw new Error(`Zadarma SMS: ${(wynik && (wynik.message || wynik.status)) || 'brak odpowiedzi'}`);
         }
         outMeta.sms = { messages: wynik.messages ?? null, cost: wynik.cost ?? null, nadawca: caller || null, zrodlo: 'komunikator' };
+        // Odpowiedź z panelu przejmuje/potwierdza skrzynkę wątku.
+        await kontaktSend.stampSmsUser(db, thread,
+          kontaktSend.smsUserForNumber(caller) || kontaktSend.canonicalSmsUser(req.user?.name))
+          .catch((e) => console.error('Stempel sms_user (panel):', e.message));
       } else {
         await sendViaZernio(thread, text, { humanAgent: sendState.mode === 'human_agent' });
         if (sendState.mode === 'human_agent') outMeta.human_agent = true;

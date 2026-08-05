@@ -1441,6 +1441,10 @@ app.all('/api/webhooks/zadarma-sms', async (req, res) => {
     const p = Array.isArray(req.body) ? (req.body[0] || {}) : (req.body || {});
     const fromDigits = normalizePhoneDigits(p.caller_id || p.from || p.nadawca || p.numer_klienta || '');
     const tresc = String(p.text || p.message || p.tresc || p.sms || p.body || '').trim();
+    // Numer, NA KTÓRY klient napisał (DID Zadarmy) → rozdział skrzynek SMS
+    // per handlowiec w komunikatorze. Make dziś nie przekazuje tego pola —
+    // gdy dojdzie drugi numer (Antoni), trzeba je dodać w scenariuszu.
+    const didDigits = normalizePhoneDigits(p.to || p.did || p.caller_did || p.recipient || p.odbiorca || '');
     if (!fromDigits || fromDigits.length < 9 || !tresc) {
       return res.status(200).json({ status: 'ignored', reason: 'brak nadawcy lub treści w znanych polach' });
     }
@@ -1452,7 +1456,7 @@ app.all('/api/webhooks/zadarma-sms', async (req, res) => {
     let threadId = null;
     try {
       const info = await recordInboundSms(supabase, {
-        fromDigits, tresc, lead, metaExtra: { message_id: p.message_id || null, zadarma_sms: true },
+        fromDigits, tresc, lead, didDigits, metaExtra: { message_id: p.message_id || null, zadarma_sms: true },
       });
       threadId = info.threadId;
     } catch (e) {
