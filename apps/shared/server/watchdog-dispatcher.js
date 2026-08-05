@@ -589,19 +589,22 @@ function registerWatchdogEndpoints(app, { getClient, isAdmin }) {
           (th || []).forEach((t) => threadById.set(t.id, t));
         }
         if (custIds.length) {
-          const { data: cu } = await supabase.from('kom_customers').select('id,display_name,public_id').in('id', custIds);
+          const { data: cu } = await supabase.from('kom_customers').select('id,display_name,public_id,alerts_excluded').in('id', custIds);
           (cu || []).forEach((c) => custById.set(c.id, c));
         }
         obietnice = komRows.reduce((acc, c) => {
           const th = threadById.get(c.thread_id) || {};
           const cu = custById.get(c.customer_id) || {};
-          if (nadawcaZablokowany(cu.display_name, cu.public_id)) return acc;
+          // Automat (denylist) albo ręcznie wykluczony nadawca (przycisk
+          // "wyklucz maila", flaga kom_customers.alerts_excluded) -> poza alarmem.
+          if (nadawcaZablokowany(cu.display_name, cu.public_id) || cu.alerts_excluded) return acc;
           const owner = handlowiecObietnicy(th.channel, th.meta);
           if (owner.toLowerCase() !== name.toLowerCase()) return acc;
           acc.push({
             id: c.id,
             object_type: 'wiadomosc',
             object_id: c.id,
+            customer_id: c.customer_id,
             owner,
             channel: th.channel || null,
             due_at: c.due_at,
@@ -664,6 +667,24 @@ function registerWatchdogEndpoints(app, { getClient, isAdmin }) {
       const { data, error } = await q.select('id');
       if (error) throw error;
       if (!data || !data.length) return res.status(404).json({ error: 'Nie znaleziono alertu' });
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(502).json({ error: err.message });
+    }
+  });
+
+  // POST /api/watchdog/nadawcy/:customerId/wyklucz — trwałe wykluczenie nadawcy
+  // z alarmu "temat ucieka" (przycisk "wyklucz maila" w hubie). Flaga na
+  // kom_customers; jego obietnice nie wpadają już do listy. NIE rusza inboxa
+  // komunikatora - to wyciszenie dotyczy wyłącznie tego alarmu.
+  app.post('/api/watchdog/nadawcy/:customerId/wyklucz', async (req, res) => {
+    try {
+      if (!String(req.user?.name || '').trim()) return res.status(403).json({ error: 'Brak uprawnień' });
+      const { data, error } = await getClient().from('kom_customers')
+        .update({ alerts_excluded: true })
+        .eq('id', String(req.params.customerId)).select('id');
+      if (error) throw error;
+      if (!data || !data.length) return res.status(404).json({ error: 'Nie znaleziono nadawcy' });
       res.json({ ok: true });
     } catch (err) {
       res.status(502).json({ error: err.message });

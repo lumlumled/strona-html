@@ -638,6 +638,34 @@
               } catch (_) { x.disabled = false; x.title = 'Nie udało się osunąć — spróbuj ponownie'; }
             });
             row.appendChild(x);
+
+            // 🚫 = „wyklucz nadawcę" — tylko alerty z wiadomości z ustalonym
+            // nadawcą (customer_id). Trwale wycisza jego tematy w TYM alarmie
+            // (faktury/boty/pomyłki, które przecisnęły się mimo auto-blokady);
+            // inbox komunikatora zostaje nietknięty.
+            if (a.object_type === 'wiadomosc' && a.customer_id != null) {
+              row.dataset.customerId = String(a.customer_id);
+              const ex = document.createElement('button');
+              ex.type = 'button';
+              ex.className = 'alert-dismiss';
+              ex.textContent = '🚫';
+              ex.title = 'Wyklucz nadawcę (nie pokazuj jego tematów tutaj)';
+              ex.addEventListener('click', async (e) => {
+                e.preventDefault(); e.stopPropagation();
+                ex.disabled = true;
+                try {
+                  const r = await fetch(`${API_BASE}/api/watchdog/nadawcy/${encodeURIComponent(a.customer_id)}/wyklucz`, { method: 'POST' });
+                  if (!r.ok) throw new Error();
+                  // Zdejmij od razu WSZYSTKIE wiersze tego nadawcy z listy.
+                  const cid = String(a.customer_id);
+                  list.querySelectorAll(`[data-customer-id="${cid}"]`).forEach((el) => { el.remove(); widoczne -= 1; });
+                  odswiezLicznik();
+                  if (widoczne <= 0) group.remove();
+                } catch (_) { ex.disabled = false; ex.title = 'Nie udało się wykluczyć — spróbuj ponownie'; }
+              });
+              row.appendChild(ex);
+            }
+
             list.appendChild(row);
             widoczne += 1;
           });
