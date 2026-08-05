@@ -359,6 +359,59 @@ async function mark(db, id, status, patch = {}) {
   await db.from('kom_followup').update({ status, ...patch }).eq('id', id);
 }
 
+// ── „Czekają na Ciebie" — druga strona follow-upu ───────────────────────────
+// Zamiast auto-zaczepiać, pokazujemy Antoniemu leady, GDZIE TO ON jest winien
+// odpowiedź: klient się zaangażował (otwarta obietnica/zapytanie), ostatnia
+// wiadomość jest OD KLIENTA i wisi bez naszej reakcji. Lista żyje - znika, gdy
+// Antoni odpisze (ostatnia wiadomość staje się nasza). Ręczne zadanie, nie auto.
+async function waitingForYou(db) {
+  const { data: commits, error } = await db.from('kom_commitments')
+    .select('thread_id').eq('owner', 'klient').eq('status', 'open')
+    .not('thread_id', 'is', null).limit(300);
+  if (error) throw error;
+  const threadIds = [...new Set((commits || []).map((c) => c.thread_id))];
+  if (!threadIds.length) return [];
+
+  // Tylko realne „do odpisania" (ta sama bramka co widok reply): triage='inbox'
+  // + status='attention' odsiewa szum (powiadomienia Zadarmy, faktury, „dziękuję").
+  const { data: threads, error: tErr } = await db.from('kom_threads')
+    .select('id,channel,customer_id,status,triage').in('id', threadIds)
+    .eq('status', 'attention').eq('triage', 'inbox');
+  if (tErr) throw tErr;
+  const allowed = (threads || []).filter((t) => FOLLOWUP_CHANNELS.has(t.channel));
+  if (!allowed.length) return [];
+  const allowedIds = allowed.map((t) => t.id);
+
+  // Ostatnia wiadomość per wątek - jedno zapytanie (rosnąco -> ostatnia wygrywa).
+  const { data: msgs, error: mErr } = await db.from('kom_messages')
+    .select('thread_id,direction,body,created_at')
+    .in('thread_id', allowedIds).order('created_at', { ascending: true }).limit(4000);
+  if (mErr) throw mErr;
+  const lastByThread = new Map();
+  (msgs || []).forEach((m) => lastByThread.set(m.thread_id, m));
+
+  const custIds = [...new Set(allowed.map((t) => t.customer_id).filter(Boolean))];
+  const { data: custs } = custIds.length
+    ? await db.from('kom_customers').select('id,display_name,public_id').in('id', custIds)
+    : { data: [] };
+  const cName = new Map((custs || []).map((c) => [c.id, c.display_name || c.public_id]));
+
+  const items = [];
+  for (const t of allowed) {
+    const last = lastByThread.get(t.id);
+    if (!last || last.direction !== 'in') continue; // ostatnia MUSI być od klienta
+    items.push({
+      thread_id: t.id,
+      channel: t.channel,
+      customer_name: cName.get(t.customer_id) || null,
+      last_message: String(last.body || '').slice(0, 240),
+      last_at: last.created_at,
+    });
+  }
+  items.sort((a, b) => new Date(b.last_at) - new Date(a.last_at));
+  return items;
+}
+
 // Worker (ten sam takt co autoresponder). ctx = autoreplyCtx() z server.js.
 async function sweep(db, ctx) {
   const enabled = (await ctx.getSetting(db, AUTO_KEY, false)) === true;
@@ -372,4 +425,4 @@ async function sweep(db, ctx) {
   return result;
 }
 
-module.exports = { sweep, generateFollowup, isContactSold, AUTO_KEY };
+module.exports = { sweep, generateFollowup, isContactSold, waitingForYou, AUTO_KEY };

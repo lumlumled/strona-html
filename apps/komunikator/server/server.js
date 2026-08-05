@@ -824,6 +824,16 @@ app.get('/api/automat/feed', async (req, res) => {
   }
 });
 
+// „Czekają na Ciebie" - leady, gdzie to MY jesteśmy winni odpowiedź (klient się
+// zaangażował, ostatnia wiadomość od niego wisi bez reakcji). Ręczna lista.
+app.get('/api/automat/waiting', async (req, res) => {
+  try {
+    res.json({ items: await followups.waitingForYou(getClient()) });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
 app.post('/api/automat/:id/cancel', async (req, res) => {
   try {
     const db = getClient();

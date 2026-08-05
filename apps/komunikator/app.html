@@ -257,6 +257,7 @@
         <button class="tab" data-status="all">Wszystkie</button>
         <button class="tab" data-status="automat" id="tab-automat">Automat <span class="tab-count" id="automat-count" hidden></span></button>
         <button class="tab" data-status="followupy" id="tab-followupy">Follow-upy <span class="tab-count" id="followupy-count" hidden></span></button>
+        <button class="tab" data-status="czekaja" id="tab-czekaja">Czekają na Ciebie <span class="tab-count" id="czekaja-count" hidden></span></button>
       </div>
       <ul class="thread-list" id="thread-list">
         <li class="empty">Ładowanie…</li>
@@ -376,6 +377,7 @@
       setMode();
       if (state.statusFilter === 'automat') { loadAutomatPanel('reply'); return; }
       if (state.statusFilter === 'followupy') { loadAutomatPanel('followup'); return; }
+      if (state.statusFilter === 'czekaja') { loadWaiting(); return; }
       try {
         const { data } = await api(`/threads?view=${state.statusFilter}`);
         state.threads = data;
@@ -391,7 +393,7 @@
     // pokazuje WYŁĄCZNIE to, co czeka na odpowiedź.
     function setMode() {
       const cardsMode = state.statusFilter === 'reply';
-      const automatMode = state.statusFilter === 'automat' || state.statusFilter === 'followupy';
+      const automatMode = state.statusFilter === 'automat' || state.statusFilter === 'followupy' || state.statusFilter === 'czekaja';
       $('layout').classList.toggle('cards-mode', cardsMode);
       $('cards').hidden = !cardsMode;
       $('automat').hidden = !automatMode;
@@ -432,6 +434,54 @@
       } catch (err) {
         box.innerHTML = `<div class="empty" style="padding:1rem;">Błąd: ${escapeHtml(err.message)}</div>`;
       }
+    }
+
+    // ── „Czekają na Ciebie" - leady, gdzie to TY jesteś winien odpowiedź ──
+    async function loadWaiting() {
+      const box = $('automat-panel');
+      box.innerHTML = '<div class="empty" style="padding:1rem;">Ładowanie…</div>';
+      try {
+        const { items } = await api('/automat/waiting');
+        renderWaiting(items || []);
+      } catch (err) {
+        box.innerHTML = `<div class="empty" style="padding:1rem;">Błąd: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+    function waitingCardHtml(it) {
+      return `<div class="automat-card">
+        <div class="automat-card-top">
+          <span class="chip">${CHANNEL_LABELS[it.channel] || it.channel || ''}</span>
+          <span class="automat-when">${fmtTime(it.last_at)}</span>
+          <button class="btn primary" data-open="${it.thread_id}">Otwórz i odpisz</button>
+        </div>
+        <div class="automat-who">${escapeHtml(it.customer_name || '(bez nazwy)')}</div>
+        <div class="automat-in">💬 ${escapeHtml((it.last_message || '').slice(0, 240))}</div>
+      </div>`;
+    }
+    function renderWaiting(items) {
+      setTabCount('czekaja-count', items.length);
+      const feed = items.map(waitingCardHtml).join('') ||
+        '<div class="empty" style="padding:1rem;">Nikt nie czeka - wszystkim odpisano 😊</div>';
+      $('automat-panel').innerHTML = `
+        <div class="automat-head">
+          <div>
+            <strong>Czekają na Twoją odpowiedź</strong>
+            <div class="automat-sub">Klienci, którzy się odezwali, a u nich wisi Twoja odpowiedź. Odpisz - karta zniknie sama.</div>
+          </div>
+        </div>
+        <div class="automat-feed">${feed}</div>`;
+      document.querySelectorAll('#automat-panel [data-open]').forEach((b) =>
+        b.addEventListener('click', () => openWaitingThread(b.dataset.open)));
+    }
+    async function openWaitingThread(id) {
+      selectTab('all');
+      setMode();
+      await openThread(id);
+      loadThreads();
+    }
+    async function refreshWaitingBadge() {
+      try { const { items } = await api('/automat/waiting'); setTabCount('czekaja-count', (items || []).length); }
+      catch (_) { /* cicho */ }
     }
 
     const AUTOMAT_STATUS = {
@@ -1355,8 +1405,9 @@
 
     openFromUrl();
     refreshAutomatBadges(); // liczniki podglądów na zakładkach Automat/Follow-upy od razu
+    refreshWaitingBadge();  // licznik „Czekają na Ciebie"
     setInterval(loadThreads, 30000); // odśwież listę co 30 s
-    setInterval(refreshAutomatBadges, 60000); // i liczniki co minutę
+    setInterval(() => { refreshAutomatBadges(); refreshWaitingBadge(); }, 60000); // liczniki co minutę
   </script>
 </body>
 </html>
