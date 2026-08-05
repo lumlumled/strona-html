@@ -44,6 +44,7 @@ const PANELS = [
   { key: 'doradca', label: 'Doradca', desc: 'AI-doradca Fable: pyta o firmę, kopie w dane na żywo, uczy się z rozmów', status: 'live', adminOnly: true },
   { key: 'kampanie', label: 'Kampanie', desc: 'Kampanie SMS/mail: AI personalizuje wiadomości do starych wycen, Ty akceptujesz próbkę', status: 'live' },
   { key: 'feedbacki', label: 'Feedbacki', desc: 'Kalendarz terminów kontaktu: Tydzień/Miesiąc/Dzień, natężenie feedbacków, karta klienta w szufladzie', status: 'live' },
+  { key: 'test', label: 'Test', desc: 'Kokpit umowy 30 dni handlowca: SLA, kadencja, obietnice, uczciwy licznik, karta ocen rozmów', status: 'live', adminOnly: true },
   { key: 'pozwolenia', label: 'Pozwolenia', desc: 'Użytkownicy i dostępy do paneli oraz arkuszy', status: 'live', adminOnly: true },
 ];
 
@@ -159,6 +160,7 @@ function panelLinks() {
       doradca: '/doradca/',
       kampanie: '/kampanie/',
       feedbacki: '/feedbacki/',
+      test: '/test/',
       pozwolenia: '/pozwolenia',
     };
   }
@@ -176,6 +178,7 @@ function panelLinks() {
     doradca: 'http://localhost:3011/',
     kampanie: 'http://localhost:3012/',
     feedbacki: 'http://localhost:3013/',
+    test: 'http://localhost:3014/',
     pozwolenia: `${hub}/pozwolenia`,
   };
 }

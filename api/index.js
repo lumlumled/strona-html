@@ -12,9 +12,13 @@
 const express = require('express');
 const hubApp = require('../apps/hub/server/server.js');
 const feedbackiApp = require('../apps/feedbacki/server/server.js');
+// Panel Test (kokpit umowy 30 dni) dzieli funkcję z hubem z tego samego
+// powodu co Feedbacki — limit 12 funkcji na Hobby. Lokalnie stoi na :3014.
+const testApp = require('../apps/test/server/server.js');
 
 const wrapper = express();
 wrapper.use('/feedbacki', feedbackiApp);
+wrapper.use('/test', testApp);
 wrapper.use('/', hubApp);
 
 module.exports = wrapper;

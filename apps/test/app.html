@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <meta name="theme-color" content="#000000">
+  <title>Test — umowa 30 dni</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared/topbar.css">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --surface-1: #ffffff;
+      --surface-2: #faf9f7;
+      --page: #f5f5f4;
+      --text-primary: #111111;
+      --text-secondary: #52514e;
+      --text-muted: #8a8984;
+      --border: rgba(17, 17, 17, 0.12);
+      --border-strong: rgba(17, 17, 17, 0.2);
+      --accent: #111111;
+      --accent-contrast: #ffffff;
+      --ok: #0ca30c;      --ok-soft: rgba(12, 163, 12, 0.12);
+      --uwaga: #b57e12;   --uwaga-soft: rgba(181, 126, 18, 0.12);
+      --zle: #b5433f;     --zle-soft: rgba(181, 67, 63, 0.1);
+      --brak: #8a8984;    --brak-soft: rgba(138, 137, 132, 0.12);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-1: #161616;
+        --surface-2: #1d1d1d;
+        --page: #0a0a0a;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted: #8a8984;
+        --border: rgba(255, 255, 255, 0.14);
+        --border-strong: rgba(255, 255, 255, 0.24);
+        --accent: #ffffff;
+        --accent-contrast: #0a0a0a;
+        --ok: #16c116;      --ok-soft: rgba(22, 193, 22, 0.14);
+        --uwaga: #e0b055;   --uwaga-soft: rgba(224, 176, 85, 0.14);
+        --zle: #e08585;     --zle-soft: rgba(224, 133, 133, 0.14);
+        --brak: #8a8984;    --brak-soft: rgba(138, 137, 132, 0.16);
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--page); color: var(--text-primary);
+      min-height: 100vh; -webkit-font-smoothing: antialiased;
+    }
+    button { font-family: inherit; cursor: pointer; }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 1rem 1rem 4rem; }
+
+    /* ── Nagłówek testu ── */
+    .head {
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem 1rem;
+      margin: 1.1rem 0 .4rem;
+    }
+    .head h1 { font-size: 1.35rem; font-weight: 800; letter-spacing: -.01em; }
+    .head .sub { color: var(--text-muted); font-size: .85rem; }
+    .head .spacer { flex: 1; }
+    .btn {
+      border: 1px solid var(--border-strong); background: var(--surface-1);
+      color: var(--text-primary); border-radius: 999px; font-size: .8rem;
+      font-weight: 600; padding: .42rem .9rem;
+    }
+    .btn.primary { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+    .btn[disabled] { opacity: .5; cursor: wait; }
+
+    .progress { margin: .3rem 0 1.2rem; }
+    .progress .bar {
+      height: 8px; border-radius: 999px; background: var(--surface-2);
+      border: 1px solid var(--border); overflow: hidden;
+    }
+    .progress .fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width .4s; }
+    .progress .lab { display: flex; justify-content: space-between; font-size: .75rem; color: var(--text-muted); margin-top: .3rem; }
+
+    /* ── Kafle liczb ── */
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .6rem; margin-bottom: 1.2rem; }
+    .tile {
+      background: var(--surface-1); border: 1px solid var(--border);
+      border-radius: 14px; padding: .75rem .85rem;
+    }
+    .tile .v { font-size: 1.45rem; font-weight: 800; letter-spacing: -.02em; }
+    .tile .v small { font-size: .8rem; font-weight: 600; color: var(--text-muted); }
+    .tile .k { font-size: .72rem; color: var(--text-secondary); margin-top: .15rem; line-height: 1.25; }
+    .tile.ok .v { color: var(--ok); } .tile.uwaga .v { color: var(--uwaga); }
+    .tile.zle .v { color: var(--zle); } .tile.brak .v { color: var(--brak); }
+
+    /* ── Umierające leady ── */
+    .alerty { margin-bottom: 1.3rem; }
+    .alerty h2, section h2 { font-size: .95rem; font-weight: 700; margin-bottom: .55rem; display: flex; align-items: center; gap: .45rem; }
+    .alert-list { display: flex; flex-direction: column; gap: .45rem; }
+    .alert {
+      display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .7rem;
+      background: var(--zle-soft); border: 1px solid var(--zle);
+      border-radius: 12px; padding: .55rem .8rem; font-size: .84rem;
+    }
+    .alert .typ { font-weight: 800; font-size: .68rem; letter-spacing: .04em; color: var(--zle); white-space: nowrap; }
+    .alert.w1 { border-color: var(--border-strong); background: var(--surface-1); }
+    .alert.w1 .typ { color: var(--uwaga); }
+    .alert .kto { font-weight: 600; }
+    .alert .tel { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+    .alert .co { color: var(--text-secondary); }
+    .pusto { color: var(--text-muted); font-size: .85rem; padding: .4rem 0; }
+
+    /* ── Reguły ── */
+    .reguly { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: .7rem; margin-bottom: 1.5rem; }
+    .regula {
+      background: var(--surface-1); border: 1px solid var(--border);
+      border-radius: 14px; padding: .85rem .95rem;
+    }
+    .regula .top { display: flex; align-items: center; gap: .55rem; margin-bottom: .35rem; }
+    .regula .nr {
+      width: 22px; height: 22px; border-radius: 50%; background: var(--accent);
+      color: var(--accent-contrast); font-size: .72rem; font-weight: 800;
+      display: inline-flex; align-items: center; justify-content: center; flex: none;
+    }
+    .regula .tytul { font-weight: 700; font-size: .92rem; flex: 1; }
+    .pill {
+      font-size: .66rem; font-weight: 800; letter-spacing: .05em;
+      padding: .22rem .55rem; border-radius: 999px; white-space: nowrap;
+    }
+    .pill.ok { background: var(--ok-soft); color: var(--ok); }
+    .pill.uwaga { background: var(--uwaga-soft); color: var(--uwaga); }
+    .pill.zle { background: var(--zle-soft); color: var(--zle); }
+    .pill.brak { background: var(--brak-soft); color: var(--brak); }
+    .regula .tresc { font-size: .76rem; color: var(--text-muted); line-height: 1.45; margin-bottom: .5rem; }
+    .regula .metry { font-size: .84rem; color: var(--text-primary); line-height: 1.5; }
+    .regula .metry b { font-weight: 800; }
+    .regula details { margin-top: .45rem; }
+    .regula summary { font-size: .76rem; color: var(--text-secondary); cursor: pointer; user-select: none; }
+    .regula details ul { margin: .4rem 0 0 1rem; font-size: .78rem; color: var(--text-secondary); display: flex; flex-direction: column; gap: .2rem; }
+    .hist { display: flex; align-items: flex-end; gap: 3px; height: 44px; margin-top: .45rem; }
+    .hist .col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+    .hist .bar { width: 100%; border-radius: 3px 3px 0 0; background: var(--border-strong); min-height: 2px; }
+    .hist .col.dobra .bar { background: var(--ok); }
+    .hist .col.zla .bar { background: var(--zle); }
+    .hist .h { font-size: .58rem; color: var(--text-muted); }
+
+    /* ── Karta ocen ── */
+    .karta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: .7rem; margin-bottom: 1.1rem; }
+    .panelbox { background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px; padding: .9rem 1rem; }
+    .kryt { display: flex; align-items: center; gap: .6rem; margin: .35rem 0; font-size: .82rem; }
+    .kryt .n { width: 84px; color: var(--text-secondary); flex: none; }
+    .kryt .track { flex: 1; height: 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; }
+    .kryt .fillv { height: 100%; border-radius: 999px; }
+    .kryt .val { width: 30px; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .flagi { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .45rem; }
+    .flaga {
+      font-size: .72rem; font-weight: 600; padding: .28rem .6rem; border-radius: 999px;
+      background: var(--zle-soft); color: var(--zle); border: 1px solid var(--zle);
+    }
+    .flaga.zero { background: var(--surface-2); color: var(--text-muted); border-color: var(--border); }
+
+    /* ── Odsłuch ── */
+    .odsluch { display: flex; flex-direction: column; gap: .7rem; }
+    .rozmowa { background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px; padding: .85rem 1rem; }
+    .rozmowa.wzor { border-color: var(--ok); }
+    .rozmowa .rhead { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .8rem; margin-bottom: .4rem; }
+    .rozmowa .badge { font-size: .66rem; font-weight: 800; letter-spacing: .04em; padding: .22rem .55rem; border-radius: 999px; }
+    .rozmowa.wzor .badge { background: var(--ok-soft); color: var(--ok); }
+    .rozmowa:not(.wzor) .badge { background: var(--zle-soft); color: var(--zle); }
+    .rozmowa .meta { font-size: .78rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+    .chips { display: flex; flex-wrap: wrap; gap: .35rem; margin: .3rem 0 .45rem; }
+    .chip { font-size: .7rem; font-weight: 600; padding: .22rem .5rem; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-secondary); }
+    .chip.slaby { background: var(--zle-soft); color: var(--zle); border-color: var(--zle); }
+    .chip.mocny { background: var(--ok-soft); color: var(--ok); border-color: var(--ok); }
+    .cytat { font-size: .84rem; font-style: italic; color: var(--text-primary); border-left: 3px solid var(--border-strong); padding: .15rem 0 .15rem .65rem; margin: .35rem 0; line-height: 1.5; }
+    .rada { font-size: .8rem; color: var(--text-secondary); }
+    .rada b { color: var(--text-primary); }
+    .rozmowa details { margin-top: .45rem; }
+    .rozmowa summary { font-size: .76rem; color: var(--text-secondary); cursor: pointer; }
+    .trans { margin-top: .5rem; font-size: .8rem; line-height: 1.65; color: var(--text-secondary); white-space: pre-wrap; max-height: 340px; overflow-y: auto; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: .7rem .8rem; }
+
+    .loading { color: var(--text-muted); font-size: .9rem; padding: 2rem 0; text-align: center; }
+    .err { background: var(--zle-soft); border: 1px solid var(--zle); color: var(--zle); border-radius: 12px; padding: .7rem .9rem; font-size: .85rem; margin: 1rem 0; }
+    section { margin-bottom: 1.6rem; }
+  </style>
+</head>
+<body>
+  <header id="site-header"></header>
+  <div class="wrap">
+    <div class="head">
+      <h1>Test — umowa 30 dni · Lorenzo</h1>
+      <span class="sub" id="sub"></span>
+      <span class="spacer"></span>
+      <button class="btn" id="btn-refresh">Odśwież</button>
+    </div>
+    <div class="progress">
+      <div class="bar"><div class="fill" id="dni-fill" style="width:0%"></div></div>
+      <div class="lab"><span id="dni-lab"></span><span id="cel-lab"></span></div>
+    </div>
+
+    <div id="blad"></div>
+    <div class="loading" id="loading">Liczę kokpit…</div>
+    <div id="tresc" style="display:none">
+      <div class="tiles" id="tiles"></div>
+
+      <section class="alerty">
+        <h2>🚨 Te leady umierają</h2>
+        <div class="alert-list" id="alerty"></div>
+      </section>
+
+      <section>
+        <h2>📜 7 reguł umowy — jak jedziemy</h2>
+        <div class="reguly" id="reguly"></div>
+      </section>
+
+      <section>
+        <h2>🎧 Karta ocen rozmów (ostatnie 7 dni)
+          <span class="spacer" style="flex:1"></span>
+          <button class="btn primary" id="btn-ocen">Oceń nowe rozmowy (AI)</button>
+        </h2>
+        <div class="karta-grid" id="karta"></div>
+        <h2 style="margin-top:1.1rem">📋 Odsłuch na poniedziałek — 5 rozmów</h2>
+        <div class="odsluch" id="odsluch"></div>
+      </section>
+    </div>
+  </div>
+
+  <script src="shared/topbar.js"></script>
+  <script>
+    const API_BASE = window.API_BASE || '';
+    LumTopbar.mount({ active: 'test', into: document.getElementById('site-header') });
+
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const tel = (t) => String(t || '').replace(/(\d{3})(\d{3})(\d{3})$/, '$1 $2 $3');
+    const dataPL = (iso) => { const d = new Date(iso); return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+    const ymdPL = (ymd) => ymd ? `${ymd.slice(8, 10)}.${ymd.slice(5, 7)}` : '';
+    const minH = (m) => m >= 90 ? `${Math.round(m / 6) / 10} h` : `${m} min`;
+    const PILL = { ok: 'OK', uwaga: 'UWAGA', zle: 'ŹLE', brak: 'BRAK DANYCH' };
+    const KRYT_LABEL = { otwarcie: 'otwarcie', potrzeba: 'potrzeba', wartosc: 'wartość', obiekcje: 'obiekcje', next_step: 'next step' };
+    const FLAGA_LABEL = {
+      rabat_bez_zobowiazania: 'rabat bez zobowiązania',
+      odeslanie_do_konkurencji: 'odesłanie do konkurencji',
+      brak_next_stepu: 'brak next stepu',
+      kapitulacja_po_obiekcji: 'kapitulacja po obiekcji',
+      zapytam_kolegi: '„zapytam kolegi"',
+    };
+
+    async function apiGet(path) {
+      const res = await fetch(`${API_BASE}${path}`);
+      if (res.status === 401 || res.status === 403) { location.href = `${API_BASE}/login`; throw new Error('auth'); }
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+      return body;
+    }
+
+    function tile(cls, v, k) { return `<div class="tile ${cls}"><div class="v">${v}</div><div class="k">${k}</div></div>`; }
+
+    function renderKokpit(k) {
+      $('sub').textContent = `start ${ymdPL(k.start.slice(0, 10))}.${k.start.slice(0, 4)} · nowych leadów od startu: ${k.nowychLeadow}`;
+      const pctDni = Math.min(100, Math.round((k.dzien / k.dniTestu) * 100));
+      $('dni-fill').style.width = `${pctDni}%`;
+      $('dni-lab').textContent = `dzień ${k.dzien} z ${k.dniTestu}`;
+      $('cel-lab').textContent = `cel: ${k.cel.domkniete.length}/${k.cel.target} wycen domkniętych telefonem`;
+
+      const st = Object.fromEntries(k.reguly.map((r) => [r.key, r.status]));
+      const sla7 = k.sla.tydzien;
+      $('tiles').innerHTML = [
+        tile(st.sla, sla7.mediana != null ? minH(sla7.mediana) : '—', 'speed-to-lead, mediana (7 dni)'),
+        tile(st.sla, sla7.pct15 != null ? `${sla7.pct15}<small>%</small>` : '—', 'leadów obdzwonionych w 15 min (7 dni)'),
+        tile(st.kadencja, k.kadencja.srednioProb != null ? k.kadencja.srednioProb : '—', 'średnio prób na nowy lead'),
+        tile(st.next_step, k.nextStep.tydzien.pct != null ? `${k.nextStep.tydzien.pct}<small>%</small>` : '—', 'rozmów zakończonych datą (7 dni)'),
+        tile(st.obietnice, k.obietnice.pct != null ? `${k.obietnice.pct}<small>%</small>` : '—', `obietnic dotrzymanych (${k.obietnice.dotrzymane}/${k.obietnice.n})`),
+        tile(st.cel, `${k.cel.domkniete.length}<small>/${k.cel.target}</small>`, 'domknięte z dotkniętych (uczciwy licznik)'),
+      ].join('');
+
+      $('alerty').innerHTML = k.umierajace.length ? k.umierajace.map((a) => `
+        <div class="alert ${a.waga === 1 ? 'w1' : ''}">
+          <span class="typ">${esc(a.typ)}</span>
+          <span class="kto">${esc(a.name || '(bez imienia)')}</span>
+          <span class="tel">${tel(a.telefon)}</span>
+          <span class="co">${esc(a.opis)}</span>
+        </div>`).join('') : '<div class="pusto">Nic nie umiera. Tak trzymać.</div>';
+
+      $('reguly').innerHTML = k.reguly.map((r) => `
+        <div class="regula">
+          <div class="top"><span class="nr">${r.nr}</span><span class="tytul">${esc(r.tytul)}</span><span class="pill ${r.status}">${PILL[r.status]}</span></div>
+          <div class="tresc">${esc(r.tresc)}</div>
+          <div class="metry">${metrykaReguly(r.key, k)}</div>
+          ${szczegolyReguly(r.key, k)}
+        </div>`).join('');
+    }
+
+    function metrykaReguly(key, k) {
+      switch (key) {
+        case 'sla': {
+          const w = k.sla.tydzien, t = k.sla.total;
+          if (!t.n && !k.sla.czekaja.length) return 'Jeszcze żaden nowy lead nie wpadł.';
+          return `7 dni: mediana <b>${w.mediana != null ? minH(w.mediana) : '—'}</b>, w 15 min <b>${w.pct15 ?? '—'}%</b> (${w.n} leadów) · od startu: mediana <b>${t.mediana != null ? minH(t.mediana) : '—'}</b>, w 15 min <b>${t.pct15 ?? '—'}%</b>${k.sla.czekaja.length ? ` · <b style="color:var(--zle)">${k.sla.czekaja.length} czeka bez próby!</b>` : ''}`;
+        }
+        case 'kadencja': {
+          const r = k.kadencja.rozklad;
+          if (!k.kadencja.n) return 'Brak otwartych nowych leadów.';
+          return `Otwarte nowe leady: 0 prób: <b>${r[0]}</b> · 1-2: <b>${r['1-2']}</b> · 3-4: <b>${r['3-4']}</b> · 5+: <b>${r['5+']}</b> · umiera po cichu: <b style="color:var(${k.kadencja.umieraja.length ? '--zle' : '--ok'})">${k.kadencja.umieraja.length}</b>`;
+        }
+        case 'next_step': {
+          const w = k.nextStep.tydzien, t = k.nextStep.total;
+          if (!t.n) return 'Jeszcze nie było rozmów w teście.';
+          return `7 dni: <b>${w.ok}/${w.n}</b> rozmów z datą (<b>${w.pct ?? '—'}%</b>) · od startu: <b>${t.ok}/${t.n}</b> (<b>${t.pct ?? '—'}%</b>)`;
+        }
+        case 'godziny': {
+          const g = k.godziny;
+          if (!g.blok1315.wszystkie) return 'Brak prób od startu testu.';
+          return `Próby w bloku 13-15: <b>${g.blok1315.pct ?? 0}%</b> (${g.blok1315.proby}/${g.blok1315.wszystkie}) · pierwszych kontaktów po 19: <b style="color:var(${g.pierwszePo19.length ? '--zle' : '--ok'})">${g.pierwszePo19.length}</b>` + histogram(g.hist);
+        }
+        case 'obietnice': {
+          const o = k.obietnice;
+          if (!o.n && !o.naDzis.length) return 'Żadna obietnica jeszcze nie doszła do terminu.';
+          return `Dotrzymane: <b>${o.dotrzymane}/${o.n}</b> (<b>${o.pct ?? '—'}%</b>) · złamane: <b style="color:var(${o.zlamane.length ? '--zle' : '--ok'})">${o.zlamane.length}</b> · na dziś umówione: <b>${o.naDzis.length}</b>`;
+        }
+        case 'styl': {
+          const s = k.styl;
+          if (!s.ocenionych) return 'Brak ocenionych rozmów — kliknij „Oceń nowe rozmowy (AI)" niżej.';
+          const r = s.flagi.rabat_bez_zobowiazania || 0, o = s.flagi.odeslanie_do_konkurencji || 0;
+          return `Ocenionych rozmów: <b>${s.ocenionych}</b> · rabat bez zobowiązania: <b style="color:var(${r ? '--zle' : '--ok'})">${r}</b> · odesłanie do konkurencji: <b style="color:var(${o ? '--zle' : '--ok'})">${o}</b>`;
+        }
+        case 'cel': {
+          const c = k.cel;
+          return `Domknięte z dotkniętych: <b>${c.domkniete.length}/${c.target}</b> · sklep sam (bez rozmowy): <b>${c.sklepSam}</b> · otwarte wyceny z rozmową w 7 dni: <b>${c.wPracy}</b>`;
+        }
+      }
+      return '';
+    }
+
+    function histogram(hist) {
+      if (!hist.length) return '';
+      const max = Math.max(...hist.map((x) => x.proby));
+      return `<div class="hist">${hist.map((x) => `
+        <div class="col ${x.h >= 13 && x.h < 15 ? 'dobra' : x.h >= 19 ? 'zla' : ''}">
+          <div class="bar" style="height:${Math.max(4, Math.round((x.proby / max) * 38))}px" title="${x.proby} prób"></div>
+          <div class="h">${x.h}</div>
+        </div>`).join('')}</div>`;
+    }
+
+    function detale(items, format) {
+      if (!items.length) return '';
+      return `<details><summary>szczegóły (${items.length})</summary><ul>${items.map(format).join('')}</ul></details>`;
+    }
+
+    function szczegolyReguly(key, k) {
+      const os = (x) => `${esc(x.name || '(bez imienia)')} · ${tel(x.telefon)}`;
+      switch (key) {
+        case 'sla': return detale([...k.sla.czekaja.map((x) => ({ ...x, s: `CZEKA od ${minH(x.min)}` })), ...k.sla.naruszenia.map((x) => ({ ...x, s: `zadzwonił po ${minH(x.min)}` }))], (x) => `<li>${os(x)} — ${esc(x.s)}</li>`);
+        case 'kadencja': return detale(k.kadencja.umieraja, (x) => `<li>${os(x)} — ${x.proby} prób (${x.odebrane} odebr.), cisza ${x.dniCiszy} dni, status „${esc(x.status)}"</li>`);
+        case 'next_step': return detale(k.nextStep.bezDaty, (x) => `<li>${os(x)} — rozmowa ${dataPL(x.data)}, ${x.sekundy}s, bez daty następnego kroku</li>`);
+        case 'godziny': return detale(k.godziny.pierwszePo19, (x) => `<li>${os(x)} — pierwszy kontakt ${dataPL(x.data)} (po 19:00)</li>`);
+        case 'obietnice': return detale(k.obietnice.zlamane, (x) => `<li>${os(x)} — umówione na ${ymdPL(x.due)}, telefonu nie było</li>`);
+        case 'cel': return detale(k.cel.domkniete, (x) => `<li>wycena #${x.wycenaId} · ${esc(x.name || '')} · ${x.kwota ? `${x.kwota} zł` : ''} · ${x.rozmow} rozmów przed sprzedażą</li>`);
+      }
+      return '';
+    }
+
+    // ── Karta ocen + odsłuch ──────────────────────────────────────────────
+    function kolorOceny(v) { return v >= 4 ? 'var(--ok)' : v >= 3 ? 'var(--uwaga)' : 'var(--zle)'; }
+
+    function renderKarta(karta) {
+      const sr = karta.srednie || {};
+      const wiersze = Object.keys(KRYT_LABEL).map((kk) => {
+        const v = sr[kk];
+        return `<div class="kryt"><span class="n">${KRYT_LABEL[kk]}</span><div class="track"><div class="fillv" style="width:${v ? (v / 5) * 100 : 0}%;background:${v ? kolorOceny(v) : 'transparent'}"></div></div><span class="val">${v ?? '—'}</span></div>`;
+      }).join('');
+      const flagi = Object.entries(FLAGA_LABEL).map(([kk, label]) => {
+        const n = karta.flagi?.[kk] || 0;
+        return `<span class="flaga ${n ? '' : 'zero'}">${label}: ${n}</span>`;
+      }).join('');
+      $('karta').innerHTML = `
+        <div class="panelbox">
+          <div style="font-size:.78rem;color:var(--text-muted);margin-bottom:.4rem">średnie ocen (1-5) z ${karta.ocenionych} rozmów${karta.pominietych ? ` · ${karta.pominietych} pominiętych (nie-handlowe)` : ''}</div>
+          ${karta.ocenionych ? wiersze : '<div class="pusto">Brak ocen z ostatnich 7 dni — kliknij „Oceń nowe rozmowy (AI)".</div>'}
+        </div>
+        <div class="panelbox">
+          <div style="font-size:.78rem;color:var(--text-muted);margin-bottom:.4rem">czerwone flagi w tym tygodniu</div>
+          <div class="flagi">${flagi}</div>
+        </div>`;
+
+      const o = karta.odsluch || {};
+      const karty = [];
+      if (o.wzorcowa) karty.push(kartaRozmowy(o.wzorcowa, true));
+      for (const p of o.problemowe || []) karty.push(kartaRozmowy(p, false));
+      $('odsluch').innerHTML = karty.length ? karty.join('') : '<div class="pusto">Za mało ocenionych rozmów, żeby ułożyć odsłuch.</div>';
+    }
+
+    function kartaRozmowy(s, wzor) {
+      const chips = Object.keys(KRYT_LABEL).map((kk) => {
+        const v = s.scores?.[kk];
+        if (typeof v !== 'number') return '';
+        return `<span class="chip ${v <= 2 ? 'slaby' : v >= 4 ? 'mocny' : ''}">${KRYT_LABEL[kk]}: ${v}</span>`;
+      }).join('');
+      const flagi = Object.entries(s.flagi || {}).filter(([, v]) => v === true)
+        .map(([kk]) => `<span class="chip slaby">🚩 ${FLAGA_LABEL[kk] || kk}</span>`).join('');
+      return `
+        <div class="rozmowa ${wzor ? 'wzor' : ''}">
+          <div class="rhead">
+            <span class="badge">${wzor ? 'WZORCOWA' : `DO PRACY: ${KRYT_LABEL[s.dominujacy] || s.dominujacy}`}</span>
+            <span class="meta">${tel(String(s.telefon || '').slice(-9))} · ${dataPL(s.data_rozmowy)} · ${Math.round((s.czas_trwania_s || 0) / 60 * 10) / 10} min</span>
+          </div>
+          <div class="chips">${chips}${flagi}</div>
+          ${s.cytat ? `<div class="cytat">„${esc(s.cytat)}"</div>` : ''}
+          ${s.rada ? `<div class="rada"><b>Rada:</b> ${esc(s.rada)}</div>` : ''}
+          ${s.podsumowanie ? `<div class="rada" style="margin-top:.2rem">${esc(s.podsumowanie)}</div>` : ''}
+          ${s.transkrypcja ? `<details><summary>pokaż transkrypcję</summary><div class="trans">${esc(s.transkrypcja)}</div></details>` : ''}
+        </div>`;
+    }
+
+    // ── Ładowanie ─────────────────────────────────────────────────────────
+    async function loadAll() {
+      $('blad').innerHTML = '';
+      $('loading').style.display = '';
+      try {
+        const [kokpit, karta] = await Promise.all([apiGet('/api/test/kokpit'), apiGet('/api/test/karta')]);
+        renderKokpit(kokpit);
+        renderKarta(karta);
+        $('tresc').style.display = '';
+      } catch (err) {
+        if (err.message !== 'auth') $('blad').innerHTML = `<div class="err">Nie udało się załadować kokpitu: ${esc(err.message)}</div>`;
+      } finally {
+        $('loading').style.display = 'none';
+      }
+    }
+
+    $('btn-refresh').addEventListener('click', loadAll);
+    $('btn-ocen').addEventListener('click', async () => {
+      const btn = $('btn-ocen');
+      btn.disabled = true; btn.textContent = 'Oceniam… (to potrwa chwilę)';
+      try {
+        const res = await fetch(`${API_BASE}/api/test/karta`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+        btn.textContent = `Ocenione: ${body.ocenione}/${body.kandydatow}`;
+        await loadAll();
+      } catch (err) {
+        alert(`Ocenianie nie wyszło: ${err.message}`);
+      } finally {
+        setTimeout(() => { btn.disabled = false; btn.textContent = 'Oceń nowe rozmowy (AI)'; }, 1500);
+      }
+    });
+
+    loadAll();
+  </script>
+</body>
+</html>
