@@ -18,6 +18,7 @@
 // otwiera okna DM Meta, więc nie wolno go mieszać z wątkiem rozmowy).
 const crypto = require('crypto');
 const identity = require('../identity');
+const autoreply = require('../autoreply');
 const triage = require('../triage');
 const media = require('../media');
 
@@ -196,6 +197,14 @@ async function handleMessage(db, payload) {
       history: (history || []).reverse(),
     });
   }
+  if (incoming) {
+    try {
+      await autoreply.consider(db, {
+        thread, messageId: inserted[0].id, verdict, channel: mapped.channel, kind: 'dm',
+        hasAttachment: !!(msg.attachments && msg.attachments.length), customer,
+      });
+    } catch (e) { console.error('autoreply.consider (dm):', e.message); }
+  }
   return { ok: true, customer: customer.public_id, customerCreated: created, threadId: thread.id, triage: verdict?.triage };
 }
 
@@ -318,6 +327,12 @@ async function handleComment(db, payload) {
   if (verdict?.triage === 'inbox' && verdict?.needsReply !== false) {
     await db.from('kom_threads').update({ status: 'attention' }).eq('id', thread.id);
   }
+  try {
+    await autoreply.consider(db, {
+      thread, messageId: inserted[0].id, verdict, channel: mapped.channel, kind: 'comment',
+      hasAttachment: !!comment.attachment, customer,
+    });
+  } catch (e) { console.error('autoreply.consider (comment):', e.message); }
   return { ok: true, customer: customer.public_id, customerCreated: created, threadId: thread.id, comment: true, triage: verdict?.triage };
 }
 

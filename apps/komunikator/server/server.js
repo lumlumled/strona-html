@@ -19,6 +19,8 @@ const triage = require('./triage');
 const commitments = require('./commitments');
 const suggest = require('./suggest');
 const media = require('./media');
+const settings = require('./settings');
+const autoreply = require('./autoreply');
 
 const app = express();
 // rawBody potrzebny do weryfikacji X-Zernio-Signature (HMAC surowego body).
@@ -73,6 +75,19 @@ function isCronAuthorized(req) {
   return req.headers.authorization === `Bearer ${secret}` || req.query.secret === secret;
 }
 
+// Funkcje wysyłki wstrzykiwane do workera autorespondera (autoreply.sweep) —
+// tak omijamy cykliczny require (send/computeSendState żyją tu, w server.js).
+function autoreplyCtx() {
+  return {
+    getSetting: settings.getSetting,
+    generateSuggestion: suggest.generateSuggestion,
+    loadCustomer: identity.loadCustomer,
+    computeSendState,
+    sendViaZernio,
+    sendPrivateReply,
+  };
+}
+
 // Worker: synchronizacja komentarzy TikTok + sweep triage (dokańcza
 // klasyfikację wiadomości, których LLM nie zdążył ocenić w webhooku).
 // /api/cron/tiktok-comments zostaje jako alias — wskazuje na niego
@@ -119,6 +134,13 @@ async function runWorker(req, res) {
   } catch (err) {
     console.error('Worker (media):', err.message);
     result.media = { error: err.message };
+  }
+  try {
+    // Autoresponder: generuj + wyślij zaległe (główny takt: /api/cron/outbox).
+    result.outbox = await autoreply.sweep(db, autoreplyCtx());
+  } catch (err) {
+    console.error('Worker (outbox):', err.message);
+    result.outbox = { error: err.message };
   }
   console.log('Cron worker:', JSON.stringify(result));
   res.json(result);
@@ -167,6 +189,18 @@ app.all('/api/cron/gmail', async (req, res) => {
     res.json(await gmail.syncGmail(getClient()));
   } catch (err) {
     console.error('Cron gmail:', err.message);
+    res.status(502).json({ ok: false, error: err.message });
+  }
+});
+
+// Autoresponder: kolejka wysyłki (pg_cron co 1-2 min). Generuje treść i wysyła
+// (gdy włącznik ON) albo oznacza 'held' (podgląd na sucho, gdy OFF).
+app.all('/api/cron/outbox', async (req, res) => {
+  if (!isCronAuthorized(req)) return res.status(401).json({ error: 'Brak autoryzacji' });
+  try {
+    res.json(await autoreply.sweep(getClient(), autoreplyCtx()));
+  } catch (err) {
+    console.error('Cron outbox:', err.message);
     res.status(502).json({ ok: false, error: err.message });
   }
 });
@@ -652,6 +686,99 @@ app.post('/api/threads/:id/suggestion', async (req, res) => {
 
     const result = await suggest.generateSuggestion(db, thread, customer, messagesRes.data || []);
     res.json(result);
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+// ── Automat (autoresponder): włącznik + podgląd decyzji ──────────────────────
+
+app.get('/api/automat/status', async (req, res) => {
+  try {
+    const db = getClient();
+    const enabled = (await settings.getSetting(db, autoreply.SETTING_KEY, false)) === true;
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const counts = {};
+    const queries = [
+      ['queued', db.from('kom_autoreply').select('id', { count: 'exact', head: true }).eq('status', 'queued')],
+      ['held', db.from('kom_autoreply').select('id', { count: 'exact', head: true }).eq('status', 'held')],
+      ['sent', db.from('kom_autoreply').select('id', { count: 'exact', head: true }).eq('status', 'sent').gte('created_at', since)],
+    ];
+    for (const [key, q] of queries) {
+      const { count } = await q;
+      counts[key] = count || 0;
+    }
+    res.json({ enabled, counts });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+app.post('/api/automat/toggle', async (req, res) => {
+  try {
+    if (!isAdmin(req.user)) return res.status(403).json({ error: 'Tylko administrator może przełączać auto-wysyłkę' });
+    const enabled = req.body?.enabled === true;
+    await settings.setSetting(getClient(), autoreply.SETTING_KEY, enabled);
+    res.json({ ok: true, enabled });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+app.get('/api/automat/feed', async (req, res) => {
+  try {
+    const db = getClient();
+    const { data: rows, error } = await db
+      .from('kom_autoreply').select('*').order('created_at', { ascending: false }).limit(60);
+    if (error) throw error;
+    const threadIds = [...new Set((rows || []).map((r) => r.thread_id).filter(Boolean))];
+    const msgIds = [...new Set((rows || []).map((r) => r.in_message_id).filter(Boolean))];
+    const [threadsRes, msgsRes] = await Promise.all([
+      threadIds.length ? db.from('kom_threads').select('id,channel,customer_id').in('id', threadIds) : Promise.resolve({ data: [] }),
+      msgIds.length ? db.from('kom_messages').select('id,body').in('id', msgIds) : Promise.resolve({ data: [] }),
+    ]);
+    const threads = new Map((threadsRes.data || []).map((t) => [t.id, t]));
+    const custIds = [...new Set((threadsRes.data || []).map((t) => t.customer_id).filter(Boolean))];
+    const custRes = custIds.length
+      ? await db.from('kom_customers').select('id,display_name,public_id').in('id', custIds)
+      : { data: [] };
+    const customers = new Map((custRes.data || []).map((c) => [c.id, c]));
+    const msgs = new Map((msgsRes.data || []).map((m) => [m.id, m]));
+    const items = (rows || []).map((r) => {
+      const t = threads.get(r.thread_id);
+      const c = t ? customers.get(t.customer_id) : null;
+      const inMsg = r.in_message_id ? msgs.get(r.in_message_id) : null;
+      return {
+        id: r.id,
+        status: r.status,
+        verdict: r.verdict,
+        reason: r.reason,
+        kind: r.kind,
+        channel: r.channel || (t && t.channel) || null,
+        created_at: r.created_at,
+        send_after: r.send_after,
+        sent_at: r.sent_at,
+        generated_text: r.generated_text,
+        error: r.error,
+        customer_name: c ? (c.display_name || c.public_id) : null,
+        inbound_text: inMsg ? inMsg.body : null,
+      };
+    });
+    res.json({ items });
+  } catch (err) {
+    handleError(res, err, 502);
+  }
+});
+
+app.post('/api/automat/:id/cancel', async (req, res) => {
+  try {
+    const db = getClient();
+    const { data, error } = await db
+      .from('kom_autoreply').update({ status: 'cancelled' })
+      .eq('id', req.params.id).in('status', ['queued', 'held']).select('id');
+    if (error) throw error;
+    if (!data || !data.length) return res.status(409).json({ error: 'Nie można anulować (już wysłane albo anulowane)' });
+    res.json({ ok: true });
   } catch (err) {
     handleError(res, err, 502);
   }

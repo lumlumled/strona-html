@@ -224,6 +224,18 @@
       font-size: .85rem; font-weight: 600; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 50;
     }
     .toast.show { opacity: 1; }
+    #automat:not([hidden]) { display: flex; flex-direction: column; }
+    #automat-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+    .automat-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 1rem; border-bottom: 1px solid #eee; }
+    .automat-sub { font-size: .8rem; color: #666; margin-top: .25rem; }
+    .automat-feed { padding: 1rem; display: flex; flex-direction: column; gap: .6rem; overflow-y: auto; flex: 1; min-height: 0; }
+    .automat-card { border: 1px solid #e5e5e5; border-radius: 10px; padding: .6rem .75rem; }
+    .automat-card-top { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin-bottom: .35rem; }
+    .automat-when { font-size: .75rem; color: #888; margin-left: auto; }
+    .automat-who { font-weight: 600; font-size: .9rem; }
+    .automat-in { font-size: .85rem; color: #444; margin-top: .2rem; white-space: pre-wrap; }
+    .automat-out { font-size: .85rem; color: #0a7; margin-top: .35rem; white-space: pre-wrap; background: #f2fbf7; border-radius: 8px; padding: .4rem .55rem; }
+    .automat-reason { font-size: .78rem; color: #999; margin-top: .25rem; }
   </style>
 </head>
 <body>
@@ -239,6 +251,7 @@
         <button class="tab" data-status="notifications">Powiadomienia</button>
         <button class="tab" data-status="closed">Zamknięte</button>
         <button class="tab" data-status="all">Wszystkie</button>
+        <button class="tab" data-status="automat" id="tab-automat">Automat</button>
       </div>
       <ul class="thread-list" id="thread-list">
         <li class="empty">Ładowanie…</li>
@@ -284,6 +297,11 @@
     <!-- Karty „Do odpisania": tylko wątki czekające na reakcję, z propozycją
          AI i akcjami na miejscu. Domyślny widok panelu. -->
     <section class="cards" id="cards" hidden></section>
+
+    <!-- Panel Automat: włącznik auto-wysyłki + podgląd decyzji autorespondera. -->
+    <section class="main" id="automat" hidden>
+      <div id="automat-panel"></div>
+    </section>
   </div>
 
   <dialog id="note-dialog">
@@ -351,6 +369,7 @@
     // ── Lista wątków ──
     async function loadThreads() {
       setMode();
+      if (state.statusFilter === 'automat') { loadAutomat(); return; }
       try {
         const { data } = await api(`/threads?view=${state.statusFilter}`);
         state.threads = data;
@@ -366,8 +385,18 @@
     // pokazuje WYŁĄCZNIE to, co czeka na odpowiedź.
     function setMode() {
       const cardsMode = state.statusFilter === 'reply';
+      const automatMode = state.statusFilter === 'automat';
       $('layout').classList.toggle('cards-mode', cardsMode);
       $('cards').hidden = !cardsMode;
+      $('automat').hidden = !automatMode;
+      if (automatMode) {
+        $('main').hidden = true;
+        $('placeholder').hidden = true;
+        $('layout').classList.remove('thread-open');
+        state.selectedId = null;
+        $('thread-list').innerHTML = '<li class="empty">Panel automatu →</li>';
+        return;
+      }
       if (cardsMode) {
         $('main').hidden = true;
         $('placeholder').hidden = true;
@@ -381,6 +410,79 @@
     function selectTab(status) {
       state.statusFilter = status;
       document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.status === status));
+    }
+
+    // ── Panel Automat (autoresponder) ──
+    async function loadAutomat() {
+      const box = $('automat-panel');
+      box.innerHTML = '<div class="empty" style="padding:1rem;">Ładowanie…</div>';
+      try {
+        const [status, feed] = await Promise.all([api('/automat/status'), api('/automat/feed')]);
+        renderAutomat(status, feed.items || []);
+      } catch (err) {
+        box.innerHTML = `<div class="empty" style="padding:1rem;">Błąd: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    const AUTOMAT_STATUS = {
+      queued: '⏳ w kolejce', held: '👁 wysłałby (podgląd)', sent: '✅ wysłane',
+      skipped: '⏭ pominięte', cancelled: '✖ anulowane', failed: '⚠ błąd',
+    };
+
+    function automatCardHtml(it) {
+      const canCancel = it.status === 'queued' || it.status === 'held';
+      const when = it.status === 'sent' ? ('wysłano ' + fmtTime(it.sent_at))
+        : it.status === 'queued' ? ('planowo ' + fmtTime(it.send_after))
+        : fmtTime(it.created_at);
+      return `<div class="automat-card">
+        <div class="automat-card-top">
+          <span class="badge">${AUTOMAT_STATUS[it.status] || it.status}</span>
+          <span class="chip">${CHANNEL_LABELS[it.channel] || it.channel || ''}${it.kind === 'comment' ? ' · komentarz' : ''}</span>
+          <span class="automat-when">${when}</span>
+          ${canCancel ? `<button class="btn" data-cancel="${it.id}">Cofnij</button>` : ''}
+        </div>
+        <div class="automat-who">${escapeHtml(it.customer_name || '(bez nazwy)')}</div>
+        <div class="automat-in">💬 ${escapeHtml((it.inbound_text || '').slice(0, 240))}</div>
+        ${it.generated_text ? `<div class="automat-out">↳ ${escapeHtml(it.generated_text)}</div>` : ''}
+        ${it.error ? `<div class="automat-reason">błąd: ${escapeHtml(it.error)}</div>` : ''}
+      </div>`;
+    }
+
+    function renderAutomat(status, items) {
+      const enabled = !!status.enabled;
+      const c = status.counts || {};
+      const feed = items.map(automatCardHtml).join('') ||
+        '<div class="empty" style="padding:1rem;">Jeszcze nic. Gdy przyjdzie nowa wiadomość, tu pojawi się decyzja automatu.</div>';
+      $('automat-panel').innerHTML = `
+        <div class="automat-head">
+          <div>
+            <strong>Automat - auto-odpowiedzi na nowe wiadomości</strong>
+            <div class="automat-sub">${enabled ? '🟢 WŁĄCZONY - odpowiada sam' : '⚪ WYŁĄCZONY - tylko podgląd, nic nie wysyła'} · w kolejce: ${c.queued || 0} · „wysłałby": ${c.held || 0} · wysłane 24h: ${c.sent || 0}</div>
+          </div>
+          <button class="btn ${enabled ? 'primary' : ''}" id="automat-toggle" data-enabled="${enabled}">${enabled ? 'Wyłącz auto-wysyłkę' : 'Włącz auto-wysyłkę'}</button>
+        </div>
+        <div class="automat-feed">${feed}</div>`;
+      $('automat-toggle').addEventListener('click', toggleAutomat);
+      document.querySelectorAll('#automat-panel [data-cancel]').forEach((b) =>
+        b.addEventListener('click', () => cancelAutomat(b.dataset.cancel)));
+    }
+
+    async function toggleAutomat() {
+      const next = $('automat-toggle').dataset.enabled !== 'true';
+      if (next && !confirm('Włączyć auto-wysyłkę? Od tej chwili automat zacznie SAM wysyłać odpowiedzi na nowe wiadomości.')) return;
+      try {
+        await api('/automat/toggle', { method: 'POST', body: JSON.stringify({ enabled: next }) });
+        toast(next ? 'Auto-wysyłka WŁĄCZONA' : 'Auto-wysyłka wyłączona');
+        loadAutomat();
+      } catch (err) { toast(err.message); }
+    }
+
+    async function cancelAutomat(id) {
+      try {
+        await api(`/automat/${id}/cancel`, { method: 'POST' });
+        toast('Anulowano');
+        loadAutomat();
+      } catch (err) { toast(err.message); }
     }
 
     function renderThreads() {
