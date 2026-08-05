@@ -123,6 +123,35 @@
     .toggle { display: inline-flex; align-items: center; gap: .4rem; cursor: pointer; }
     .toggle input { accent-color: var(--t-wiadomosc); }
 
+    /* ── Kafel "Dzisiejsze obietnice" — poranny rzut oka nad kalendarzem ── */
+    .today-tile {
+      background: var(--surface-1); border: 1px solid var(--border);
+      border-radius: 13px; padding: .7rem .8rem; margin: 0 0 1rem;
+    }
+    .today-tile h2 {
+      font-size: .78rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .04em; color: var(--text-secondary);
+      display: flex; align-items: center; gap: .45rem; margin-bottom: .55rem;
+    }
+    .today-rows { display: flex; flex-direction: column; gap: .35rem; }
+    .today-row {
+      display: flex; align-items: center; gap: .6rem; width: 100%; text-align: left;
+      border: 1px solid var(--border); background: var(--surface-2);
+      border-radius: 9px; padding: .45rem .6rem; transition: border-color .12s;
+      color: var(--text-primary);
+    }
+    .today-row:hover { border-color: var(--border-strong); }
+    .today-row .t-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; }
+    .today-row .t-time { font-weight: 800; font-size: .88rem; font-variant-numeric: tabular-nums; min-width: 3rem; }
+    .today-row .t-name { font-weight: 600; font-size: .88rem; flex: 1 1 auto; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .today-row .t-kwota { font-size: .8rem; font-weight: 700; color: var(--text-secondary); white-space: nowrap; }
+    .today-row .t-wait { font-size: .72rem; font-weight: 700; border-radius: 999px;
+      padding: .12rem .5rem; white-space: nowrap; }
+    .today-row .t-wait.late { color: var(--overdue); background: var(--overdue-soft); }
+    .today-row .t-wait.soon { color: var(--text-muted); }
+    .today-empty { font-size: .8rem; color: var(--text-muted); }
+
     .legend { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
       font-size: .74rem; color: var(--text-muted); margin: -.3rem 0 1rem; }
     .legend .sw { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; }
@@ -282,6 +311,7 @@
       <label class="toggle ctl"><input type="checkbox" id="ai-toggle"> Pokaż też AI</label>
       <button class="today-btn" id="refresh" title="Odśwież">↻</button>
     </div>
+    <div class="today-tile" id="today-tile" hidden></div>
     <div class="legend" id="legend"></div>
     <div id="calendar"><p class="empty">Wczytywanie…</p></div>
   </div>
@@ -451,6 +481,7 @@
       document.querySelectorAll('#view-seg button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
       document.getElementById('overdue-btn').classList.toggle('active', view === 'overdue');
       updateOverdueBadge();
+      renderTodayTile();
       renderLegend();
       renderPeriod();
       // Zaległe to płaska lista (nie okres) — chowamy nawigację ‹ › i "Dziś".
@@ -471,6 +502,56 @@
       const btn = document.getElementById('overdue-btn');
       btn.textContent = n ? `Zaległe (${n})` : 'Zaległe';
       btn.classList.toggle('has-overdue', n > 0);
+    }
+
+    // ── Kafel "Dzisiejsze obietnice" ──────────────────────────────
+    // Poranny rzut oka bez klikania w widok Dzień: kto, o której, ile
+    // czeka — posortowane po godzinie, klik otwiera tę samą szufladę.
+    function fmtDur(ms) {
+      const min = Math.round(Math.abs(ms) / 60000);
+      if (min < 1) return 'teraz';
+      if (min < 60) return `${min} min`;
+      const h = Math.floor(min / 60);
+      return min % 60 ? `${h} h ${min % 60} min` : `${h} h`;
+    }
+    function renderTodayTile() {
+      const host = document.getElementById('today-tile');
+      host.hidden = false;
+      const list = visibleCases()
+        .filter((c) => dueYmd(c) === TODAY_YMD)
+        .sort((a, b) => String(a.due_at).localeCompare(String(b.due_at)));
+      const head = `<h2>📞 Dzisiejsze obietnice${list.length ? ` <span class="col-count">${list.length}</span>` : ''}</h2>`;
+      if (!list.length) {
+        host.innerHTML = `${head}<div class="today-empty">Nic umówionego na dziś.</div>`;
+        return;
+      }
+      host.innerHTML = head;
+      const rows = document.createElement('div'); rows.className = 'today-rows';
+      const nowMs = Date.now();
+      list.forEach((c) => {
+        const o = c._obiekt || {};
+        const row = document.createElement('button'); row.type = 'button'; row.className = 'today-row';
+        const dot = document.createElement('span'); dot.className = 't-dot';
+        dot.style.background = `var(--t-${c.object_type})`;
+        const time = document.createElement('span'); time.className = 't-time'; time.textContent = fmtTime(c);
+        const name = document.createElement('span'); name.className = 't-name';
+        name.textContent = o.imie_nazwisko || (o.telefon_digits ? fmtPhone(o.telefon_digits) : 'Bez nazwy');
+        row.append(dot, time, name);
+        if (o.kwota != null && o.kwota !== '') {
+          const kwota = document.createElement('span'); kwota.className = 't-kwota';
+          kwota.textContent = fmtPLN(o.kwota);
+          row.appendChild(kwota);
+        }
+        const diff = nowMs - dueDate(c).getTime();
+        const wait = document.createElement('span');
+        if (Math.abs(diff) < 60000) { wait.className = 't-wait late'; wait.textContent = 'teraz'; }
+        else if (diff > 0) { wait.className = 't-wait late'; wait.textContent = `czeka ${fmtDur(diff)}`; }
+        else { wait.className = 't-wait soon'; wait.textContent = `za ${fmtDur(diff)}`; }
+        row.appendChild(wait);
+        row.addEventListener('click', () => openDrawer(c));
+        rows.appendChild(row);
+      });
+      host.appendChild(rows);
     }
 
     function renderLegend() {

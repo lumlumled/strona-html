@@ -101,12 +101,16 @@ function handleError(res, err, fallbackStatus = 400) {
   res.status(status).json({ error: message });
 }
 
+// "Phone number" to bigint przeważnie Z prefiksem 48 (512/520 wierszy na
+// 2026-08-05), ale wołający przekazują raz 48+9 cyfr (CRM), raz 9 (panel
+// Feedbacki, wyceny.telefon_digits) — dopasowujemy pod oba warianty.
 async function findLeadByPhone(supabase, phoneDigits) {
-  if (!phoneDigits) return null;
+  const variants = phoneVariants(phoneDigits).map(Number).filter((n) => Number.isFinite(n) && n > 0);
+  if (!variants.length) return null;
   const { data, error } = await supabase
     .from(LEADY_B2C_TABLE)
     .select('*')
-    .eq('Phone number', Number(phoneDigits))
+    .in('Phone number', variants)
     .limit(1);
   if (error) throw error;
   return data[0] || null;
@@ -520,8 +524,9 @@ function registerLeadyEndpoints(app, { getClient, requireView, requireEdit, onSt
       if (!digits) return res.status(400).json({ error: 'Brak parametru telefon' });
 
       // Log zmian po numerze — licznik połączeń + "skontaktowane dziś", wspólne
-      // dla obu ścieżek (lead / sam telefon z wyceną).
-      const logRows = await supabase.from(LOG_ZMIAN_TABLE).select('data_zmiany,zrodlo').eq('telefon', digits)
+      // dla obu ścieżek (lead / sam telefon z wyceną). Warianty z/bez 48, bo
+      // Log zmian trzyma '48XXXXXXXXX', a wołający bywa z samą dziewiątką.
+      const logRows = await supabase.from(LOG_ZMIAN_TABLE).select('data_zmiany,zrodlo').in('telefon', phoneVariants(digits))
         .then(({ data, error }) => {
           if (error) throw error;
           return data || [];
@@ -614,7 +619,7 @@ function registerLeadyEndpoints(app, { getClient, requireView, requireEdit, onSt
       const { data, error } = await supabase
         .from(LOG_ZMIAN_TABLE)
         .select('*')
-        .eq('telefon', digits)
+        .in('telefon', phoneVariants(digits))
         .order('data_zmiany', { ascending: true });
       if (error) throw error;
       res.json({ data: data || [] });
@@ -917,4 +922,4 @@ function registerLeadyEndpoints(app, { getClient, requireView, requireEdit, onSt
   });
 }
 
-module.exports = { registerLeadyEndpoints, EDITABLE_LEAD_FIELDS, NIE_TELEFON_ZRODLA };
+module.exports = { registerLeadyEndpoints, EDITABLE_LEAD_FIELDS, NIE_TELEFON_ZRODLA, findLeadByPhone, phoneVariants };

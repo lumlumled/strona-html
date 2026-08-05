@@ -54,9 +54,10 @@ function registerFeedbackiEndpoints(app, { getClient, isAdmin }) {
       const objById = new Map();
 
       if (wycenaIds.length) {
-        const { data: wyceny } = await supabase.from('wyceny')
+        const { data: wyceny, error: wErr } = await supabase.from('wyceny')
           .select('id,imie_nazwisko,first_name,last_name,kwota_proponowana_brutto,kwota_sprzedazy_brutto,telefon_e164,telefon_digits,status')
           .in('id', wycenaIds);
+        if (wErr) console.error('Feedbacki kalendarz (wyceny):', wErr.message);
         (wyceny || []).forEach((w) => {
           const imie = [w.first_name, w.last_name].filter(Boolean).join(' ').trim()
             || String(w.imie_nazwisko || '').trim();
@@ -73,9 +74,10 @@ function registerFeedbackiEndpoints(app, { getClient, isAdmin }) {
       }
 
       if (leadIds.length) {
-        const { data: leady } = await supabase.from('Leady B2C')
+        const { data: leady, error: lErr } = await supabase.from('Leady B2C')
           .select('"ID Leada",Name,"Phone number","Deal stage","Kwota wyceny"')
           .in('ID Leada', leadIds);
+        if (lErr) console.error('Feedbacki kalendarz (leady):', lErr.message);
         (leady || []).forEach((l) => {
           const digits = digitsNoPrefix(l['Phone number']);
           objById.set(`lead:${l['ID Leada']}`, {

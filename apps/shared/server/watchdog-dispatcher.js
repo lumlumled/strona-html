@@ -10,6 +10,9 @@
 // przebiegach (co 30 min), co przy horyzoncie dni nie ma znaczenia.
 
 const watchdog = require('./watchdog');
+// Reuse 1:1 z reguły 5 panelu Test (obietnica dotrzymana = telefon z numerem
+// w DNIU terminu): ten sam klucz numeru i ta sama doba warszawska.
+const { last9, warsaw } = require('./test-panel-metrics');
 
 const ARM_LIMIT_PER_RUN = 25;
 const ALERT_LIMIT_PER_RUN = 15;
@@ -121,8 +124,86 @@ function buildActivityChecker({ eventsByWycena, logByPhone, leadPhoneByLeadId })
   };
 }
 
+// ── Auto-domknięcie: próba kontaktu w DNIU terminu (reguła 5 panelu Test) ────
+// "Zadzwonię jutro o 9" wykonane w dniu terminu = obietnica dotrzymana, więc
+// feedback odhacza się sam zamiast czekać na ręczne "Zrobione". Liczy się
+// KAŻDE połączenie z tym numerem (oba kierunki, także nieodebrana próba —
+// klient, który sam oddzwonił, też domyka temat). Guard na baseline_at:
+// rozmowa, w której dopiero umówiono dzisiejszy termin, nie odhacza go od
+// razu (wpis w Log zmian powstaje PRZED mirrorem terminu, więc jest starszy
+// niż baseline watcha). Tylko jawne terminy (visible) — ciche watche AI
+// domyka istniejąca ścieżka 'activity' po przeterminowaniu.
+async function sweepDotrzymaneDzis(supabase, raport) {
+  try {
+    const todayYmd = warsaw(new Date()).ymd;
+    const { data: watches, error } = await supabase.from(watchdog.FEEDBACK_WATCH_TABLE)
+      .select('*').is('resolved_at', null).eq('visible', true);
+    if (error) throw error;
+    const dzisiejsze = (watches || []).filter((w) => warsaw(w.due_at).ymd === todayYmd);
+    if (!dzisiejsze.length) return;
+
+    // Telefony obiektów jednym rzutem: lead -> Leady B2C, wycena -> wyceny.
+    const leadIds = [...new Set(dzisiejsze.filter((w) => w.object_type === 'lead')
+      .map((w) => Number(w.object_id)).filter(Number.isFinite))];
+    const wycenaIds = [...new Set(dzisiejsze.filter((w) => w.object_type === 'wycena')
+      .map((w) => Number(w.object_id)).filter(Number.isFinite))];
+    const phoneByKey = new Map();
+    if (leadIds.length) {
+      const { data: leady, error: lErr } = await supabase.from('Leady B2C')
+        .select('"ID Leada","Phone number"').in('ID Leada', leadIds);
+      if (lErr) throw lErr;
+      (leady || []).forEach((l) => {
+        phoneByKey.set(`lead:${watchdog.leadObjectId(l)}`, last9(l['Phone number']));
+      });
+    }
+    if (wycenaIds.length) {
+      const { data: wyceny, error: wErr } = await supabase.from('wyceny')
+        .select('id,telefon_digits,telefon_e164').in('id', wycenaIds);
+      if (wErr) throw wErr;
+      (wyceny || []).forEach((w) => {
+        phoneByKey.set(`wycena:${w.id}`, last9(w.telefon_digits || w.telefon_e164));
+      });
+    }
+
+    // Dzisiejsze połączenia (Log zmian, kierunek != null): 36 h wstecz i filtr
+    // po dobie warszawskiej — bez ręcznego liczenia północy przez DST.
+    const { data: logs, error: logErr } = await supabase.from('Log zmian')
+      .select('telefon,data_zmiany').not('kierunek', 'is', null)
+      .gte('data_zmiany', new Date(Date.now() - 36 * 3600 * 1000).toISOString());
+    if (logErr) throw logErr;
+    const callsToday = new Map(); // last9 -> [timestamp ms]
+    (logs || []).forEach((r) => {
+      if (warsaw(r.data_zmiany).ymd !== todayYmd) return;
+      const key = last9(r.telefon);
+      if (!key) return;
+      const arr = callsToday.get(key) || [];
+      arr.push(new Date(r.data_zmiany).getTime());
+      callsToday.set(key, arr);
+    });
+    if (!callsToday.size) return;
+
+    for (const w of dzisiejsze) {
+      const calls = callsToday.get(phoneByKey.get(`${w.object_type}:${w.object_id}`) || '') || [];
+      const baseline = new Date(w.baseline_at || w.created_at || 0).getTime();
+      if (!calls.some((t) => t > baseline)) continue;
+      try {
+        await watchdog.resolveWatch(supabase, { objectType: w.object_type, objectId: w.object_id, resolution: 'activity' });
+        raport.resolved_obietnica += 1;
+      } catch (err) {
+        raport.errors.push(`obietnica-dzis ${w.object_type} ${w.object_id}: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    raport.errors.push(`obietnice-dzis: ${err.message}`);
+  }
+}
+
 async function runWatchdogSweep(supabase, { notifyOwner } = {}) {
-  const raport = { armed: 0, alerted: 0, resolved_activity: 0, resolved_closed: 0, errors: [] };
+  const raport = { armed: 0, alerted: 0, resolved_activity: 0, resolved_obietnica: 0, resolved_closed: 0, errors: [] };
+
+  // Najpierw auto-domknięcia z dzisiejszych prób kontaktu — domknięty watch
+  // nie może zaraz potem zaalertować "temat ucieka" w tym samym przebiegu.
+  await sweepDotrzymaneDzis(supabase, raport);
 
   // Otwarte wyceny + wszystkie otwarte watche wycen.
   const [wycenyRes, watchesRes] = await Promise.all([
@@ -510,4 +591,4 @@ function registerWatchdogEndpoints(app, { getClient, isAdmin }) {
   });
 }
 
-module.exports = { runWatchdogSweep, registerWatchdogEndpoints };
+module.exports = { runWatchdogSweep, registerWatchdogEndpoints, sweepDotrzymaneDzis };
