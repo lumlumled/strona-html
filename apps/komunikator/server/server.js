@@ -947,6 +947,7 @@ app.get('/api/automat/feed', async (req, res) => {
         generated_text: r.generated_text, error: r.error,
         customer_name: nameFor(t),
         inbound_text: commit ? `obietnica: ${commit.description}` : null,
+        thread_id: r.thread_id, conversation: conversationFor(r.thread_id),
       };
     });
 

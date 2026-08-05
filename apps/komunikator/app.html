@@ -255,6 +255,21 @@
     .automat-reason { font-size: .78rem; color: #999; margin-top: .25rem; }
     .automat-card.sold { border-color: #f1a9a0; background: #fdf3f2; }
     .automat-warn { font-size: .8rem; color: #c0392b; font-weight: 600; margin-top: .3rem; }
+    .automat-out-tag { font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; opacity: .7; margin-right: .4rem; }
+    /* Kontekst rozmowy wbudowany w kartę follow-upa. */
+    .fu-convo-bar { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin-top: .5rem; }
+    .fu-convo-toggle { border: none; background: transparent; color: #555; font: inherit; font-size: .78rem; font-weight: 600; cursor: pointer; padding: .1rem 0; }
+    .fu-convo-toggle:hover { color: #111; }
+    .fu-open { margin-left: auto; font-size: .76rem; padding: .2rem .6rem; }
+    .fu-convo { display: flex; flex-direction: column; gap: .35rem; margin-top: .45rem; padding: .55rem; max-height: 320px; overflow-y: auto; background: #fafafa; border: 1px solid #ececec; border-radius: 10px; }
+    /* display:flex musi wygrać z atrybutem hidden (reguła UA) - jak .card-convo. */
+    .fu-convo[hidden] { display: none; }
+    .fu-convo-empty { font-size: .8rem; color: #999; text-align: center; padding: .5rem; }
+    .fu-msg { max-width: 82%; padding: .4rem .6rem; border-radius: 12px; font-size: .82rem; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
+    .fu-msg.in { align-self: flex-start; background: #eef1f5; border-bottom-left-radius: 3px; }
+    .fu-msg.out { align-self: flex-end; background: #dff3ea; border-bottom-right-radius: 3px; }
+    .fu-msg-who { display: block; font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; opacity: .55; margin-bottom: .12rem; }
+    .fu-msg-time { display: block; font-size: .62rem; opacity: .5; margin-top: .2rem; }
   </style>
 </head>
 <body>
@@ -365,6 +380,9 @@
       suggestion: null, // { id, forThread } — sugestia AI załadowana do composera
       smsUser: (window.LUMLUM_SMS_USERS && window.LUMLUM_SMS_USERS[0]?.name) || 'Lorenzo', // skrzynka w zakładce SMS
       onlyReplied: localStorage.getItem('kom_only_replied') === '1', // filtr „Tylko z odpowiedzią klienta"
+      lastFeedSig: null, // sygnatura ostatnio narysowanego feedu automatu/follow-upów (cichy refresh nie przemalowuje bez zmian)
+      lastWaitSig: null, // sygnatura ostatnio narysowanej listy „Czekają na Ciebie"
+      convoState: new Map(), // ckey → bool: czy rozmowa na karcie jest rozwinięta (ręczny override defaultu)
     };
 
     const $ = (id) => document.getElementById(id);
@@ -443,11 +461,14 @@
     }
 
     // ── Lista wątków ──
-    async function loadThreads() {
+    // opts.silent = odświeżanie w tle (co 30 s): NIE gasimy panelu do „Ładowanie…"
+    // i przemalowujemy tylko gdy dane naprawdę się zmieniły. Bez tego karty
+    // follow-upów co pół minuty migały - znikały i wracały.
+    async function loadThreads(opts = {}) {
       setMode();
-      if (state.statusFilter === 'automat') { loadAutomatPanel('reply'); return; }
-      if (state.statusFilter === 'followupy') { loadAutomatPanel('followup'); return; }
-      if (state.statusFilter === 'czekaja') { loadWaiting(); return; }
+      if (state.statusFilter === 'automat') { loadAutomatPanel('reply', opts); return; }
+      if (state.statusFilter === 'followupy') { loadAutomatPanel('followup', opts); return; }
+      if (state.statusFilter === 'czekaja') { loadWaiting(opts); return; }
       try {
         const smsParam = state.statusFilter === 'sms' ? `&smsUser=${encodeURIComponent(state.smsUser)}` : '';
         const repliedParam = state.onlyReplied && LIST_FILTER_VIEWS.includes(state.statusFilter) ? '&zOdpowiedzia=1' : '';
@@ -499,26 +520,49 @@
     function currentAutomatSource() {
       return state.statusFilter === 'followupy' ? 'followup' : 'reply';
     }
-    async function loadAutomatPanel(source) {
+    // Sygnatura feedu: zmieni się tylko gdy zmieni się coś, co widać na kartach
+    // (status, zaplanowany czas, treść, liczba/ostatnia wiadomość rozmowy).
+    // Dzięki temu cichy refresh nie przemalowuje panelu bez powodu.
+    function feedSignature(source, status, items) {
+      const c = (status.bySource && status.bySource[source]) || {};
+      return JSON.stringify([
+        source, !!status.enabled, c.queued || 0, c.held || 0, c.sent || 0,
+        items.map((it) => {
+          const convo = it.conversation || [];
+          return [it.id, it.status, it.send_after, it.sent_at, it.generated_text,
+            convo.length, convo.length ? convo[convo.length - 1].created_at : null];
+        }),
+      ]);
+    }
+    async function loadAutomatPanel(source, opts = {}) {
       const box = $('automat-panel');
-      box.innerHTML = '<div class="empty" style="padding:1rem;">Ładowanie…</div>';
+      if (!opts.silent) box.innerHTML = '<div class="empty" style="padding:1rem;">Ładowanie…</div>';
       try {
         const [status, feed] = await Promise.all([api('/automat/status'), api(`/automat/feed?source=${source}`)]);
-        renderAutomat(source, status, feed.items || []);
+        const items = feed.items || [];
+        const sig = feedSignature(source, status, items);
+        // Cichy refresh i nic się nie zmieniło → tylko liczniki, panel bez ruchu.
+        if (opts.silent && sig === state.lastFeedSig) { setBadgesFrom(status); return; }
+        state.lastFeedSig = sig;
+        renderAutomat(source, status, items);
       } catch (err) {
-        box.innerHTML = `<div class="empty" style="padding:1rem;">Błąd: ${escapeHtml(err.message)}</div>`;
+        if (!opts.silent) box.innerHTML = `<div class="empty" style="padding:1rem;">Błąd: ${escapeHtml(err.message)}</div>`;
       }
     }
 
     // ── „Czekają na Ciebie" - leady, gdzie to TY jesteś winien odpowiedź ──
-    async function loadWaiting() {
+    async function loadWaiting(opts = {}) {
       const box = $('automat-panel');
-      box.innerHTML = '<div class="empty" style="padding:1rem;">Ładowanie…</div>';
+      if (!opts.silent) box.innerHTML = '<div class="empty" style="padding:1rem;">Ładowanie…</div>';
       try {
         const { items } = await api('/automat/waiting');
-        renderWaiting(items || []);
+        const list = items || [];
+        const sig = JSON.stringify(list.map((it) => [it.thread_id, it.last_at]));
+        if (opts.silent && sig === state.lastWaitSig) { setTabCount('czekaja-count', list.length); return; }
+        state.lastWaitSig = sig;
+        renderWaiting(list);
       } catch (err) {
-        box.innerHTML = `<div class="empty" style="padding:1rem;">Błąd: ${escapeHtml(err.message)}</div>`;
+        if (!opts.silent) box.innerHTML = `<div class="empty" style="padding:1rem;">Błąd: ${escapeHtml(err.message)}</div>`;
       }
     }
     function waitingCardHtml(it) {
@@ -563,6 +607,26 @@
       skipped: '⏭ pominięte', cancelled: '✖ anulowane', failed: '⚠ błąd',
     };
 
+    // Token stanu rozwinięcia rozmowy - unikalny (źródło + id), bez „:" żeby był
+    // legalnym id elementu.
+    const convoTok = (it) => `${it.source}-${it.id}`;
+    // Domyślnie: przy follow-upie rozmowa ROZWINIĘTA (to cały sens decyzji „wysłać
+    // czy nie"), przy auto-odpowiedzi zwinięta. Ręczny klik zapamiętujemy.
+    function convoOpen(it) {
+      const k = convoTok(it);
+      return state.convoState.has(k) ? state.convoState.get(k) : (it.source === 'followup');
+    }
+    function convoBubblesHtml(msgs) {
+      if (!msgs || !msgs.length) return '<div class="fu-convo-empty">Brak wcześniejszych wiadomości w tym wątku.</div>';
+      return msgs.map((m) => {
+        const out = m.direction === 'out';
+        return `<div class="fu-msg ${out ? 'out' : 'in'}">`
+          + `<span class="fu-msg-who">${out ? 'My' : 'Klient'}</span>`
+          + escapeHtml(m.body || '(bez treści)')
+          + `<span class="fu-msg-time">${fmtTime(m.created_at)}</span></div>`;
+      }).join('');
+    }
+
     function automatCardHtml(it) {
       const sold = it.reason === 'already-sold';
       const canCancel = it.status === 'queued' || it.status === 'held';
@@ -573,6 +637,17 @@
       const kindChip = isFollow ? ` · follow-up: ${it.purpose_label || ''}` : (it.kind === 'comment' ? ' · komentarz' : '');
       const inIcon = isFollow ? '🤝' : '💬';
       const statusLabel = sold ? '🚫 wstrzymane - klient już kupił' : (AUTOMAT_STATUS[it.status] || it.status);
+      const tok = convoTok(it);
+      const convo = it.conversation || [];
+      const open = convoOpen(it);
+      // Kontekst rozmowy z klientem - żeby dało się ocenić, czy follow-up ma sens,
+      // bez opuszczania panelu. „Otwórz pełną rozmowę" przeskakuje do wątku.
+      const convoBlock = it.thread_id ? `
+        <div class="fu-convo-bar">
+          <button class="fu-convo-toggle" data-convo="${tok}" data-count="${convo.length}" aria-expanded="${open}">${open ? '▾' : '▸'} ${open ? 'Ukryj rozmowę' : 'Pokaż rozmowę'} (${convo.length})</button>
+          <button class="btn fu-open" data-open-thread="${escapeHtml(String(it.thread_id))}">Otwórz pełną rozmowę ↗</button>
+        </div>
+        <div class="fu-convo" id="fu-convo-${tok}"${open ? '' : ' hidden'}>${convoBubblesHtml(convo)}</div>` : '';
       return `<div class="automat-card${sold ? ' sold' : ''}">
         <div class="automat-card-top">
           <span class="badge">${statusLabel}</span>
@@ -581,12 +656,26 @@
           ${canCancel ? `<button class="btn" data-cancel="${it.id}">Cofnij</button>` : ''}
         </div>
         <div class="automat-who">${escapeHtml(it.customer_name || '(bez nazwy)')}</div>
-        <div class="automat-in">${inIcon} ${escapeHtml((it.inbound_text || '').slice(0, 240))}</div>
+        ${it.inbound_text ? `<div class="automat-in">${inIcon} ${escapeHtml((it.inbound_text || '').slice(0, 240))}</div>` : ''}
         ${sold ? '<div class="automat-warn">⚠️ ten kontakt ma już zamkniętą sprzedaż - pre-sale follow-upa NIE wysyłamy. Sprawdź ręcznie, czy zamówienie jest gotowe.</div>' : ''}
-        ${it.generated_text ? `<div class="automat-out">↳ ${escapeHtml(it.generated_text)}</div>` : ''}
+        ${it.generated_text ? `<div class="automat-out"><span class="automat-out-tag">${isFollow ? 'wyśle' : '↳'}</span>${escapeHtml(it.generated_text)}</div>` : ''}
+        ${convoBlock}
         ${it.status === 'skipped' && it.reason && !sold ? `<div class="automat-reason">pominięte: ${escapeHtml(it.reason)}</div>` : ''}
         ${it.error ? `<div class="automat-reason">błąd: ${escapeHtml(it.error)}</div>` : ''}
       </div>`;
+    }
+
+    function toggleConvo(tok) {
+      const el = $(`fu-convo-${tok}`);
+      const btn = document.querySelector(`[data-convo="${tok}"]`);
+      if (!el) return;
+      const open = el.hidden; // aktualnie ukryta → klik ją otwiera
+      el.hidden = !open;
+      state.convoState.set(tok, open);
+      if (btn) {
+        btn.setAttribute('aria-expanded', String(open));
+        btn.textContent = `${open ? '▾' : '▸'} ${open ? 'Ukryj rozmowę' : 'Pokaż rozmowę'} (${btn.dataset.count})`;
+      }
     }
 
     // Liczniki na zakładkach — osobno „Automat" (autoresponder) i „Follow-upy",
@@ -638,6 +727,10 @@
       $('automat-toggle').addEventListener('click', toggleAutomat);
       document.querySelectorAll('#automat-panel [data-cancel]').forEach((b) =>
         b.addEventListener('click', () => cancelAutomat(b.dataset.cancel)));
+      document.querySelectorAll('#automat-panel [data-convo]').forEach((b) =>
+        b.addEventListener('click', () => toggleConvo(b.dataset.convo)));
+      document.querySelectorAll('#automat-panel [data-open-thread]').forEach((b) =>
+        b.addEventListener('click', () => openWaitingThread(b.dataset.openThread)));
     }
 
     async function toggleAutomat() {
@@ -1541,7 +1634,7 @@
       refreshWaitingBadge();  // licznik „Czekają na Ciebie"
       setInterval(() => { refreshAutomatBadges(); refreshWaitingBadge(); }, 60000); // liczniki co minutę
     }
-    setInterval(loadThreads, 30000); // odśwież listę co 30 s
+    setInterval(() => loadThreads({ silent: true }), 30000); // odśwież listę co 30 s (cicho - bez migania paneli)
   </script>
 </body>
 </html>
