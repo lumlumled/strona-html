@@ -476,29 +476,81 @@ async function sweepLeady(supabase, raport, { notifyOwner, coveredLeadIds }) {
   }
 }
 
-// GET /api/watchdog/alerty — otwarte, zaalertowane watche dla hubu/Backlogu.
-// Nie-admin widzi swoje (owner = imię z sesji); admin wszystkie. Wiersze
-// wzbogacone o dane wyceny (nazwa, kwota) do renderu bez drugiego zapytania.
+// ── "Temat ucieka": co realnie kwalifikuje się do alarmu (decyzje Antoniego
+// 2026-08-05) ────────────────────────────────────────────────────────────────
+// Alarm = piłka po stronie klienta i temat stygnie, a da się zadziałać. NIE
+// mieszamy tu naszych "do zrobienia" (obietnice owner='my' -> osobny worek),
+// martwych bezimiennych importów wycen ani automatów e-mail (faktury, Zadarma).
+
+// Świeżość wyceny bez leada/imienia: quick-add z samym numerem jest wart
+// telefonu, dopóki świeży; stare bezimienne importy (legacy) wypadają.
+const FRESH_QUOTE_DAYS = 60;
+
+// Wycena kwalifikuje się do "cisza po wycenie", jeśli jest realna i wykonalna:
+// ma leada albo imię (wtedy zawsze), albo ma telefon i jest świeża (można
+// zadzwonić). Bezimienny import bez telefonu / stary -> odpada.
+function wycenaKwalifikuje(w) {
+  if (!w) return false;
+  const maImie = String(w.imie_nazwisko || '').trim() !== '';
+  const maLead = w.lead_id != null && String(w.lead_id).trim() !== '';
+  const maTel = String(w.telefon_digits || '').trim() !== '' || String(w.telefon_e164 || '').trim() !== '';
+  if (maLead || maImie) return true;
+  if (maTel && w.created_at) {
+    return Date.now() - new Date(w.created_at).getTime() <= FRESH_QUOTE_DAYS * 86400000;
+  }
+  return false;
+}
+
+// Automatyczni / płatnościowi nadawcy e-mail, których nie chcemy w alarmie
+// (faktury, powiadomienia telefonii). Długi ogon dobija przycisk "wyklucz
+// maila" (trwała lista, faza 2).
+const SENDER_DENYLIST = ['zadarma', 'base.com', 'noreply', 'no-reply', 'notifications', 'powiadomien'];
+function nadawcaZablokowany(name, publicId) {
+  const s = `${name || ''} ${publicId || ''}`.toLowerCase();
+  return SENDER_DENYLIST.some((k) => s.includes(k));
+}
+
+// Routing obietnicy do HANDLOWCA (nie mylić z owner='my'/'klient' = strona
+// zobowiązania). Sygnały per handlowiec w komunikatorze: SMS po numerze
+// (meta.sms_user); social (Msg/WA/IG/TikTok) nie ma przypisania -> Antoni
+// (kanały admin-only); e-mail -> skrzynka (na razie Antoni, TODO kom_mailboxes).
+function handlowiecObietnicy(channel, threadMeta) {
+  if (channel === 'sms') return threadMeta?.sms_user || 'Lorenzo';
+  return 'Antoni';
+}
+
+// GET /api/watchdog/alerty — otwarte, zaalertowane "temat ucieka" dla oglądającego.
+// KAŻDY (także admin) widzi wyłącznie swoje: watche leadów/wycen po owner oraz
+// obietnice klienta zroutowane do niego po kanale. Wiersze wzbogacone o dane
+// obiektu do renderu bez drugiego zapytania po stronie frontu.
 function registerWatchdogEndpoints(app, { getClient, isAdmin }) {
   app.get('/api/watchdog/alerty', async (req, res) => {
     try {
       const supabase = getClient();
-      let q = supabase.from(watchdog.FEEDBACK_WATCH_TABLE)
+      const name = String(req.user?.name || '').trim();
+      // Podział per właściciel: bez imienia z sesji nie pokazujemy nic (nie
+      // wyciekamy cudzych alertów). Admin też jest tu "sobą" - koniec bypassu.
+      if (!name) return res.json({ data: [] });
+
+      // Watche leadów/wycen (feedback_watch). Ciche AI (visible=false) TEŻ
+      // wchodzą - "stygnie po rozmowie" to również temat, który ucieka.
+      // Realność wyceny sprawdzamy niżej, po dociągnięciu jej danych.
+      const { data: watcheRaw, error } = await supabase.from(watchdog.FEEDBACK_WATCH_TABLE)
         .select('*').is('resolved_at', null).not('alerted_at', 'is', null)
+        .ilike('owner', name)
         .order('due_at', { ascending: true });
-      if (!(isAdmin && isAdmin(req.user))) {
-        const name = String(req.user?.name || '').trim();
-        q = name ? q.ilike('owner', name) : q.limit(0);
-      }
-      const { data: alerty, error } = await q;
       if (error) throw error;
-      const wycenaIds = (alerty || []).filter((a) => a.object_type === 'wycena').map((a) => Number(a.object_id));
-      const leadIds = (alerty || []).filter((a) => a.object_type === 'lead').map((a) => Number(a.object_id)).filter(Number.isFinite);
+      const watche = watcheRaw || [];
+
+      const wycenaIds = watche.filter((a) => a.object_type === 'wycena').map((a) => Number(a.object_id)).filter(Number.isFinite);
+      const leadIds = watche.filter((a) => a.object_type === 'lead').map((a) => Number(a.object_id)).filter(Number.isFinite);
       const objById = new Map();
+      const wycenaById = new Map();
       if (wycenaIds.length) {
         const { data: wyceny } = await supabase.from('wyceny')
-          .select('id,imie_nazwisko,kwota_proponowana_brutto,status,typ').in('id', wycenaIds);
-        (wyceny || []).forEach((w) => objById.set(`wycena:${w.id}`, w));
+          .select('id,imie_nazwisko,kwota_proponowana_brutto,status,typ,lead_id,telefon_digits,telefon_e164,created_at')
+          .in('id', wycenaIds);
+        (wyceny || []).forEach((w) => { wycenaById.set(String(w.id), w); objById.set(`wycena:${w.id}`, w); });
       }
       if (leadIds.length) {
         const { data: leady } = await supabase.from('Leady B2C')
@@ -510,39 +562,67 @@ function registerWatchdogEndpoints(app, { getClient, isAdmin }) {
           status: l['Deal stage'] || '',
         }));
       }
-      // Obietnice z wiadomości (kom_commitments) — owner dziś zawsze Antoni,
-      // więc nie-adminowi bez tego imienia ich nie pokazujemy. Miękka
-      // degradacja: błąd kom_* nie może położyć listy alertów.
+      // Odsiew wycen: zostają tylko realne/wykonalne (ma leada/imię, albo świeży
+      // telefon). Martwe bezimienne importy wypadają z alarmu. Leady zostają.
+      const watcheOk = watche.filter((a) => (
+        a.object_type !== 'wycena' || wycenaKwalifikuje(wycenaById.get(String(a.object_id)))
+      ));
+
+      // Obietnice z wiadomości (kom_commitments): tylko owner='klient' (klient
+      // miał coś zrobić i nie zrobił); "my" -> nasze "do odpisania", inny worek.
+      // Routing do handlowca per kanał, potem pokazujemy tylko przypisane do
+      // oglądającego. Blokada nadawców-automatów. Miękka degradacja: błąd kom_*
+      // nie kładzie listy alertów.
       let obietnice = [];
-      const userName = String(req.user?.name || '').trim().toLowerCase();
-      if ((isAdmin && isAdmin(req.user)) || userName === 'antoni') {
-        try {
-          const { data: kom } = await supabase.from('kom_commitments')
-            .select('id,description,owner,due_at,alert_text,alerted_at,kom_customers(display_name,public_id)')
-            .eq('status', 'open').not('alerted_at', 'is', null)
-            .order('due_at', { ascending: true });
-          obietnice = (kom || []).map((c) => ({
+      try {
+        const { data: kom } = await supabase.from('kom_commitments')
+          .select('id,description,owner,due_at,alert_text,alerted_at,thread_id,customer_id')
+          .eq('status', 'open').eq('owner', 'klient').not('alerted_at', 'is', null)
+          .order('due_at', { ascending: true });
+        const komRows = kom || [];
+        const threadIds = [...new Set(komRows.map((c) => c.thread_id).filter(Boolean))];
+        const custIds = [...new Set(komRows.map((c) => c.customer_id).filter(Boolean))];
+        const threadById = new Map();
+        const custById = new Map();
+        if (threadIds.length) {
+          const { data: th } = await supabase.from('kom_threads').select('id,channel,meta').in('id', threadIds);
+          (th || []).forEach((t) => threadById.set(t.id, t));
+        }
+        if (custIds.length) {
+          const { data: cu } = await supabase.from('kom_customers').select('id,display_name,public_id').in('id', custIds);
+          (cu || []).forEach((c) => custById.set(c.id, c));
+        }
+        obietnice = komRows.reduce((acc, c) => {
+          const th = threadById.get(c.thread_id) || {};
+          const cu = custById.get(c.customer_id) || {};
+          if (nadawcaZablokowany(cu.display_name, cu.public_id)) return acc;
+          const owner = handlowiecObietnicy(th.channel, th.meta);
+          if (owner.toLowerCase() !== name.toLowerCase()) return acc;
+          acc.push({
             id: c.id,
             object_type: 'wiadomosc',
             object_id: c.id,
-            owner: 'Antoni',
+            owner,
+            channel: th.channel || null,
             due_at: c.due_at,
             alert_text: c.alert_text,
             alerted_at: c.alerted_at,
             visible: true,
             // public_id -> deep-link hubu do wątku klienta (/wiadomosci/?klient=).
             _obiekt: {
-              imie_nazwisko: c.kom_customers?.display_name || c.kom_customers?.public_id || '',
-              public_id: c.kom_customers?.public_id || '',
+              imie_nazwisko: cu.display_name || cu.public_id || '',
+              public_id: cu.public_id || '',
             },
-          }));
-        } catch (err) {
-          console.error('Watchdog alerty (obietnice):', err.message);
-        }
+          });
+          return acc;
+        }, []);
+      } catch (err) {
+        console.error('Watchdog alerty (obietnice):', err.message);
       }
+
       res.json({
         data: [
-          ...(alerty || []).map((a) => ({
+          ...watcheOk.map((a) => ({
             ...a,
             _obiekt: objById.get(`${a.object_type}:${a.object_id}`) || null,
           })),
