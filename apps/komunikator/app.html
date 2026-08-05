@@ -78,6 +78,8 @@
       font: inherit; font-size: .78rem; font-weight: 600; padding: .3rem .7rem; border-radius: 999px; cursor: pointer;
     }
     .tab.active { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+    .tab-count { display: inline-block; margin-left: .3rem; min-width: 1.05rem; padding: 0 .3rem; border-radius: 999px; background: #e8590c; color: #fff; font-size: .68rem; font-weight: 700; text-align: center; }
+    .tab.active .tab-count { background: #fff; color: var(--accent); }
     .thread-list { list-style: none; max-height: calc(100vh - 220px); overflow-y: auto; }
     .thread-item { padding: .7rem 1rem; border-top: 1px solid var(--border); cursor: pointer; display: grid; gap: .15rem; }
     .thread-item:hover { background: var(--accent-soft); }
@@ -251,7 +253,7 @@
         <button class="tab" data-status="notifications">Powiadomienia</button>
         <button class="tab" data-status="closed">Zamknięte</button>
         <button class="tab" data-status="all">Wszystkie</button>
-        <button class="tab" data-status="automat" id="tab-automat">Automat</button>
+        <button class="tab" data-status="automat" id="tab-automat">Automat <span class="tab-count" id="automat-count" hidden></span></button>
       </div>
       <ul class="thread-list" id="thread-list">
         <li class="empty">Ładowanie…</li>
@@ -452,9 +454,26 @@
       </div>`;
     }
 
+    // Licznik na zakładce „Automat" — żeby podglądy „wysłałby" (autoresponder +
+    // follow-up obietnic) były widoczne, zanim się w nią wejdzie.
+    function setAutomatBadge(n) {
+      const el = $('automat-count');
+      if (!el) return;
+      if (n > 0) { el.textContent = n; el.hidden = false; }
+      else { el.hidden = true; }
+    }
+    async function refreshAutomatBadge() {
+      try {
+        const s = await api('/automat/status');
+        const c = s.counts || {};
+        setAutomatBadge((c.held || 0) + (c.queued || 0));
+      } catch (_) { /* cicho — licznik to tylko podpowiedź */ }
+    }
+
     function renderAutomat(status, items) {
       const enabled = !!status.enabled;
       const c = status.counts || {};
+      setAutomatBadge((c.held || 0) + (c.queued || 0));
       const feed = items.map(automatCardHtml).join('') ||
         '<div class="empty" style="padding:1rem;">Jeszcze nic. Gdy przyjdzie nowa wiadomość, tu pojawi się decyzja automatu.</div>';
       $('automat-panel').innerHTML = `
@@ -1309,7 +1328,9 @@
     }
 
     openFromUrl();
+    refreshAutomatBadge(); // licznik podglądów na zakładce „Automat" od razu
     setInterval(loadThreads, 30000); // odśwież listę co 30 s
+    setInterval(refreshAutomatBadge, 60000); // i licznik Automatu co minutę
   </script>
 </body>
 </html>
