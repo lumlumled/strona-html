@@ -761,7 +761,7 @@ app.get('/api/automat/feed', async (req, res) => {
     const wantFollow = source !== 'reply';
     const [autoRes, followRes] = await Promise.all([
       wantReply ? db.from('kom_autoreply').select('*').order('created_at', { ascending: false }).limit(60) : Promise.resolve({ data: [] }),
-      wantFollow ? db.from('kom_followup').select('*').order('created_at', { ascending: false }).limit(60) : Promise.resolve({ data: [] }),
+      wantFollow ? db.from('kom_followup').select('*').in('status', ['queued', 'held', 'sent']).order('created_at', { ascending: false }).limit(60) : Promise.resolve({ data: [] }),
     ]);
     if (autoRes.error) throw autoRes.error;
     if (followRes.error) throw followRes.error;

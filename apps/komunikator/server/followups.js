@@ -30,6 +30,10 @@ const SECOND_AFTER_MS = 7 * 86400000;        // drugie przypomnienie +7 dni po p
 const COMMITS_PER_RUN = 200;                 // ile obietnic skanujemy przy kolejkowaniu
 const BATCH = 6;                             // ile pozycji wysyłamy/podglądamy na przebieg
 
+// Follow-upy TYLKO z komunikatorów (decyzja Antoniego 2026-08-05): mail i SMS
+// mają swój własny obieg, tu ich nie ruszamy.
+const FOLLOWUP_CHANNELS = new Set(['messenger', 'instagram', 'whatsapp']);
+
 function randAckDelayMs() {
   return ACK_DELAY_MIN_MS + Math.floor(Math.random() * (ACK_DELAY_MAX_MS - ACK_DELAY_MIN_MS));
 }
@@ -47,8 +51,18 @@ async function queue(db, result) {
     .limit(COMMITS_PER_RUN);
   if (error) { result.errors.push(`queue-commits: ${error.message}`); return; }
 
+  // Kanały wątków (jednym zapytaniem) — follow-up robimy TYLKO dla messenger/IG/
+  // WhatsApp; mail/SMS/tiktok pomijamy już na etapie kolejkowania.
+  const threadIds = [...new Set((commits || []).map((c) => c.thread_id).filter(Boolean))];
+  const channelByThread = new Map();
+  if (threadIds.length) {
+    const { data: ths } = await db.from('kom_threads').select('id,channel').in('id', threadIds);
+    (ths || []).forEach((t) => channelByThread.set(t.id, t.channel));
+  }
+
   for (const c of commits || []) {
     try {
+      if (!FOLLOWUP_CHANNELS.has(channelByThread.get(c.thread_id))) continue;
       const createdMs = new Date(c.created_at).getTime();
       const dueMs = c.due_at ? new Date(c.due_at).getTime() : null;
 
@@ -128,6 +142,12 @@ async function dispatch(db, ctx, enabled, result) {
       const thread = threads && threads[0];
       if (!thread) { await mark(db, row.id, 'skipped', { reason: 'no-thread' }); result.skipped += 1; continue; }
 
+      // Tylko messenger/IG/WhatsApp (mail/SMS mają swój obieg).
+      if (!FOLLOWUP_CHANNELS.has(thread.channel)) {
+        await mark(db, row.id, 'skipped', { reason: `channel-off:${thread.channel || ''}` });
+        result.skipped += 1; continue;
+      }
+
       const { data: messages, error: mErr } = await db
         .from('kom_messages').select('*')
         .eq('thread_id', thread.id).order('created_at', { ascending: true }).limit(100);
@@ -148,6 +168,16 @@ async function dispatch(db, ctx, enabled, result) {
         await mark(db, row.id, 'skipped', { reason: 'human-handled' }); result.skipped += 1; continue;
       }
 
+      // PIŁKA PO STRONIE KLIENTA: follow-up ma sens tylko, gdy MY już
+      // odpowiedzieliśmy przed jego zobowiązaniem (daliśmy ofertę/odpowiedź, a on
+      // ma teraz zdecydować). Zero naszych wiadomości przed obietnicą = to klient
+      // napisał, a MY jesteśmy mu winni odpowiedź - nie zaczepiamy go automatem.
+      const outBefore = msgs.filter((m) => m.direction === 'out'
+        && new Date(m.created_at).getTime() <= createdMs).length;
+      if (outBefore === 0) {
+        await mark(db, row.id, 'skipped', { reason: 'we-owe-reply' }); result.skipped += 1; continue;
+      }
+
       // Bramka okna Meta — to samo źródło prawdy co wysyłka z panelu.
       const sendState = ctx.computeSendState(thread, msgs);
       if (['closed', 'none', 'manual_only'].includes(sendState.mode)) {
@@ -162,11 +192,11 @@ async function dispatch(db, ctx, enabled, result) {
       customer.identities = ids || [];
 
       // TWARDA BRAMKA: kontakt, który JUŻ kupił (zamknięta sprzedaż po telefonie/
-      // mailu), nie dostaje pre-sale follow-upa. Trzymamy 'held' z ostrzeżeniem -
-      // nawet przy włączniku ON to się samo NIE wyśle (Antoni decyduje ręcznie).
+      // mailu) - follow-up NIE powstaje i NIE pokazuje się na liście (decyzja
+      // Antoniego: „jeśli jest zamówienie, to się ma tu nie znaleźć").
       if (await isContactSold(db, customer.identities)) {
-        await mark(db, row.id, 'held', { reason: 'already-sold', generated_text: null });
-        result.held += 1;
+        await mark(db, row.id, 'skipped', { reason: 'already-sold' });
+        result.skipped += 1;
         continue;
       }
 
@@ -219,29 +249,36 @@ konkretnie, ciepło, po ludzku, bez korporacyjnych formułek i bez podpisu. To c
 
 function purposeInstruction(purpose, description) {
   if (purpose === 'ack') {
-    return `Klient właśnie obiecał: "${description}". Napisz BARDZO krótkie, ciepłe potwierdzenie, że czekamy i nie ma pośpiechu (wzór: "Jasne, czekamy 😊"). NIE proś o numer telefonu. Nic poza jednym zdaniem.`;
+    return `Klient - po tym, jak daliśmy mu konkret - powiedział, że się zastanowi / da znać (zobowiązanie: "${description}"). Napisz BARDZO krótkie, ciepłe potwierdzenie, że czekamy i nie ma pośpiechu (wzór: "Jasne, czekamy 😊"). NIE proś o numer. Nic poza jednym zdaniem.`;
   }
-  return `Klient obiecał: "${description}", termin minął, a klient milczy. Napisz krótkie, miłe przypomnienie, które NAWIĄZUJE do tej obietnicy (np. gdy obiecał pomiary: "Dzień dobry, czy udało się już pomierzyć?"). Jedno-dwa zdania, bez natrętności, bez twardej prośby o numer.`;
+  return `Wcześniej daliśmy klientowi konkret (produkty/cena/odpowiedź), on miał zdecydować ("${description}"), termin minął i milczy. Napisz krótki follow-up SPRZEDAŻOWY, który delikatnie prowadzi do decyzji i nawiązuje do tego, na co czekamy (np. "Dzień dobry, czy udało się już pomierzyć?"). Jedno-dwa zdania, bez natrętności.`;
 }
 
 function recentTranscript(messages) {
-  return messages.slice(-8).map((m) => {
+  const tail = messages.slice(-8);
+  return tail.map((m, i) => {
     const who = m.direction === 'in' ? 'KLIENT' : (m.direction === 'internal' ? 'NOTATKA' : 'MY');
-    return `${who}: ${String(m.body || '').slice(0, 400)}`;
+    const mark = i === tail.length - 1 ? ' [OSTATNIA]' : '';
+    return `${who}${mark}: ${String(m.body || '').slice(0, 400)}`;
   }).join('\n');
 }
 
-// Zwraca treść wiadomości albo '' gdy pre-sale bramka mówi POMIŃ.
+// Zwraca treść wiadomości albo '' gdy bramka mówi POMIŃ.
 async function generateFollowup(db, thread, customer, messages, commit, purpose) {
   const phoneKnown = (customer.identities || []).some((i) => i.type === 'phone');
   const system = `${STYLE}
 
 ${purposeInstruction(purpose, String(commit.description || '').slice(0, 200))}
 
-BRAMKA PRE-SALE: przypominamy TYLKO w sprawach prowadzących do sprzedaży (pomiar, sprawdzenie, decyzja o zakupie, dobór zestawu). Jeśli to sprawa POSPRZEDAŻOWA (reklamacja, problem z zamówieniem/dostawą, montaż po zakupie), spór/negocjacja "a taniej", off-topic albo cokolwiek, gdzie automatyczne przypomnienie byłoby nie na miejscu - zwróć DOKŁADNIE jedno słowo: POMIŃ (i nic więcej).
+To jest follow-up SPRZEDAŻOWY: ma delikatnie doprowadzić do decyzji zakupowej PO tym, jak MY już daliśmy klientowi konkret (produkty, cenę, odpowiedź techniczną), a on się zastanawia albo ucichł.
+
+ZWRÓĆ DOKŁADNIE jedno słowo POMIŃ (i nic więcej), jeśli zachodzi KTÓREKOLWIEK:
+- ostatnia wiadomość [OSTATNIA] jest OD KLIENTA i czeka na NASZĄ odpowiedź (pytanie, prośba o wycenę/telefon, "mogę zadzwonić?", "ile kosztuje?", "jaki profil?") - wtedy to MY jesteśmy mu winni odpowiedź, więc nie follow-up;
+- z rozmowy NIE widać, żebyśmy wcześniej dali ofertę/konkret (klient dopiero prosi o propozycję, rozmowa się zaczyna) - najpierw trzeba odpisać, nie przypominać;
+- sprawa POSPRZEDAŻOWA (reklamacja, status zamówienia, montaż po zakupie), spór/negocjacja "a taniej", ustalanie logistyki rozmowy (umawianie połączenia), off-topic albo cokolwiek, gdzie automatyczne przypomnienie byłoby nie na miejscu.
 
 Kanał: ${thread.channel}. Numer telefonu klienta: ${phoneKnown ? 'ZNANY' : 'NIEZNANY'}.
-Odpowiedz WYŁĄCZNIE treścią wiadomości do klienta albo słowem POMIŃ.`;
+Odpowiedz WYŁĄCZNIE treścią wiadomości do klienta prowadzącą do domknięcia, albo słowem POMIŃ.`;
 
   const payload = `Klient: ${customer.display_name || '(imię nieznane)'}\n\nOstatnia rozmowa:\n${recentTranscript(messages)}`;
   const { text } = await llm.complete({
