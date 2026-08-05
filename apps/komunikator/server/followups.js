@@ -158,8 +158,17 @@ async function dispatch(db, ctx, enabled, result) {
 
       const customer = await ctx.loadCustomer(db, thread.customer_id);
       const { data: ids } = await db
-        .from('kom_customer_identities').select('type').eq('customer_id', customer.id);
+        .from('kom_customer_identities').select('type,value').eq('customer_id', customer.id);
       customer.identities = ids || [];
+
+      // TWARDA BRAMKA: kontakt, który JUŻ kupił (zamknięta sprzedaż po telefonie/
+      // mailu), nie dostaje pre-sale follow-upa. Trzymamy 'held' z ostrzeżeniem -
+      // nawet przy włączniku ON to się samo NIE wyśle (Antoni decyduje ręcznie).
+      if (await isContactSold(db, customer.identities)) {
+        await mark(db, row.id, 'held', { reason: 'already-sold', generated_text: null });
+        result.held += 1;
+        continue;
+      }
 
       const text = (await generateFollowup(db, thread, customer, msgs, commit, row.purpose)).trim();
       // Pusto / POMIŃ = pre-sale bramka odrzuciła (sprawa posprzedażowa itp.).
@@ -250,6 +259,49 @@ Odpowiedz WYŁĄCZNIE treścią wiadomości do klienta albo słowem POMIŃ.`;
   return clean;
 }
 
+// Czy ten kontakt (po telefonie/mailu) ma JUŻ zamkniętą sprzedaż? Wtedy pre-sale
+// follow-up jest nie na miejscu. Źródła prawdy: tabela `wyceny` (status zamknięty)
+// i `Leady B2C` (Deal stage = 'Sprzedane'). Telefon w tożsamościach jest jako
+// 48XXXXXXXXX; wyceny.telefon_digits to 9 cyfr, a Leady B2C."Phone number" bigint
+// bywa z prefiksem 48 - próbujemy obu postaci.
+const SOLD_WYCENA_STATUSY = ['Waiting for payment', 'Fulfilled', 'Closed', 'Sprzedane'];
+
+async function isContactSold(db, identities) {
+  const phone9 = (identities.find((i) => i.type === 'phone')?.value || '')
+    .replace(/\D/g, '').replace(/^48/, '');
+  const email = (identities.find((i) => i.type === 'email')?.value || '').toLowerCase().trim();
+  if (!phone9 && !email) return false;
+
+  // 1) wyceny — zamknięta wycena tego kontaktu.
+  const ors = [];
+  if (phone9) ors.push(`telefon_digits.eq.${phone9}`);
+  if (email) ors.push(`email.ilike.${email}`);
+  if (ors.length) {
+    const { data, error } = await db.from('wyceny')
+      .select('status').or(ors.join(',')).in('status', SOLD_WYCENA_STATUSY).limit(1);
+    if (error) throw error;
+    if (data && data.length) return true;
+  }
+
+  // 2) Leady B2C — Deal stage 'Sprzedane' (po telefonie z/bez 48 albo po mailu).
+  if (phone9) {
+    const cands = [Number(`48${phone9}`), Number(phone9)].filter((n) => Number.isSafeInteger(n));
+    if (cands.length) {
+      const { data, error } = await db.from('Leady B2C')
+        .select('"Deal stage"').in('Phone number', cands).limit(10);
+      if (error) throw error;
+      if ((data || []).some((l) => l['Deal stage'] === 'Sprzedane')) return true;
+    }
+  }
+  if (email) {
+    const { data, error } = await db.from('Leady B2C')
+      .select('"Deal stage"').eq('Email', email).limit(10);
+    if (error) throw error;
+    if ((data || []).some((l) => l['Deal stage'] === 'Sprzedane')) return true;
+  }
+  return false;
+}
+
 async function mark(db, id, status, patch = {}) {
   await db.from('kom_followup').update({ status, ...patch }).eq('id', id);
 }
@@ -267,4 +319,4 @@ async function sweep(db, ctx) {
   return result;
 }
 
-module.exports = { sweep, generateFollowup, AUTO_KEY };
+module.exports = { sweep, generateFollowup, isContactSold, AUTO_KEY };

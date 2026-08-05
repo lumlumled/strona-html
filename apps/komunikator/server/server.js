@@ -712,9 +712,11 @@ app.get('/api/automat/status', async (req, res) => {
     const db = getClient();
     const enabled = (await settings.getSetting(db, autoreply.SETTING_KEY, false)) === true;
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    // Liczniki sumują oba outboxy: pierwszy kontakt (kom_autoreply) + follow-upy.
-    const counts = { queued: 0, held: 0, sent: 0 };
-    for (const table of ['kom_autoreply', 'kom_followup']) {
+    // Liczniki per źródło (osobne zakładki) + suma. reply=autoresponder,
+    // followup=follow-up obietnic.
+    const bySource = { reply: { queued: 0, held: 0, sent: 0 }, followup: { queued: 0, held: 0, sent: 0 } };
+    const tableFor = { reply: 'kom_autoreply', followup: 'kom_followup' };
+    for (const [src, table] of Object.entries(tableFor)) {
       const queries = [
         ['queued', db.from(table).select('id', { count: 'exact', head: true }).eq('status', 'queued')],
         ['held', db.from(table).select('id', { count: 'exact', head: true }).eq('status', 'held')],
@@ -722,10 +724,15 @@ app.get('/api/automat/status', async (req, res) => {
       ];
       for (const [key, q] of queries) {
         const { count } = await q;
-        counts[key] += count || 0;
+        bySource[src][key] = count || 0;
       }
     }
-    res.json({ enabled, counts });
+    const counts = {
+      queued: bySource.reply.queued + bySource.followup.queued,
+      held: bySource.reply.held + bySource.followup.held,
+      sent: bySource.reply.sent + bySource.followup.sent,
+    };
+    res.json({ enabled, counts, bySource });
   } catch (err) {
     handleError(res, err, 502);
   }
@@ -747,10 +754,14 @@ const FOLLOWUP_LABELS = { ack: 'potwierdzenie', nudge: 'przypomnienie', nudge2: 
 app.get('/api/automat/feed', async (req, res) => {
   try {
     const db = getClient();
-    // Dwa outboxy w jednym feedzie: pierwszy kontakt + follow-up obietnic.
+    // Dwa outboxy: pierwszy kontakt (autoresponder) + follow-up obietnic.
+    // ?source=reply|followup rozdziela je na osobne zakładki; brak = oba razem.
+    const source = req.query.source;
+    const wantReply = source !== 'followup';
+    const wantFollow = source !== 'reply';
     const [autoRes, followRes] = await Promise.all([
-      db.from('kom_autoreply').select('*').order('created_at', { ascending: false }).limit(40),
-      db.from('kom_followup').select('*').order('created_at', { ascending: false }).limit(40),
+      wantReply ? db.from('kom_autoreply').select('*').order('created_at', { ascending: false }).limit(60) : Promise.resolve({ data: [] }),
+      wantFollow ? db.from('kom_followup').select('*').order('created_at', { ascending: false }).limit(60) : Promise.resolve({ data: [] }),
     ]);
     if (autoRes.error) throw autoRes.error;
     if (followRes.error) throw followRes.error;

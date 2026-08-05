@@ -238,6 +238,8 @@
     .automat-in { font-size: .85rem; color: #444; margin-top: .2rem; white-space: pre-wrap; }
     .automat-out { font-size: .85rem; color: #0a7; margin-top: .35rem; white-space: pre-wrap; background: #f2fbf7; border-radius: 8px; padding: .4rem .55rem; }
     .automat-reason { font-size: .78rem; color: #999; margin-top: .25rem; }
+    .automat-card.sold { border-color: #f1a9a0; background: #fdf3f2; }
+    .automat-warn { font-size: .8rem; color: #c0392b; font-weight: 600; margin-top: .3rem; }
   </style>
 </head>
 <body>
@@ -254,6 +256,7 @@
         <button class="tab" data-status="closed">Zamknięte</button>
         <button class="tab" data-status="all">Wszystkie</button>
         <button class="tab" data-status="automat" id="tab-automat">Automat <span class="tab-count" id="automat-count" hidden></span></button>
+        <button class="tab" data-status="followupy" id="tab-followupy">Follow-upy <span class="tab-count" id="followupy-count" hidden></span></button>
       </div>
       <ul class="thread-list" id="thread-list">
         <li class="empty">Ładowanie…</li>
@@ -371,7 +374,8 @@
     // ── Lista wątków ──
     async function loadThreads() {
       setMode();
-      if (state.statusFilter === 'automat') { loadAutomat(); return; }
+      if (state.statusFilter === 'automat') { loadAutomatPanel('reply'); return; }
+      if (state.statusFilter === 'followupy') { loadAutomatPanel('followup'); return; }
       try {
         const { data } = await api(`/threads?view=${state.statusFilter}`);
         state.threads = data;
@@ -387,7 +391,7 @@
     // pokazuje WYŁĄCZNIE to, co czeka na odpowiedź.
     function setMode() {
       const cardsMode = state.statusFilter === 'reply';
-      const automatMode = state.statusFilter === 'automat';
+      const automatMode = state.statusFilter === 'automat' || state.statusFilter === 'followupy';
       $('layout').classList.toggle('cards-mode', cardsMode);
       $('cards').hidden = !cardsMode;
       $('automat').hidden = !automatMode;
@@ -414,13 +418,17 @@
       document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.status === status));
     }
 
-    // ── Panel Automat (autoresponder) ──
-    async function loadAutomat() {
+    // ── Panel Automat / Follow-upy (współdzielą jeden kontener #automat-panel) ──
+    // source: 'reply' = autoresponder pierwszego kontaktu, 'followup' = obietnice.
+    function currentAutomatSource() {
+      return state.statusFilter === 'followupy' ? 'followup' : 'reply';
+    }
+    async function loadAutomatPanel(source) {
       const box = $('automat-panel');
       box.innerHTML = '<div class="empty" style="padding:1rem;">Ładowanie…</div>';
       try {
-        const [status, feed] = await Promise.all([api('/automat/status'), api('/automat/feed')]);
-        renderAutomat(status, feed.items || []);
+        const [status, feed] = await Promise.all([api('/automat/status'), api(`/automat/feed?source=${source}`)]);
+        renderAutomat(source, status, feed.items || []);
       } catch (err) {
         box.innerHTML = `<div class="empty" style="padding:1rem;">Błąd: ${escapeHtml(err.message)}</div>`;
       }
@@ -432,6 +440,7 @@
     };
 
     function automatCardHtml(it) {
+      const sold = it.reason === 'already-sold';
       const canCancel = it.status === 'queued' || it.status === 'held';
       const when = it.status === 'sent' ? ('wysłano ' + fmtTime(it.sent_at))
         : it.status === 'queued' ? ('planowo ' + fmtTime(it.send_after))
@@ -439,51 +448,68 @@
       const isFollow = it.source === 'followup';
       const kindChip = isFollow ? ` · follow-up: ${it.purpose_label || ''}` : (it.kind === 'comment' ? ' · komentarz' : '');
       const inIcon = isFollow ? '🤝' : '💬';
-      return `<div class="automat-card">
+      const statusLabel = sold ? '🚫 wstrzymane - klient już kupił' : (AUTOMAT_STATUS[it.status] || it.status);
+      return `<div class="automat-card${sold ? ' sold' : ''}">
         <div class="automat-card-top">
-          <span class="badge">${AUTOMAT_STATUS[it.status] || it.status}</span>
+          <span class="badge">${statusLabel}</span>
           <span class="chip">${CHANNEL_LABELS[it.channel] || it.channel || ''}${kindChip}</span>
           <span class="automat-when">${when}</span>
           ${canCancel ? `<button class="btn" data-cancel="${it.id}">Cofnij</button>` : ''}
         </div>
         <div class="automat-who">${escapeHtml(it.customer_name || '(bez nazwy)')}</div>
         <div class="automat-in">${inIcon} ${escapeHtml((it.inbound_text || '').slice(0, 240))}</div>
+        ${sold ? '<div class="automat-warn">⚠️ ten kontakt ma już zamkniętą sprzedaż - pre-sale follow-upa NIE wysyłamy. Sprawdź ręcznie, czy zamówienie jest gotowe.</div>' : ''}
         ${it.generated_text ? `<div class="automat-out">↳ ${escapeHtml(it.generated_text)}</div>` : ''}
-        ${it.status === 'skipped' && it.reason ? `<div class="automat-reason">pominięte: ${escapeHtml(it.reason)}</div>` : ''}
+        ${it.status === 'skipped' && it.reason && !sold ? `<div class="automat-reason">pominięte: ${escapeHtml(it.reason)}</div>` : ''}
         ${it.error ? `<div class="automat-reason">błąd: ${escapeHtml(it.error)}</div>` : ''}
       </div>`;
     }
 
-    // Licznik na zakładce „Automat" — żeby podglądy „wysłałby" (autoresponder +
-    // follow-up obietnic) były widoczne, zanim się w nią wejdzie.
-    function setAutomatBadge(n) {
-      const el = $('automat-count');
+    // Liczniki na zakładkach — osobno „Automat" (autoresponder) i „Follow-upy",
+    // żeby podglądy „wysłałby" były widoczne, zanim się w nie wejdzie.
+    function setTabCount(id, n) {
+      const el = $(id);
       if (!el) return;
       if (n > 0) { el.textContent = n; el.hidden = false; }
       else { el.hidden = true; }
     }
-    async function refreshAutomatBadge() {
-      try {
-        const s = await api('/automat/status');
-        const c = s.counts || {};
-        setAutomatBadge((c.held || 0) + (c.queued || 0));
-      } catch (_) { /* cicho — licznik to tylko podpowiedź */ }
+    function setBadgesFrom(status) {
+      const b = status.bySource || { reply: {}, followup: {} };
+      setTabCount('automat-count', (b.reply.held || 0) + (b.reply.queued || 0));
+      setTabCount('followupy-count', (b.followup.held || 0) + (b.followup.queued || 0));
+    }
+    async function refreshAutomatBadges() {
+      try { setBadgesFrom(await api('/automat/status')); }
+      catch (_) { /* cicho — licznik to tylko podpowiedź */ }
     }
 
-    function renderAutomat(status, items) {
+    const AUTOMAT_META = {
+      reply: {
+        title: 'Automat - auto-odpowiedzi na nowe wiadomości',
+        empty: 'Jeszcze nic. Gdy przyjdzie nowa wiadomość, tu pojawi się decyzja automatu.',
+      },
+      followup: {
+        title: 'Follow-up obietnic klienta',
+        empty: 'Jeszcze nic. Gdy klient coś obieca i minie termin, tu pojawi się podgląd przypomnienia.',
+      },
+    };
+
+    function renderAutomat(source, status, items) {
       const enabled = !!status.enabled;
-      const c = status.counts || {};
-      setAutomatBadge((c.held || 0) + (c.queued || 0));
+      const meta = AUTOMAT_META[source] || AUTOMAT_META.reply;
+      const c = (status.bySource && status.bySource[source]) || {};
+      setBadgesFrom(status);
       const feed = items.map(automatCardHtml).join('') ||
-        '<div class="empty" style="padding:1rem;">Jeszcze nic. Gdy przyjdzie nowa wiadomość, tu pojawi się decyzja automatu.</div>';
+        `<div class="empty" style="padding:1rem;">${meta.empty}</div>`;
       $('automat-panel').innerHTML = `
         <div class="automat-head">
           <div>
-            <strong>Automat - auto-odpowiedzi + follow-up obietnic</strong>
-            <div class="automat-sub">${enabled ? '🟢 WŁĄCZONY - odpowiada sam' : '⚪ WYŁĄCZONY - tylko podgląd, nic nie wysyła'} · w kolejce: ${c.queued || 0} · „wysłałby": ${c.held || 0} · wysłane 24h: ${c.sent || 0}</div>
+            <strong>${meta.title}</strong>
+            <div class="automat-sub">${enabled ? '🟢 WŁĄCZONY - wysyła sam' : '⚪ WYŁĄCZONY - tylko podgląd, nic nie wysyła'} · w kolejce: ${c.queued || 0} · „wysłałby": ${c.held || 0} · wysłane 24h: ${c.sent || 0}</div>
           </div>
           <button class="btn ${enabled ? 'primary' : ''}" id="automat-toggle" data-enabled="${enabled}">${enabled ? 'Wyłącz auto-wysyłkę' : 'Włącz auto-wysyłkę'}</button>
         </div>
+        <div class="automat-sub" style="padding:0 1rem .5rem;">Wspólny włącznik dla auto-odpowiedzi i follow-upów.</div>
         <div class="automat-feed">${feed}</div>`;
       $('automat-toggle').addEventListener('click', toggleAutomat);
       document.querySelectorAll('#automat-panel [data-cancel]').forEach((b) =>
@@ -492,11 +518,11 @@
 
     async function toggleAutomat() {
       const next = $('automat-toggle').dataset.enabled !== 'true';
-      if (next && !confirm('Włączyć auto-wysyłkę? Od tej chwili automat zacznie SAM wysyłać odpowiedzi na nowe wiadomości.')) return;
+      if (next && !confirm('Włączyć auto-wysyłkę? Od tej chwili automat zacznie SAM wysyłać (i auto-odpowiedzi, i follow-upy).')) return;
       try {
         await api('/automat/toggle', { method: 'POST', body: JSON.stringify({ enabled: next }) });
         toast(next ? 'Auto-wysyłka WŁĄCZONA' : 'Auto-wysyłka wyłączona');
-        loadAutomat();
+        loadAutomatPanel(currentAutomatSource());
       } catch (err) { toast(err.message); }
     }
 
@@ -504,7 +530,7 @@
       try {
         await api(`/automat/${id}/cancel`, { method: 'POST' });
         toast('Anulowano');
-        loadAutomat();
+        loadAutomatPanel(currentAutomatSource());
       } catch (err) { toast(err.message); }
     }
 
@@ -1328,9 +1354,9 @@
     }
 
     openFromUrl();
-    refreshAutomatBadge(); // licznik podglądów na zakładce „Automat" od razu
+    refreshAutomatBadges(); // liczniki podglądów na zakładkach Automat/Follow-upy od razu
     setInterval(loadThreads, 30000); // odśwież listę co 30 s
-    setInterval(refreshAutomatBadge, 60000); // i licznik Automatu co minutę
+    setInterval(refreshAutomatBadges, 60000); // i liczniki co minutę
   </script>
 </body>
 </html>
