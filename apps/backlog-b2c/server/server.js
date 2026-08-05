@@ -1234,6 +1234,22 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
         }));
       }
 
+      // ── Meta CAPI: "Wycena wysłana" ze ścieżki telefonicznej ───────────────
+      // Event pipeline'owy (notifyQuoteSent) strzela tylko, gdy wycena przejdzie
+      // przez panel Wyceny. Ale status "Wycena wysłana" najczęściej ustawia
+      // ROZMOWA (AI wykrywa wysłaną ofertę) albo ręczna zmiana — wtedy pipeline
+      // milczy i kampania (optymalizująca pod ten etap) nie dostaje sygnału.
+      // Domykamy lukę: przy WEJŚCIU leada na "Wycena wysłana" tą drogą też
+      // dosyłamy event. Dedup na leadzie (meta_lead_events) — patrz komentarz
+      // notifyQuoteSentFromLead. Raz na leada, tylko leady z reklam.
+      if (label === 'answered' && lead['Facebook Leads ID']
+        && statusAfter === 'Wycena wysłana' && statusBefore !== 'Wycena wysłana') {
+        scheduleAfterResponse(() => metaCapi.notifyQuoteSentFromLead(supabase, lead, {
+          phone: lead['Phone number'],
+          email: lead['Email'],
+        }));
+      }
+
       // Zsynchronizuj status case'a w dzisiejszej Umowie (plan dnia to
       // zamrożona migawka z rana). Po rozmowie plan ma pokazać AKTUALNY status
       // (np. Nowy → Po pierwszym tel), ale case ZOSTAJE w swojej kategorii tego

@@ -230,8 +230,38 @@ async function notifyQualifiedContact(db, lead, { statusAfter, phone, email } = 
   }
 }
 
+// "Wycena wysłana" ze ŚCIEŻKI TELEFONICZNEJ — gdy status leada wchodzi na
+// "Wycena wysłana" przez rozmowę (AI wykrył wysłaną ofertę) albo ręcznie, a NIE
+// przez pipeline wycen (który ma własny notifyQuoteSent + dedup w wyceny_events).
+// Bez tego event nie strzelał dla większości leadów, bo status najczęściej
+// ustawia rozmowa, nie link wyceny — a kampania optymalizuje pod ten etap.
+// Dedup na leadzie (meta_lead_events); osobny ledger niż pipeline, więc w
+// rzadkim przypadku obu dróg pójdzie 2x TEN SAM etap (nieszkodliwe). NIGDY nie rzuca.
+async function notifyQuoteSentFromLead(db, lead, { phone, email } = {}) {
+  try {
+    if (!enabled()) return;
+    const leadgenId = lead && lead['Facebook Leads ID'];
+    if (!leadgenId) return;                          // nie z Lead Ads → nic do dopasowania
+    const leadId = lead && lead['ID Leada'];
+    if (await alreadySentLead(db, leadId, 'meta.wycena_wyslana')) return;
+    const r = await postEvent({
+      eventName: STAGE_WYCENA_WYSLANA,
+      leadgenId,
+      email: email || (lead && lead.Email),
+      phone: phone || (lead && lead['Phone number']),
+    });
+    if (r && r.ok) {
+      await markSentLead(db, leadId, 'meta.wycena_wyslana', {
+        events_received: r.events_received, leadgen_id: String(leadgenId), source: 'call',
+      });
+    }
+  } catch (err) {
+    console.error('Meta CAPI Wycena wysłana (z rozmowy):', err.message);
+  }
+}
+
 module.exports = {
-  notifyQuoteSent, notifyPurchase, notifyQualifiedContact, postEvent, enabled,
+  notifyQuoteSent, notifyPurchase, notifyQualifiedContact, notifyQuoteSentFromLead, postEvent, enabled,
   isQualifiedContactStatus,
   STAGE_WYCENA_WYSLANA, STAGE_SPRZEDANE, STAGE_KONTAKT_JAKOSCIOWY,
 };
