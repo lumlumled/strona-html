@@ -355,6 +355,17 @@
 
     const $ = (id) => document.getElementById(id);
 
+    // Widok handlowca (nie-admin): serwer i tak daje mu TYLKO wątki SMS jego
+    // leadów — tu chowamy zakładki i akcje administracyjne (automat, follow-upy,
+    // notatki, wyciszanie), żeby nie klikał w 403.
+    const IS_ADMIN = !!(window.LUMLUM_USER && window.LUMLUM_USER.isAdmin);
+    if (!IS_ADMIN) {
+      ['tab-automat', 'tab-followupy', 'tab-czekaja', 'note-btn'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.hidden = true;
+      });
+    }
+
     function toast(msg) {
       const el = $('toast');
       el.textContent = msg;
@@ -974,8 +985,8 @@
       // Wyciszanie / przywracanie: mute na widocznych, restore na odfiltrowanych.
       // "Nie chcę widzieć podobnych" dostępne wszędzie (także w Powiadomieniach
       // i Wszystkich — tam najczęściej wycisza się automaty typu Make/InPost).
-      $('btn-mute').hidden = false;
-      $('btn-restore').hidden = d.thread.triage === 'inbox';
+      $('btn-mute').hidden = !IS_ADMIN;
+      $('btn-restore').hidden = !IS_ADMIN || d.thread.triage === 'inbox';
 
       // Propozycje scaleń
       const banners = $('merge-banners');
@@ -1473,10 +1484,12 @@
     }
 
     openFromUrl();
-    refreshAutomatBadges(); // liczniki podglądów na zakładkach Automat/Follow-upy od razu
-    refreshWaitingBadge();  // licznik „Czekają na Ciebie"
+    if (IS_ADMIN) {
+      refreshAutomatBadges(); // liczniki podglądów na zakładkach Automat/Follow-upy od razu
+      refreshWaitingBadge();  // licznik „Czekają na Ciebie"
+      setInterval(() => { refreshAutomatBadges(); refreshWaitingBadge(); }, 60000); // liczniki co minutę
+    }
     setInterval(loadThreads, 30000); // odśwież listę co 30 s
-    setInterval(() => { refreshAutomatBadges(); refreshWaitingBadge(); }, 60000); // liczniki co minutę
   </script>
 </body>
 </html>

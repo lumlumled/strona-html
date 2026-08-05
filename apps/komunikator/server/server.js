@@ -133,6 +133,12 @@ async function runWorker(req, res) {
     result.commitments = { error: err.message };
   }
   try {
+    result.staleCards = await expireStaleCards(db);
+  } catch (err) {
+    console.error('Worker (staleCards):', err.message);
+    result.staleCards = { error: err.message };
+  }
+  try {
     // Siatka bezpieczeństwa dla załączników (główny takt: /api/cron/media).
     result.media = await media.sweep(db, { budgetMs: 60000 });
   } catch (err) {
@@ -286,6 +292,42 @@ function opensWindow(message) {
   return message.direction === 'in' && message.meta?.kind !== 'comment';
 }
 
+// Karta „Do odpisania" starsza niż 7 dni ciszy sama schodzi na 'waiting'
+// (decyzja Antoniego 2026-08-05): po 7 dniach okno Meta i tak jest zamknięte,
+// z panelu nie odpiszemy — a SMS/e-mail traktujemy tak samo dla spójności.
+// Wątek wraca, gdy klient znów napisze. Woła cron worker.
+async function expireStaleCards(db) {
+  const cutoff = new Date(Date.now() - SEVEN_DAYS_MS).toISOString();
+  const { data, error } = await db.from('kom_threads')
+    .update({ status: 'waiting' })
+    .eq('status', 'attention')
+    .lt('last_message_at', cutoff)
+    .select('id');
+  if (error) throw error;
+  return { expired: (data || []).length };
+}
+
+// ── Widok handlowca (nie-admin): WYŁĄCZNIE wątki SMS jego leadów B2C ─────────
+// Decyzja Antoniego 2026-08-05: Lorenzo w Wiadomościach widzi same SMS-y do
+// swoich leadów (kolumna Owner w "Leady B2C"); jego odpowiedzi wychodzą z jego
+// numeru Zadarmy (resolveSmsCaller po nazwie użytkownika). Admin bez zmian.
+async function allowedSmsPhones(db, user) {
+  const { data, error } = await db.from('Leady B2C')
+    .select('"Phone number"')
+    .ilike('Owner', String(user?.name || ''));
+  if (error) throw error;
+  return new Set((data || []).map((r) => String(r['Phone number'] || '')).filter(Boolean));
+}
+
+async function threadAccessError(db, user, thread) {
+  if (isAdmin(user)) return null;
+  if (thread.channel !== 'sms') return 'Ten widok obejmuje tylko wątki SMS';
+  const phones = await allowedSmsPhones(db, user);
+  return phones.has(String(thread.external_thread_id || ''))
+    ? null
+    : 'Ten numer nie należy do Twoich leadów';
+}
+
 function windowExpiresAt(thread, lastInboundAt) {
   if (!WINDOWED_CHANNELS.has(thread.channel) || !lastInboundAt) return null;
   return new Date(new Date(lastInboundAt).getTime() + 24 * 60 * 60 * 1000).toISOString();
@@ -396,16 +438,24 @@ app.get('/api/threads', async (req, res) => {
   try {
     const db = getClient();
     const view = String(req.query.view || req.query.status || 'main');
+    const restricted = !isAdmin(req.user);
     let query = db.from('kom_threads').select('*').order('last_message_at', { ascending: false, nullsFirst: false });
+    if (restricted) query = query.eq('channel', 'sms');
     if (view === 'reply') query = query.eq('status', 'attention').eq('triage', 'inbox');
     else if (view === 'main' || view === 'open') query = query.in('status', ['attention', 'waiting']).eq('triage', 'inbox');
     else if (view === 'notifications') query = query.in('status', ['attention', 'waiting']).eq('triage', 'notification');
     else if (view !== 'all') query = query.eq('status', view);
-    const { data: threads, error } = await query.limit(200);
+    const { data: fetched, error } = await query.limit(200);
     if (error) throw error;
 
-    const customerIds = [...new Set((threads || []).map((t) => t.customer_id))];
-    const threadIds = (threads || []).map((t) => t.id);
+    let threads = fetched || [];
+    if (restricted) {
+      const phones = await allowedSmsPhones(db, req.user);
+      threads = threads.filter((t) => phones.has(String(t.external_thread_id || '')));
+    }
+
+    const customerIds = [...new Set(threads.map((t) => t.customer_id))];
+    const threadIds = threads.map((t) => t.id);
 
     const [customersRes, messagesRes, proposalsRes] = await Promise.all([
       customerIds.length
@@ -502,6 +552,8 @@ app.get('/api/threads/:id', async (req, res) => {
     if (error) throw error;
     const thread = threads && threads[0];
     if (!thread) return res.status(404).json({ error: 'Nie znaleziono wątku' });
+    const accessErr = await threadAccessError(db, req.user, thread);
+    if (accessErr) return res.status(403).json({ error: accessErr });
 
     const customer = await identity.loadCustomer(db, thread.customer_id);
     const [messagesRes, identitiesRes, proposalsRes, threadsRes, attachmentsRes] = await Promise.all([
@@ -638,6 +690,12 @@ app.post('/api/threads/:id/status', async (req, res) => {
       return res.status(400).json({ error: 'Nieprawidłowy status' });
     }
     const db = getClient();
+    const { data: threads, error: findErr } = await db.from('kom_threads').select('*').eq('id', req.params.id).limit(1);
+    if (findErr) throw findErr;
+    const thread = threads && threads[0];
+    if (!thread) return res.status(404).json({ error: 'Nie znaleziono wątku' });
+    const accessErr = await threadAccessError(db, req.user, thread);
+    if (accessErr) return res.status(403).json({ error: accessErr });
     const { error } = await db.from('kom_threads').update({ status }).eq('id', req.params.id);
     if (error) throw error;
     // Odłożony/zamknięty wątek = wisząca sugestia była zignorowana.
@@ -699,6 +757,8 @@ app.post('/api/threads/:id/suggestion', async (req, res) => {
     if (error) throw error;
     const thread = threads && threads[0];
     if (!thread) return res.status(404).json({ error: 'Nie znaleziono wątku' });
+    const accessErr = await threadAccessError(db, req.user, thread);
+    if (accessErr) return res.status(403).json({ error: accessErr });
 
     // Załączniki wątku "na żądanie": jeśli cron nie zdążył opisać zdjęcia/rzutu,
     // dociągamy analizę teraz — propozycja odpowiedzi ma wiedzieć, co klient
@@ -737,6 +797,7 @@ app.post('/api/threads/:id/suggestion', async (req, res) => {
 
 app.get('/api/automat/status', async (req, res) => {
   try {
+    if (!isAdmin(req.user)) return res.status(403).json({ error: 'Tylko administrator' });
     const db = getClient();
     const enabled = (await settings.getSetting(db, autoreply.SETTING_KEY, false)) === true;
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -781,6 +842,7 @@ const FOLLOWUP_LABELS = { ack: 'potwierdzenie', nudge: 'przypomnienie', nudge2: 
 
 app.get('/api/automat/feed', async (req, res) => {
   try {
+    if (!isAdmin(req.user)) return res.status(403).json({ error: 'Tylko administrator' });
     const db = getClient();
     // Dwa outboxy: pierwszy kontakt (autoresponder) + follow-up obietnic.
     // ?source=reply|followup rozdziela je na osobne zakładki; brak = oba razem.
@@ -855,6 +917,7 @@ app.get('/api/automat/feed', async (req, res) => {
 // zaangażował, ostatnia wiadomość od niego wisi bez reakcji). Ręczna lista.
 app.get('/api/automat/waiting', async (req, res) => {
   try {
+    if (!isAdmin(req.user)) return res.status(403).json({ error: 'Tylko administrator' });
     res.json({ items: await followups.waitingForYou(getClient()) });
   } catch (err) {
     handleError(res, err, 502);
@@ -863,6 +926,7 @@ app.get('/api/automat/waiting', async (req, res) => {
 
 app.post('/api/automat/:id/cancel', async (req, res) => {
   try {
+    if (!isAdmin(req.user)) return res.status(403).json({ error: 'Tylko administrator' });
     const db = getClient();
     // id może być z któregokolwiek outboxu (pierwszy kontakt / follow-up).
     for (const table of ['kom_autoreply', 'kom_followup']) {
@@ -945,6 +1009,8 @@ app.post('/api/threads/:id/messages', async (req, res) => {
     if (error) throw error;
     const thread = threads && threads[0];
     if (!thread) return res.status(404).json({ error: 'Nie znaleziono wątku' });
+    const accessErr = await threadAccessError(db, req.user, thread);
+    if (accessErr) return res.status(403).json({ error: accessErr });
 
     const { data: messages, error: msgsErr } = await db
       .from('kom_messages').select('id,direction,body,created_at,meta')
@@ -1054,6 +1120,12 @@ app.post('/api/threads/:id/manual-sent', async (req, res) => {
     const text = String(req.body?.body || '').trim();
     if (!text) return res.status(400).json({ error: 'Pusta wiadomość' });
     const db = getClient();
+    const { data: threads, error: findErr } = await db.from('kom_threads').select('*').eq('id', req.params.id).limit(1);
+    if (findErr) throw findErr;
+    const thread = threads && threads[0];
+    if (!thread) return res.status(404).json({ error: 'Nie znaleziono wątku' });
+    const accessErr = await threadAccessError(db, req.user, thread);
+    if (accessErr) return res.status(403).json({ error: accessErr });
     const { error: msgErr } = await db.from('kom_messages').insert({
       thread_id: req.params.id,
       direction: 'out',
@@ -1088,6 +1160,7 @@ app.post('/api/threads/:id/manual-sent', async (req, res) => {
 
 app.post('/api/notes', async (req, res) => {
   try {
+    if (!isAdmin(req.user)) return res.status(403).json({ error: 'Tylko administrator' });
     const text = String(req.body?.text || '').trim();
     const phone = String(req.body?.phone || '').trim();
     if (!text) return res.status(400).json({ error: 'Pusta notatka' });
@@ -1128,6 +1201,7 @@ app.post('/api/notes', async (req, res) => {
 
 app.get('/api/gmail/auth', (req, res) => {
   try {
+    if (!isAdmin(req.user)) return res.status(403).json({ error: 'Tylko administrator' });
     res.redirect(gmail.authUrl());
   } catch (err) {
     handleError(res, err, 500);
@@ -1171,6 +1245,8 @@ app.post('/api/threads/:id/mute', async (req, res) => {
     if (error) throw error;
     const thread = threads && threads[0];
     if (!thread) return res.status(404).json({ error: 'Nie znaleziono wątku' });
+    // Wyciszenie uczy GLOBALNY filtr — decyzja admina, nie handlowca.
+    if (!isAdmin(req.user)) return res.status(403).json({ error: 'Tylko administrator może wyciszać' });
 
     const { data: lastIn } = await db
       .from('kom_messages').select('body').eq('thread_id', thread.id).eq('direction', 'in')
@@ -1199,6 +1275,7 @@ app.post('/api/threads/:id/mute', async (req, res) => {
 // blokuje dalsze automatyczne przełączanie tego wątku (triage_locked).
 app.post('/api/threads/:id/triage', async (req, res) => {
   try {
+    if (!isAdmin(req.user)) return res.status(403).json({ error: 'Tylko administrator może zmieniać kategorię' });
     const value = String(req.body?.triage || '');
     if (!['inbox', 'notification', 'archive'].includes(value)) {
       return res.status(400).json({ error: 'Nieprawidłowa kategoria' });
@@ -1222,6 +1299,7 @@ app.post('/api/threads/:id/triage', async (req, res) => {
 
 app.post('/api/merge-proposals/:id/confirm', async (req, res) => {
   try {
+    if (!isAdmin(req.user)) return res.status(403).json({ error: 'Tylko administrator decyduje o scaleniach' });
     const winner = await identity.confirmMerge(getClient(), req.params.id);
     res.json({ ok: true, customer: winner.public_id });
   } catch (err) {
@@ -1231,6 +1309,7 @@ app.post('/api/merge-proposals/:id/confirm', async (req, res) => {
 
 app.post('/api/merge-proposals/:id/reject', async (req, res) => {
   try {
+    if (!isAdmin(req.user)) return res.status(403).json({ error: 'Tylko administrator decyduje o scaleniach' });
     await identity.rejectMerge(getClient(), req.params.id);
     res.json({ ok: true });
   } catch (err) {

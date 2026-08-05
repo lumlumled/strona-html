@@ -23,6 +23,7 @@ const PUSH_FRESH_MS = 60 * 60 * 1000;
 const KIND_POLICY = {
   comment: 'comment: BARDZO selektywnie. Domyślnie "archive". "inbox" TYLKO przy jasnych przesłankach, że autor chce kupić albo pyta o produkt pod zakup (cena, dostępność, zamówienie, wysyłka, dobór pod swoją sytuację).',
   dm: 'dm: domyślnie "inbox" — wiadomość prywatna od człowieka zostaje, nawet niejednoznaczna. "archive" tylko przy JASNYCH przesłankach spamu/scamu/masowej oferty współpracy. "notification" dla wiadomości automatycznych ORAZ dla indywidualnych propozycji współpracy/reklamy/influencerki (człowiek, ale nie klient).',
+  sms: 'sms: to wiadomość od REALNEGO leada (jego numer jest w naszej bazie, często odpowiada na naszego SMS-a/telefon). Domyślnie "inbox"; "archive" wyłącznie jawny spam sieciowy. Podanie adresu e-mail, adresu, wymiarów, terminu albo "oddzwonię" to nowa informacja do sprawy → wymaga_odpowiedzi true (false tylko czyste potwierdzenie typu "ok, dziękuję").',
   email: 'email: jak dm dla ludzi (współpraca/marketing od człowieka → "notification"). Automaty rozdzielaj surowo: "notification" TYLKO gdy wymaga działania właściciela (błąd krytyczny do naprawienia, faktura do zaksięgowania, alert billingowy, odpowiedź supportu na nasze zgłoszenie); cykliczne raporty, newslettery, onboarding narzędzi, marketing, powiadomienia informacyjne bez potrzeby działania → "archive". Adres typu no-reply sam w sobie NIE przesądza — automat może przekazywać wiadomość OD KLIENTA (np. "Przychodząca wiadomość SMS od ..."), a taka jest "inbox".',
 };
 
@@ -239,7 +240,9 @@ async function sweep(db, limit = 20) {
 
     try {
       const result = await classifyMessage(db, {
-        kind: thread.channel === 'email' ? 'email' : (msg.meta?.kind === 'comment' ? 'comment' : 'dm'),
+        kind: thread.channel === 'email' ? 'email'
+          : thread.channel === 'sms' ? 'sms'
+            : (msg.meta?.kind === 'comment' ? 'comment' : 'dm'),
         channel: thread.channel,
         text: msg.body,
         senderName: customers?.[0]?.display_name || null,
