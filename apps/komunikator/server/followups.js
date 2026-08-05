@@ -30,9 +30,15 @@ const SECOND_AFTER_MS = 7 * 86400000;        // drugie przypomnienie +7 dni po p
 const COMMITS_PER_RUN = 200;                 // ile obietnic skanujemy przy kolejkowaniu
 const BATCH = 6;                             // ile pozycji wysyłamy/podglądamy na przebieg
 
-// Follow-upy TYLKO z komunikatorów (decyzja Antoniego 2026-08-05): mail i SMS
-// mają swój własny obieg, tu ich nie ruszamy.
-const FOLLOWUP_CHANNELS = new Set(['messenger', 'instagram', 'whatsapp']);
+// Kanały, na których robimy follow-upy. FURTKA OTWARTA (decyzja Antoniego
+// 2026-08-05): messenger/IG/WhatsApp + e-mail. SMS ma swój własny obieg -> poza.
+// TELEFON (Zadarma) dojdzie, gdy powstanie integracja telefonu Antoniego: rozmowa
+// -> transkrypcja AI -> obietnica/feedback_date -> follow-up. Rozmowy telefoniczne
+// z terminem feedbacku trafiają do panelu Feedbacki jako zadanie RĘCZNE Antoniego
+// (SMS/telefon), nie auto - patrz [[project_feedbacki_panel]] / feedback_watch.
+// Gdy dojdzie kanał 'phone'/'call' z Zadarmy: dopisać go tutaj i wpiąć wysyłkę
+// (albo skierować do Feedbacków zamiast auto-wysyłki).
+const FOLLOWUP_CHANNELS = new Set(['messenger', 'instagram', 'whatsapp', 'email']);
 
 function randAckDelayMs() {
   return ACK_DELAY_MIN_MS + Math.floor(Math.random() * (ACK_DELAY_MAX_MS - ACK_DELAY_MIN_MS));
@@ -207,9 +213,19 @@ async function dispatch(db, ctx, enabled, result) {
       // Wyłączone -> podgląd na sucho: zapisz co BY wysłał, nic nie wychodzi.
       if (!enabled) { await mark(db, row.id, 'held', { generated_text: text }); result.held += 1; continue; }
 
-      // Włączone -> realna wysyłka per kanał (jak autoresponder).
+      // Włączone -> realna wysyłka per kanał (ta sama droga co panel/autoresponder).
       const outMeta = { auto: true, followup: row.purpose, commitment_id: row.commitment_id };
-      if (sendState.mode === 'private_reply') {
+      if (sendState.mode === 'gmail') {
+        const sent = await ctx.sendEmail(db, {
+          mailbox: sendState.email.mailbox,
+          to: sendState.email.to,
+          subject: sendState.email.subject,
+          text,
+          gmailThreadId: sendState.email.threadId,
+          lastGmailMessageId: sendState.email.lastMessageId,
+        });
+        outMeta.gmail = { id: sent.id, threadId: sent.threadId, from: sent.from };
+      } else if (sendState.mode === 'private_reply') {
         await ctx.sendPrivateReply(thread, sendState.comment, text);
         outMeta.private_reply_to = sendState.comment.commentId;
       } else {

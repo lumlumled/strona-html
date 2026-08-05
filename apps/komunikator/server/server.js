@@ -86,6 +86,7 @@ function autoreplyCtx() {
     computeSendState,
     sendViaZernio,
     sendPrivateReply,
+    sendEmail: gmail.sendReply,
   };
 }
 
