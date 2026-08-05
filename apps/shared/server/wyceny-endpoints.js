@@ -421,6 +421,54 @@ async function notifyWycenaCreated(db, wycena, actorName) {
   }
 }
 
+// Wspólna logika tworzenia wyceny — używana przez POST /api/wyceny (panel/
+// edytor/szybkie dodanie) ORAZ automat wykrywania wyceny z wątku komunikatora
+// (apps/komunikator/server/wycena-orchestrator.js). Bierze surowe pola (przez
+// whitelistę EDITABLE_WYCENA_FIELDS), waliduje kontakt, liczy telefon_digits,
+// dopisuje cennik, nadaje ID/owner/form_token, linkuje istniejącego leada po
+// telefonie i odpala powiadomienie. Zwraca SUROWY wiersz `wyceny` (dekoruje go
+// dopiero warstwa HTTP). Błąd walidacji dostaje err.status=400.
+async function createWycena(supabase, { fields = {}, source = 'panel', actorName = 'Antoni', feedbackDue } = {}) {
+  const patch = {};
+  EDITABLE_WYCENA_FIELDS.forEach((f) => { if (fields[f] !== undefined) patch[f] = fields[f]; });
+  if (!patch.items && !fields.items) patch.items = [];
+  const maKontakt = String(patch.telefon_e164 || '').trim() || String(patch.email || '').trim();
+  if (!maKontakt && !patch.lead_id) {
+    const err = new Error('Wycena wymaga telefonu lub e-maila (albo podpięcia pod leada)');
+    err.status = 400;
+    throw err;
+  }
+  if (patch.telefon_e164) patch.telefon_digits = String(patch.telefon_e164).replace(/\D/g, '').replace(/^48/, '');
+  if (patch.items) await syncItemsToCennik(supabase, patch.items);
+  // Wycena podpięta pod leada przejmuje jego ownera (jeden właściciel tematu);
+  // lead bez ownera / nieznaleziony -> owner z sesji (actorName).
+  let ownerFromLead = null;
+  if (patch.lead_id) {
+    ownerFromLead = await fetchLeadOwner(supabase, patch.lead_id)
+      .catch((e) => { console.error('Owner leada (createWycena):', e.message); return null; });
+  }
+  const { data: idData, error: idErr } = await supabase.rpc('wyceny_next_id');
+  if (idErr) throw idErr;
+  const crypto = require('crypto');
+  const row = {
+    id: idData,
+    owner: ownerFromLead || String(actorName || 'Antoni'),
+    source,
+    form_token: crypto.randomBytes(12).toString('base64url'),
+    ...patch,
+  };
+  const { data, error } = await supabase.from('wyceny').insert(row).select('*');
+  if (error) throw error;
+  await logEvent(supabase, row.id, 'wycena.created', { source: row.source, user: actorName });
+  const linkedLeadId = await linkWycenaToLead(supabase, data[0]);
+  if (linkedLeadId) data[0].lead_id = linkedLeadId;
+  if (feedbackDue !== undefined) {
+    await applyFeedbackDue(supabase, data[0], feedbackDue, actorName);
+  }
+  await notifyWycenaCreated(supabase, data[0], actorName);
+  return data[0];
+}
+
 // onStracony — opcjonalny hook hosta, wołany PO tym, jak strata wyceny domknie
 // jej leada ({ telefon, status }). Backlog podpina pod niego synchronizację
 // planu dnia (ta sama wtyczka co przy POST /api/leady/stracony); panel Wyceny
@@ -717,48 +765,18 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
     try {
       const supabase = getClient();
       const body = req.body || {};
-      const patch = {};
-      EDITABLE_WYCENA_FIELDS.forEach((f) => { if (body[f] !== undefined) patch[f] = body[f]; });
-      if (!patch.items && !body.items) patch.items = [];
-      const maKontakt = String(patch.telefon_e164 || '').trim() || String(patch.email || '').trim();
-      if (!maKontakt && !patch.lead_id) {
-        return res.status(400).json({ error: 'Wycena wymaga telefonu lub e-maila (albo podpięcia pod leada)' });
-      }
-      if (patch.telefon_e164) patch.telefon_digits = String(patch.telefon_e164).replace(/\D/g, '').replace(/^48/, '');
-      if (patch.items) await syncItemsToCennik(supabase, patch.items);
-      // Wycena podpięta pod leada przejmuje jego ownera (decyzja Antoniego
-      // 2026-07-12: jeden właściciel tematu — kontaktujemy się z leadem, nie
-      // z wyceną). Lead bez ownera / nieznaleziony -> owner z sesji jak dotąd.
-      let ownerFromLead = null;
-      if (patch.lead_id) {
-        ownerFromLead = await fetchLeadOwner(supabase, patch.lead_id)
-          .catch((err) => { console.error('Owner leada (POST wyceny):', err.message); return null; });
-      }
-      const { data: idData, error: idErr } = await supabase.rpc('wyceny_next_id');
-      if (idErr) throw idErr;
-      const id = idData;
-      const crypto = require('crypto');
-      const row = {
-        id,
-        owner: ownerFromLead || String(req.user.name || 'Antoni'),
+      // Cała logika tworzenia (walidacja, cennik, ID/owner, link do leada,
+      // powiadomienie) siedzi w createWycena — współdzielona z automatem wyceny
+      // z wątku komunikatora, żeby obie ścieżki nigdy się nie rozjechały.
+      const created = await createWycena(supabase, {
+        fields: body,
         source: body.source === 'quick-add' ? 'quick-add' : 'panel',
-        form_token: crypto.randomBytes(12).toString('base64url'),
-        ...patch,
-      };
-      const { data, error } = await supabase.from('wyceny').insert(row).select('*');
-      if (error) throw error;
-      await logEvent(supabase, id, 'wycena.created', { source: row.source, user: req.user.name });
-      // Odbij wycenę na powiązanym leadzie (status "Wycena wysłana" + link) —
-      // jeśli dopisano lead_id po telefonie, zwrotnie uzupełnij obiekt.
-      const linkedLeadId = await linkWycenaToLead(supabase, data[0]);
-      if (linkedLeadId) data[0].lead_id = linkedLeadId;
-      if (body.feedback_due !== undefined) {
-        await applyFeedbackDue(supabase, data[0], body.feedback_due, req.user.name);
-      }
-      await notifyWycenaCreated(supabase, data[0], req.user.name);
-      res.json({ data: decorate(data[0]) });
+        actorName: req.user.name,
+        feedbackDue: body.feedback_due,
+      });
+      res.json({ data: decorate(created) });
     } catch (err) {
-      handleError(res, err, 502);
+      handleError(res, err, err.status || 502);
     }
   });
 
@@ -1143,6 +1161,9 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
 
 module.exports = {
   registerWycenyEndpoints,
+  createWycena,
+  linkWycenaToLead,
+  leadPhoneCandidates,
   formularzLink,
   computeDiscount,
   sumaPozycji,

@@ -37,16 +37,22 @@ function isShareLink(url) {
 }
 
 // Zernio: msg.attachments = [{type, url?, payload?: {url, title, ...}}].
-// direction 'in' → pełna analiza AI; 'out' (zdjęcia wysłane z telefonu przez
-// Messengera) → tylko kopia i podgląd, bez AI.
+// direction 'in' → pełna analiza AI (zdjęcia, rzuty, głosówki, pliki).
+// direction 'out' → analizujemy TYLKO głosówki i wideo: transkrybujemy nagrania,
+// które Antoni sam wysyła (np. podsumowanie właśnie odbytej rozmowy telefonicznej
+// / na WhatsAppie). Zdjęcia wysłane z telefonu zostają bez AI — to była pierwotna
+// przyczyna pomijania całego 'out'.
 async function captureZernio(db, { messageId, threadId, direction, attachments }) {
   if (!Array.isArray(attachments) || !attachments.length) return { captured: 0 };
   const rows = attachments.map((a, i) => {
     const url = a.url || a.payload?.url || null;
     const title = a.payload?.title || null;
     const undownloadable = a.type === 'fallback' || !url || isShareLink(url);
-    const analyzable = direction === 'in' && !undownloadable
-      && ['image', 'video', 'audio', 'file'].includes(a.type);
+    const spoken = a.type === 'audio' || a.type === 'video';
+    const analyzable = !undownloadable && (
+      (direction === 'in' && ['image', 'video', 'audio', 'file'].includes(a.type))
+      || (direction === 'out' && spoken)
+    );
     return {
       message_id: messageId,
       thread_id: threadId,
@@ -383,9 +389,24 @@ async function analyzeAV(db, att) {
   if (!transcript) {
     return { summary: '(nagranie bez rozpoznawalnej mowy)', data: { transkrypcja: '' }, model: null };
   }
+  // Kierunek nagrania: 'in' = głosówka od klienta; 'out' = nagrał je Antoni,
+  // zwykle podsumowanie właśnie odbytej rozmowy telefonicznej / na WhatsAppie.
+  // Bez tego rozróżnienia jego własne słowa trafiały do sugestii jako „od klienta".
+  const { data: msgRow } = await db.from('kom_messages')
+    .select('direction').eq('id', att.message_id).limit(1);
+  const outgoing = msgRow?.[0]?.direction === 'out';
   const context = await threadContext(db, att);
   const label = att.type === 'audio' ? 'nagrania głosowego' : 'filmu';
-  const instruction = `${context ? `KONTEKST ROZMOWY:\n${context}\n\n` : ''}Transkrypcja ${label} od klienta:
+  const instruction = outgoing
+    ? `${context ? `KONTEKST ROZMOWY (pisemnej):\n${context}\n\n` : ''}Transkrypcja ${label}, które nagrał HANDLOWIEC (Antoni z LumLum) — zwykle notatka głosowa podsumowująca właśnie przeprowadzoną rozmowę telefoniczną / na WhatsAppie z klientem:
+"""
+${transcript.slice(0, 6000)}
+"""
+To są słowa Antoniego, NIE klienta. Podsumuj po polsku jak notatkę ze sprzedaży: o czym była rozmowa,
+czego chce klient, jakie padły wymiary/ilości/ceny i co ustalono (następny krok, obietnice, termin).
+Rzeczy niejasne wpisz do "niepewnosci".
+Zwróć JSON: {"podsumowanie": "2-4 zdania", "fakty": ["..."], "niepewnosci": ["..."]}`
+    : `${context ? `KONTEKST ROZMOWY:\n${context}\n\n` : ''}Transkrypcja ${label} od klienta:
 """
 ${transcript.slice(0, 6000)}
 """
@@ -481,16 +502,26 @@ async function processThread(db, threadId, { budgetMs = 45000 } = {}) {
 async function notesByMessage(db, messageIds) {
   const map = new Map();
   if (!messageIds.length) return map;
-  const { data, error } = await db.from('kom_attachments')
-    .select('message_id,type,title,status,ai_status,ai_summary')
-    .in('message_id', messageIds)
-    .order('position', { ascending: true });
+  // Kierunek wiadomości obok załącznika: głosówka/wideo nagrane przez Antoniego
+  // (out) nie może być podpisane „od klienta" — inaczej sugestia potraktowałaby
+  // jego własną notatkę z rozmowy jak słowa klienta.
+  const [{ data, error }, { data: msgs }] = await Promise.all([
+    db.from('kom_attachments')
+      .select('message_id,type,title,status,ai_status,ai_summary')
+      .in('message_id', messageIds)
+      .order('position', { ascending: true }),
+    db.from('kom_messages').select('id,direction').in('id', messageIds),
+  ]);
   if (error) throw error;
+  const dir = new Map((msgs || []).map((m) => [m.id, m.direction]));
   const labels = { image: 'zdjęcie', video: 'film', audio: 'nagranie głosowe', sticker: 'naklejka', file: 'plik' };
   for (const a of data || []) {
     const label = labels[a.type] || 'załącznik';
+    const outgoing = dir.get(a.message_id) === 'out';
     let note;
-    if (a.ai_summary) note = `[${label} od klienta - analiza AI: ${a.ai_summary}]`;
+    if (a.ai_summary) note = outgoing
+      ? `[${label} nagrane przez Ciebie - notatka/transkrypcja: ${a.ai_summary}]`
+      : `[${label} od klienta - analiza AI: ${a.ai_summary}]`;
     else if (a.title) note = `[${label}: ${a.title}]`;
     else if (a.status === 'expired' || a.status === 'failed') note = `[${label} - niedostępny]`;
     else note = `[${label} w załączniku]`;

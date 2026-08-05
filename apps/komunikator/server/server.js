@@ -22,6 +22,7 @@ const media = require('./media');
 const settings = require('./settings');
 const autoreply = require('./autoreply');
 const followups = require('./followups');
+const wycenaOrchestrator = require('./wycena-orchestrator');
 const kontaktSend = require('../../shared/server/kontakt-send');
 const { callZadarma } = require('../../backlog-b2c/server/zadarma');
 
@@ -158,6 +159,14 @@ async function runWorker(req, res) {
   } catch (err) {
     console.error('Worker (followups):', err.message);
     result.followups = { error: err.message };
+  }
+  try {
+    // Automat wyceny z wątku pisanego: intencja + konkretne produkty → lead +
+    // szkic wyceny + draft odpowiedzi. Kill-switch KOM_AUTO_WYCENA=0.
+    result.autoWycena = await wycenaOrchestrator.sweep(db, { limit: 5 });
+  } catch (err) {
+    console.error('Worker (auto-wycena):', err.message);
+    result.autoWycena = { error: err.message };
   }
   console.log('Cron worker:', JSON.stringify(result));
   res.json(result);

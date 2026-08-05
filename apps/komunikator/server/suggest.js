@@ -72,6 +72,14 @@ function buildContextHeader(customer, thread, examples, factsBlock) {
   );
   parts.push(known.includes('phone') ? 'Numer telefonu klienta: ZNANY.' : 'Numer telefonu klienta: NIEZNANY.');
   if (factsBlock) parts.push(`\n${factsBlock}`);
+  // Automat wyceny przygotował już szkic dla tego klienta (link + pozycje) —
+  // niech proponowana odpowiedź przekaże wycenę i WKLEI ten link, żeby Antoni
+  // wysłał ją jednym kliknięciem (patrz wycena-orchestrator.js).
+  const aw = thread && thread.meta && thread.meta.auto_wycena;
+  if (aw && aw.link) {
+    parts.push(`\nAUTOMAT PRZYGOTOWAŁ WYCENĘ dla tego klienta${aw.all_priced && aw.kwota ? ` (razem ${aw.kwota} zł)` : ''}. `
+      + `Zaproponuj krótką, naturalną wiadomość, która przekazuje wycenę i wkleja DOKŁADNIE ten link: ${aw.link}`);
+  }
   if (examples.length) {
     parts.push('\nPrzykłady odpowiedzi Antoniego w podobnych sytuacjach:');
     examples.forEach((ex, i) => {
