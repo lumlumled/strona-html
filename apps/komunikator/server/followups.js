@@ -242,7 +242,11 @@ Odpowiedz WYŁĄCZNIE treścią wiadomości do klienta albo słowem POMIŃ.`;
     maxTokens: 220,
   });
   const clean = String(text || '').trim().replace(/^["'`]+|["'`]+$/g, '').trim();
-  if (!clean || /^POMI[NŃ]\b/i.test(clean)) return '';
+  // Bramka pre-sale: model zwraca "POMIŃ", gdy NIE wysyłać. Uwaga: \b nie działa
+  // po "Ń" (znak nie-ASCII), więc normalizujemy ń->n i dopasowujemy sentinel
+  // wprost — cała treść "pomin" albo "pomin" + znak niebędący literą (kropka itp.).
+  const sentinel = clean.toLowerCase().replace(/ń/g, 'n');
+  if (!clean || /^pomin([^a-ząćęłóśźż]|$)/.test(sentinel)) return '';
   return clean;
 }
 
