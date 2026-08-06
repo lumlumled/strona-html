@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>LumLum — Kreacje</title>
+<link rel="stylesheet" href="shared/topbar.css">
 <style>
   :root {
     --surface-1: #ffffff; --surface-2: #fafaf9; --page: #f5f5f4;
@@ -53,12 +54,16 @@
   .legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
   .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
   .swatch.line { height: 3px; border-radius: 2px; }
+  .swatch.dot { border-radius: 999px; }
   svg .bar-wyc { fill: var(--money); opacity: 0.28; }
   svg .bar-spr { fill: var(--money); opacity: 0.85; }
   svg text { fill: var(--text-muted); font-size: 11px; }
+  svg .quad-label { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; }
+  svg .bubble { cursor: pointer; }
+  svg .bubble:hover circle { stroke-width: 3; }
   .reels { display: flex; flex-wrap: wrap; gap: 0.6rem; }
   .reel { display: flex; flex-direction: column; width: 132px; background: var(--surface-1); border: 1px solid var(--border);
-    border-radius: 12px; overflow: hidden; text-decoration: none; color: inherit; }
+    border-radius: 12px; overflow: hidden; text-decoration: none; color: inherit; cursor: pointer; padding: 0; text-align: left; font: inherit; }
   .reel .thumb { width: 100%; aspect-ratio: 9/16; background: var(--surface-2); }
   .reel .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .reel .meta { padding: 0.4rem 0.5rem; }
@@ -66,7 +71,7 @@
   .reel .fmt { font-size: 0.72rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .reel .vw { font-size: 0.68rem; color: var(--text-muted); }
   .tbl-wrap { overflow-x: auto; background: var(--surface-1); border: 1px solid var(--border); border-radius: 16px; }
-  table.tbl { width: 100%; border-collapse: collapse; font-size: 0.84rem; min-width: 620px; }
+  table.tbl { width: 100%; border-collapse: collapse; font-size: 0.84rem; min-width: 680px; }
   .tbl th { text-align: left; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); padding: 0.6rem 0.8rem 0.35rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
   .tbl th.num, .tbl td.num { text-align: right; font-variant-numeric: tabular-nums; }
   .tbl td { padding: 0.5rem 0.8rem; border-bottom: 1px solid var(--grid); vertical-align: middle; }
@@ -74,21 +79,51 @@
   .tbl .subt { color: var(--text-muted); font-size: 0.72rem; }
   .pill { display: inline-block; font-size: 0.7rem; font-weight: 700; padding: 0.14rem 0.55rem; border-radius: 999px; white-space: nowrap; }
   .pill.crit { background: var(--bad-soft); color: var(--bad); }
+  .pill.good { background: var(--good-soft); color: var(--good); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
   .pill.ok { background: var(--accent-soft); color: var(--text-secondary); }
   .state { color: var(--text-muted); padding: 2rem 0; text-align: center; }
   .tooltip { position: fixed; z-index: 50; background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
-    padding: 0.5rem 0.7rem; font-size: 0.76rem; pointer-events: none; opacity: 0; transition: opacity 0.1s; box-shadow: 0 6px 24px rgba(0,0,0,0.18); max-width: 240px; }
+    padding: 0.5rem 0.7rem; font-size: 0.76rem; pointer-events: none; opacity: 0; transition: opacity 0.1s; box-shadow: 0 6px 24px rgba(0,0,0,0.18); max-width: 260px; }
+  .metodyka { background: var(--surface-2); border: 1px dashed var(--border); border-radius: 12px; padding: 0.8rem 1rem; font-size: 0.8rem; color: var(--text-secondary); }
+  .metodyka li { margin: 0.25rem 0; }
+  .fmt-detail { background: var(--surface-1); border: 2px solid var(--accent); border-radius: 16px; padding: 0.9rem 1rem; margin: 0.8rem 0; }
+  .fmt-detail .stats { display: flex; flex-wrap: wrap; gap: 1.1rem; margin: 0.5rem 0 0.7rem; }
+  .fmt-detail .stat b { display: block; font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+  .fmt-detail .stat span { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+  .x-btn { border: 1px solid var(--border); background: var(--surface-2); color: var(--text-secondary); border-radius: 999px;
+    width: 30px; height: 30px; cursor: pointer; font-size: 0.95rem; line-height: 1; }
+  /* Karta rolki (drawer) */
+  .dw-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.45); opacity: 0; pointer-events: none; transition: opacity 0.18s; z-index: 55; }
+  .dw-bg.open { opacity: 1; pointer-events: auto; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw); background: var(--surface-1);
+    border-left: 1px solid var(--border); z-index: 60; transform: translateX(105%); transition: transform 0.2s; overflow-y: auto; }
+  .drawer.open { transform: none; }
+  .drawer .dw-head { display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 1rem; position: sticky; top: 0; background: var(--surface-1); border-bottom: 1px solid var(--grid); z-index: 2; }
+  .drawer .dw-body { padding: 0.9rem 1rem 2rem; }
+  .drawer .dw-cover { width: 100%; max-height: 46vh; object-fit: contain; background: var(--surface-2); border-radius: 12px; display: block; }
+  .drawer h3 { margin: 0; font-size: 1rem; }
+  .drawer .dw-row { display: flex; flex-wrap: wrap; gap: 0.9rem; margin: 0.7rem 0; }
+  .drawer .dw-row .stat b { display: block; font-size: 1rem; font-variant-numeric: tabular-nums; }
+  .drawer .dw-row .stat span { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; }
+  .drawer blockquote { margin: 0.6rem 0; padding: 0.5rem 0.8rem; border-left: 3px solid var(--tt); background: var(--surface-2); border-radius: 8px; font-size: 0.86rem; }
+  .drawer .dw-sec { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 0.8rem 0 0.2rem; }
+  .drawer .dw-money { background: var(--good-soft); border-radius: 10px; padding: 0.6rem 0.8rem; font-size: 0.84rem; margin-top: 0.7rem; }
+  .drawer .dw-link { display: inline-block; margin-top: 0.9rem; background: var(--accent); color: var(--page); text-decoration: none;
+    font-weight: 700; padding: 0.5rem 1rem; border-radius: 999px; font-size: 0.86rem; }
 </style>
 </head>
 <body>
   <div id="site-header"></div>
   <main>
     <h1>Kreacje — Content Intelligence</h1>
-    <div class="sub-h">Split platform · timeline treść↔sprzedaż · katalog rolek · który format sprzedaje</div>
+    <div class="sub-h">mapa formatów (co robić, żeby zarabiać) · karta rolki · korelacje z kontrolami uczciwości</div>
     <div class="chips" id="chips"></div>
     <div id="body"><div class="state">Ładuję dane…</div></div>
   </main>
   <div class="tooltip" id="tt"></div>
+  <div class="dw-bg" id="dw-bg"></div>
+  <aside class="drawer" id="dw" aria-label="Karta rolki"></aside>
 
   <script src="shared/topbar.js"></script>
   <script>
@@ -109,18 +144,45 @@
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     }
+    function pearsonJS(xs, ys) {
+      const n = Math.min(xs.length, ys.length); if (n < 3) return null;
+      const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+      let sxy = 0, sxx = 0, syy = 0;
+      for (let i = 0; i < n; i++) { const dx = xs[i] - mx, dy = ys[i] - my; sxy += dx * dy; sxx += dx * dx; syy += dy * dy; }
+      if (!sxx || !syy) return null;
+      return Math.round((sxy / Math.sqrt(sxx * syy)) * 100) / 100;
+    }
 
     const PLAT = { tiktok: { n: 'TikTok', c: 'var(--tt)' }, instagram: { n: 'Instagram', c: 'var(--ig)' }, facebook: { n: 'Facebook', c: 'var(--fb)' } };
     let WEEKS = 26;
     let DATA = null;
-    let KAT_FMT = '';   // filtr formatu katalogu
-    let KAT_SORT = 'sprzedaz'; // 'sprzedaz' | 'views'
+    let KAT_FMT = '';            // filtr formatu katalogu
+    let KAT_SORT = 'sprzedaz';   // 'sprzedaz' | 'views'
+    let SEL_FMT = '';            // format wybrany na mapie (drill-down)
+    let SC_REACH = 'tt';         // scatter: 'tt' (TikTok, świeży) | 'all' (wszystkie platformy)
+    let SC_LAG = 1;              // scatter: pieniądze z tego samego tygodnia (0) czy następnego (1)
+
+    // Tygodnie okna jako daty (do świeżości i wydarzeń): start tygodnia i = okno_od + 7i.
+    const weekStartKey = (i) => {
+      const [y, m, d] = DATA.okno_od.split('-').map(Number);
+      return new Date(Date.UTC(y, m - 1, d + 7 * i)).toISOString().slice(0, 10);
+    };
+    const weekEndKey = (i) => {
+      const [y, m, d] = DATA.okno_od.split('-').map(Number);
+      return new Date(Date.UTC(y, m - 1, d + 7 * i + 6)).toISOString().slice(0, 10);
+    };
+    const staleOd = () => {
+      const dd = DATA.dane_do || {};
+      const keys = [dd.instagram, dd.facebook].filter(Boolean).sort();
+      return keys[0] || null; // najstarsza „ostatnia data" FB/IG
+    };
+    const eventForWeek = (i) => (DATA.wydarzenia || []).find((e) => (e.tygodnie || []).includes(i));
 
     function mountChips() {
       const el = document.getElementById('chips');
       el.innerHTML = [8, 12, 26].map((w) => `<button class="chip ${WEEKS === w ? 'active' : ''}" data-w="${w}">${w} tyg.</button>`).join('')
         + '<span class="muted" style="font-size:0.78rem">tydzień = pon–nd (Europe/Warsaw)</span>';
-      el.querySelectorAll('.chip').forEach((b) => b.addEventListener('click', () => { WEEKS = Number(b.dataset.w); mountChips(); load(); }));
+      el.querySelectorAll('.chip').forEach((b) => b.addEventListener('click', () => { WEEKS = Number(b.dataset.w); SEL_FMT = ''; mountChips(); load(); }));
     }
 
     async function load() {
@@ -128,6 +190,279 @@
       body.innerHTML = '<div class="state">Ładuję dane…</div>';
       try { DATA = await getJSON(`/api/kreacje?weeks=${WEEKS}`); render(DATA); }
       catch (err) { body.innerHTML = `<div class="state">Nie udało się pobrać danych: ${esc(err.message)}</div>`; }
+    }
+
+    // ── Tooltip ──
+    const tt = () => document.getElementById('tt');
+    function showTip(e, html) {
+      const t = tt(); t.innerHTML = html; t.style.opacity = '1';
+      t.style.left = Math.min(window.innerWidth - 270, e.clientX + 12) + 'px';
+      t.style.top = (e.clientY + 12) + 'px';
+    }
+    function hideTip() { tt().style.opacity = '0'; }
+
+    // ── MAPA FORMATÓW (hero): X = śr. wyśw./rolkę, Y = zł/1000 wyśw. (szac. proxy) ──
+    const werdyktPill = (f) => f.werdykt === 'ciągnie sprzedaż' ? '<span class="pill good">🟢 ciągnie</span>'
+      : f.werdykt === 'przepala zasięg' ? '<span class="pill crit">🔴 przepala</span>'
+      : f.werdykt === 'niepewny (trend?)' ? '<span class="pill warn">🟠 niepewny (trend?)</span>'
+      : `<span class="pill ok">${esc(f.werdykt)}</span>`;
+    const werdyktCol = (f) => f.werdykt === 'ciągnie sprzedaż' ? 'var(--good)'
+      : f.werdykt === 'przepala zasięg' ? 'var(--bad)'
+      : f.werdykt === 'niepewny (trend?)' ? 'var(--warn)' : 'var(--text-muted)';
+
+    function renderMapa() {
+      const all = DATA.formaty || [];
+      const pts = all.filter((f) => f.zl_per_1k != null && f.views_okno > 0 && f.avg_views > 0);
+      const rest = all.filter((f) => !pts.includes(f));
+      if (pts.length < 2) return '<div class="muted">Za mało danych na mapę formatów.</div>';
+      const W2 = 1000, H = 440, padL = 64, padR = 30, padT = 34, padB = 44;
+      const plotW = W2 - padL - padR, plotH = H - padT - padB;
+      const maxX = Math.max(...pts.map((f) => f.avg_views)) * 1.12;
+      const maxY = Math.max(...pts.map((f) => f.zl_per_1k)) * 1.15;
+      const x = (v) => padL + Math.sqrt(v / maxX) * plotW;
+      const y = (v) => padT + plotH - (v / maxY) * plotH;
+      // Progi ćwiartek: średnie ważone po całości mapy.
+      const xAvg = pts.reduce((a, f) => a + f.views, 0) / Math.max(1, pts.reduce((a, f) => a + f.rolek, 0));
+      const yAvg = pts.reduce((a, f) => a + f.szac_zl_okno, 0) / Math.max(1, pts.reduce((a, f) => a + f.views_okno, 0)) * 1000;
+      const bubbles = pts.map((f) => {
+        const r = Math.min(34, 9 + Math.sqrt(f.rolek) * 2.4);
+        const dashed = (f.pewnosc !== 'orientacyjna' || f.sygnal === 'podejrzany (trend)') ? 'stroke-dasharray="4 3"' : '';
+        return `<g class="bubble" data-f="${esc(f.slug)}">
+          <circle cx="${x(f.avg_views).toFixed(1)}" cy="${y(f.zl_per_1k).toFixed(1)}" r="${r.toFixed(1)}"
+            fill="${werdyktCol(f)}" fill-opacity="0.28" stroke="${werdyktCol(f)}" stroke-width="2" ${dashed}></circle>
+          <text x="${x(f.avg_views).toFixed(1)}" y="${(y(f.zl_per_1k) + r + 13).toFixed(1)}" text-anchor="middle" style="fill:var(--text-secondary);font-weight:600">${esc(f.name.length > 26 ? f.name.slice(0, 25) + '…' : f.name)}</text>
+        </g>`;
+      }).join('');
+      const xTicks = [0.25, 1].map((k) => { const v = maxX * k * 0.8; return `<text x="${x(v).toFixed(1)}" y="${H - 10}" text-anchor="middle">${fmtC(v)} wyśw./rolkę</text>`; }).join('');
+      const yTicks = [0.5, 1].map((k) => { const v = maxY * k * 0.85; return `<text x="6" y="${(y(v) + 4).toFixed(1)}">${fmtC(v)} zł</text>`; }).join('');
+      return `<div class="chart-wrap">
+        <svg viewBox="0 0 ${W2} ${H}" width="100%" id="mapa-svg" style="display:block">
+          <line x1="${padL}" y1="${y(yAvg).toFixed(1)}" x2="${W2 - padR}" y2="${y(yAvg).toFixed(1)}" stroke="var(--grid)" stroke-width="1.5" stroke-dasharray="6 5"></line>
+          <line x1="${x(xAvg).toFixed(1)}" y1="${padT}" x2="${x(xAvg).toFixed(1)}" y2="${padT + plotH}" stroke="var(--grid)" stroke-width="1.5" stroke-dasharray="6 5"></line>
+          <text class="quad-label" x="${padL + 4}" y="${padT - 8}" style="fill:var(--good)">CICHE PERŁY — mało zasięgu, dobre pieniądze → skaluj</text>
+          <text class="quad-label" x="${W2 - padR}" y="${padT - 8}" text-anchor="end" style="fill:var(--good)">KONIE POCIĄGOWE → rób więcej</text>
+          <text class="quad-label" x="${W2 - padR}" y="${padT + plotH + 16}" text-anchor="end" style="fill:var(--bad)">WYDMUSZKI — zasięg bez pieniędzy → ogranicz</text>
+          <text class="quad-label" x="${padL + 4}" y="${padT + plotH + 16}" style="fill:var(--text-muted)">SŁABE / TESTY</text>
+          ${bubbles}${xTicks}${yTicks}
+        </svg>
+        <div class="legend">
+          <span><i class="swatch dot" style="background:var(--good)"></i>ciągnie sprzedaż</span>
+          <span><i class="swatch dot" style="background:var(--bad)"></i>przepala zasięg</span>
+          <span><i class="swatch dot" style="background:var(--warn)"></i>niepewny (placebo ostrzega)</span>
+          <span><i class="swatch dot" style="background:var(--text-muted)"></i>neutralny</span>
+          <span class="muted">przerywana obwódka = słaba pewność · rozmiar bańki = liczba rolek · klik = szczegóły formatu</span>
+        </div>
+        ${rest.length ? `<div class="muted" style="font-size:0.76rem;margin-top:0.4rem">Poza mapą (brak publikacji w oknie / za mało danych): ${rest.map((f) => esc(f.name)).join(' · ')}</div>` : ''}
+      </div>`;
+    }
+    function bindMapa() {
+      document.querySelectorAll('#mapa .bubble').forEach((g) => {
+        const f = (DATA.formaty || []).find((x) => x.slug === g.dataset.f);
+        if (!f) return;
+        g.addEventListener('click', () => { SEL_FMT = f.slug; renderFmtDetail(); document.getElementById('fmt-detail').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+        g.addEventListener('mousemove', (e) => showTip(e, `<b>${esc(f.name)}</b><br>`
+          + `${f.rolek} rolek · śr. ${fmtC(f.avg_views)} wyśw.<br>`
+          + `<b>${fmtInt(f.zl_per_1k)} zł</b> zbiega się z 1000 wyśw. (szac.)<br>`
+          + `korelacja ${f.korelacja ?? '—'} / +1 tydz. ${f.korelacja_lag1 ?? '—'} / placebo ${f.korelacja_placebo ?? '—'}<br>`
+          + `${f.przypadek_pct != null ? `przypadkiem: ~${f.przypadek_pct} na 100 tasowań · ` : ''}${esc(f.pewnosc)}`));
+        g.addEventListener('mouseleave', hideTip);
+      });
+    }
+
+    // ── DRILL-DOWN formatu: dowody (przebieg tygodniowy + rolki) ──
+    function renderFmtDetail() {
+      const host = document.getElementById('fmt-detail');
+      if (!SEL_FMT) { host.innerHTML = ''; return; }
+      const f = (DATA.formaty || []).find((x) => x.slug === SEL_FMT);
+      if (!f) { host.innerHTML = ''; return; }
+      const money = DATA.timeline.wyceny_zl;
+      const wk = f.weekly || [];
+      const n = wk.length;
+      const W2 = 1000, H = 150, padB2 = 20;
+      const maxW = Math.max(1, ...wk), maxM = Math.max(1, ...money);
+      const xs = W2 / n;
+      const bars = wk.map((v, i) => v > 0 ? `<rect x="${(xs * i + xs * 0.18).toFixed(1)}" y="${(H - padB2 - v / maxW * (H - padB2 - 8)).toFixed(1)}" width="${(xs * 0.64).toFixed(1)}" height="${(v / maxW * (H - padB2 - 8)).toFixed(1)}" fill="var(--tt)" opacity="0.75"></rect>` : '').join('');
+      const line = money.map((v, i) => `${(xs * i + xs / 2).toFixed(1)},${(H - padB2 - v / maxM * (H - padB2 - 8)).toFixed(1)}`).join(' ');
+      const labels = DATA.timeline.labels.map((l, i) => (i % Math.ceil(n / 10) === 0 || i === n - 1) ? `<text x="${(xs * i + xs / 2).toFixed(1)}" y="${H - 5}" text-anchor="middle">${esc(l)}</text>` : '').join('');
+      const reels = (DATA.katalog || []).filter((r) => r.format === f.slug);
+      host.innerHTML = `<div class="fmt-detail">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:0.6rem">
+          <div style="font-weight:800;font-size:1.05rem">${esc(f.name)} ${werdyktPill(f)} ${f.sygnal === 'podejrzany (trend)' ? '<span class="pill warn">⚠️ placebo ostrzega</span>' : (f.sygnal === 'zdrowy' && f.werdykt === 'ciągnie sprzedaż' ? '<span class="pill good">✓ sygnał zdrowy</span>' : '')}</div>
+          <button class="x-btn" id="fmt-close" title="Zamknij">✕</button>
+        </div>
+        <div class="stats">
+          <div class="stat"><b>${f.rolek}</b><span>rolek</span></div>
+          <div class="stat"><b>${fmtC(f.avg_views)}</b><span>śr. wyśw./rolkę</span></div>
+          <div class="stat"><b>${fmtInt(f.zl_per_1k)} zł</b><span>na 1000 wyśw. (szac.)</span></div>
+          <div class="stat"><b>${f.korelacja ?? '—'} / ${f.korelacja_lag1 ?? '—'}</b><span>korelacja / +1 tydz.</span></div>
+          <div class="stat"><b>${f.korelacja_placebo ?? '—'}</b><span>placebo (−1 tydz.)</span></div>
+          <div class="stat"><b>${f.przypadek_pct != null ? '~' + f.przypadek_pct + '/100' : '—'}</b><span>tyle tasowań daje taki wynik</span></div>
+          <div class="stat"><b>${f.n_tygodni}</b><span>tyg. z publikacją (${esc(f.pewnosc)})</span></div>
+        </div>
+        <div class="chart-wrap" style="padding:0.5rem">
+          <svg viewBox="0 0 ${W2} ${H}" width="100%" preserveAspectRatio="none" style="display:block;height:150px">
+            ${bars}<polyline points="${line}" fill="none" stroke="var(--money)" stroke-width="2" opacity="0.9"></polyline>${labels}
+          </svg>
+          <div class="legend"><span><i class="swatch" style="background:var(--tt);opacity:0.75"></i>zasięg formatu (tyg.)</span><span><i class="swatch line" style="background:var(--money)"></i>wyceny+sprzedaż (zł, skala względna)</span></div>
+        </div>
+        <div class="muted" style="font-size:0.78rem;margin:0.6rem 0 0.4rem">Rolki tego formatu (${reels.length}) — klik otwiera kartę rolki:</div>
+        <div class="reels">${reels.slice(0, 24).map(reelCard).join('') || '<div class="muted">Brak rolek.</div>'}</div>
+      </div>`;
+      document.getElementById('fmt-close').addEventListener('click', () => { SEL_FMT = ''; renderFmtDetail(); });
+      bindReelCards(host);
+    }
+
+    // ── KATALOG rolek (karty otwierają drawer, NIE TikToka) ──
+    function reelCard(r) {
+      return `<div class="reel" role="button" tabindex="0" data-vid="${esc(r.video_id)}">
+        <div class="thumb">${r.cover_url ? `<img src="${esc(r.cover_url)}" loading="lazy" alt="">` : ''}</div>
+        <div class="meta">
+          <div class="money">~${fmtZl(r.szac_sprzedaz)} <span class="muted" style="font-weight:400;font-size:0.65rem">szac.</span></div>
+          <div class="fmt">${esc(r.format_name)}</div>
+          <div class="vw">${fmtC(r.views)} wyśw. · ${esc(r.tydzien || '—')}</div>
+        </div>
+      </div>`;
+    }
+    function bindReelCards(scope) {
+      (scope || document).querySelectorAll('.reel[data-vid]').forEach((el) => {
+        const open = () => openRolka(el.dataset.vid);
+        el.addEventListener('click', open);
+        el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+      });
+    }
+    function renderKatalog() {
+      const formaty = DATA.formaty || [];
+      const filterChips = [`<button class="chip ${KAT_FMT === '' ? 'active' : ''}" data-f="">Wszystkie</button>`]
+        .concat(formaty.filter((f) => f.rolek > 0).map((f) => `<button class="chip ${KAT_FMT === f.slug ? 'active' : ''}" data-f="${esc(f.slug)}">${esc(f.name)} (${f.rolek})</button>`)).join('');
+      const sortChips = `<button class="chip ${KAT_SORT === 'sprzedaz' ? 'active' : ''}" data-s="sprzedaz">wg zbieżności</button>`
+        + `<button class="chip ${KAT_SORT === 'views' ? 'active' : ''}" data-s="views">wg zasięgu</button>`;
+      let rolki = (DATA.katalog || []).filter((r) => !KAT_FMT || r.format === KAT_FMT);
+      rolki = rolki.slice().sort((a, b) => KAT_SORT === 'views' ? b.views - a.views : b.szac_sprzedaz - a.szac_sprzedaz).slice(0, 60);
+      return `<div class="chips" style="margin:0 0 0.6rem">${filterChips}</div>
+        <div class="chips" style="margin:0 0 0.8rem"><span class="muted" style="font-size:0.78rem">sortuj:</span>${sortChips}<span class="muted" style="font-size:0.76rem">${rolki.length} z ${(DATA.katalog || []).length} rolek (TikTok)</span></div>
+        <div class="reels">${rolki.map(reelCard).join('') || '<div class="muted">Brak rolek dla tego filtra.</div>'}</div>`;
+    }
+    function bindKatalog() {
+      const kat = document.getElementById('kat');
+      kat.querySelectorAll('.chip[data-f]').forEach((b) => b.addEventListener('click', () => { KAT_FMT = b.dataset.f; kat.innerHTML = renderKatalog(); bindKatalog(); }));
+      kat.querySelectorAll('.chip[data-s]').forEach((b) => b.addEventListener('click', () => { KAT_SORT = b.dataset.s; kat.innerHTML = renderKatalog(); bindKatalog(); }));
+      bindReelCards(kat);
+    }
+
+    // ── KARTA ROLKI (drawer) ──
+    let dwOpen = false;
+    function openRolka(videoId) {
+      const r = (DATA.katalog || []).find((x) => String(x.video_id) === String(videoId));
+      if (!r) return;
+      const dw = document.getElementById('dw');
+      const dur = r.duration_s ? `${r.duration_s}s` : null;
+      dw.innerHTML = `<div class="dw-head"><h3>Karta rolki</h3><button class="x-btn" id="dw-x" title="Zamknij">✕</button></div>
+        <div class="dw-body">
+          ${r.cover_url ? `<img class="dw-cover" src="${esc(r.cover_url)}" alt="">` : ''}
+          <div class="dw-row" style="margin-top:0.8rem">
+            <span class="pill ok">${esc(r.format_name)}</span>
+            ${r.data ? `<span class="pill ok">📅 ${esc(r.data)}</span>` : ''}
+            ${dur ? `<span class="pill ok">⏱ ${esc(dur)}</span>` : ''}
+          </div>
+          <div class="dw-row">
+            <div class="stat"><b>${fmtC(r.views)}</b><span>wyświetleń</span></div>
+            <div class="stat"><b>${r.eng_rate_pct != null ? r.eng_rate_pct + '%' : '—'}</b><span>engagement</span></div>
+            <div class="stat"><b>${r.udzial_tyg_pct != null ? r.udzial_tyg_pct + '%' : '—'}</b><span>zasięgu TT w tyg. ${esc(r.tydzien || '')}</span></div>
+          </div>
+          ${r.hook ? `<div class="dw-sec">Hook (pierwsze sekundy)</div><blockquote>„${esc(r.hook)}"</blockquote>` : ''}
+          ${r.summary ? `<div class="dw-sec">Co się dzieje na filmie</div><div style="font-size:0.86rem">${esc(r.summary)}</div>` : ''}
+          ${r.caption ? `<div class="dw-sec">Opis z TikToka</div><div class="muted" style="font-size:0.8rem">${esc(r.caption)}</div>` : ''}
+          <div class="dw-money">
+            ${r.okno_zl != null
+              ? `W tygodniu publikacji + następnym wpadło <b>${fmtZl(r.okno_zl)}</b> wycen+sprzedaży.
+                 Ta rolka = <b>${r.udzial_tyg_pct != null ? r.udzial_tyg_pct + '%' : '—'}</b> zasięgu TikToka w swoim tygodniu
+                 → zbieżność <b>~${fmtZl(r.szac_sprzedaz)}</b> <span class="muted">(szacunek proxy, NIE atrybucja — patrz „Jak to liczymy")</span>.`
+              : '<span class="muted">Rolka spoza okna analizy — brak danych o zbieżności.</span>'}
+          </div>
+          ${r.url ? `<a class="dw-link" href="${esc(r.url)}" target="_blank" rel="noopener">Otwórz na TikToku ↗</a>` : ''}
+        </div>`;
+      document.getElementById('dw-x').addEventListener('click', () => closeRolka(false));
+      dw.classList.add('open');
+      document.getElementById('dw-bg').classList.add('open');
+      if (!dwOpen) { history.pushState({ rolka: 1 }, '', '#rolka'); dwOpen = true; }
+    }
+    function closeRolka(fromPop) {
+      document.getElementById('dw').classList.remove('open');
+      document.getElementById('dw-bg').classList.remove('open');
+      if (dwOpen && !fromPop && location.hash === '#rolka') history.back();
+      dwOpen = false;
+    }
+    window.addEventListener('popstate', () => { if (dwOpen) closeRolka(true); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && dwOpen) closeRolka(false); });
+    document.getElementById('dw-bg').addEventListener('click', () => closeRolka(false));
+
+    // ── SCATTER tygodni: zasięg ↔ pieniądze (każda kropka = tydzień) ──
+    function scatterPoints() {
+      const tl = DATA.timeline;
+      const n = tl.labels.length;
+      const stale = staleOd();
+      const pts = [];
+      for (let i = 0; i < n; i++) {
+        const mi = i + SC_LAG;
+        if (mi >= n) break;
+        const reach = SC_REACH === 'tt' ? tl.reach.tiktok[i] : tl.reach.tiktok[i] + tl.reach.instagram[i] + tl.reach.facebook[i];
+        const ev = eventForWeek(i) || eventForWeek(mi);
+        const staleWeek = SC_REACH === 'all' && stale && weekEndKey(i) > stale;
+        pts.push({ i, label: tl.labels[i], reach, money: tl.wyceny_zl[mi], ev, valid: !ev && !staleWeek, staleWeek });
+      }
+      return pts;
+    }
+    function renderScatter() {
+      const pts = scatterPoints();
+      const valid = pts.filter((p) => p.valid);
+      const r = pearsonJS(valid.map((p) => p.reach), valid.map((p) => p.money));
+      const W2 = 1000, H = 380, padL = 74, padR = 24, padT = 20, padB = 44;
+      const plotW = W2 - padL - padR, plotH = H - padT - padB;
+      const maxX = Math.max(1, ...pts.map((p) => p.reach)) * 1.08;
+      const maxY = Math.max(1, ...pts.map((p) => p.money)) * 1.1;
+      const x = (v) => padL + (v / maxX) * plotW;
+      const y = (v) => padT + plotH - (v / maxY) * plotH;
+      const dots = pts.map((p, k) => {
+        const cls = p.valid ? 'fill="var(--tt)" fill-opacity="0.8" stroke="var(--tt)"' : (p.ev ? 'fill="none" stroke="var(--warn)" stroke-width="2"' : 'fill="none" stroke="var(--text-muted)" stroke-dasharray="3 2"');
+        return `<circle class="sc-dot" data-k="${k}" cx="${x(p.reach).toFixed(1)}" cy="${y(p.money).toFixed(1)}" r="7" ${cls}></circle>`;
+      }).join('');
+      const xTicks = [0.33, 0.66, 1].map((k) => { const v = maxX * k * 0.92; return `<text x="${x(v).toFixed(1)}" y="${H - 12}" text-anchor="middle">${fmtC(v)}</text>`; }).join('');
+      const yTicks = [0.5, 1].map((k) => { const v = maxY * k * 0.88; return `<text x="6" y="${(y(v) + 4).toFixed(1)}">${fmtC(v)} zł</text>`; }).join('');
+      const chips = `<div class="chips" style="margin:0 0 0.5rem">
+        <span class="muted" style="font-size:0.78rem">zasięg:</span>
+        <button class="chip ${SC_REACH === 'tt' ? 'active' : ''}" data-r="tt">tylko TikTok (świeży)</button>
+        <button class="chip ${SC_REACH === 'all' ? 'active' : ''}" data-r="all">wszystkie platformy</button>
+        <span class="muted" style="font-size:0.78rem">pieniądze:</span>
+        <button class="chip ${SC_LAG === 0 ? 'active' : ''}" data-l="0">ten sam tydzień</button>
+        <button class="chip ${SC_LAG === 1 ? 'active' : ''}" data-l="1">+1 tydzień</button>
+      </div>`;
+      return `${chips}<div class="chart-wrap">
+        <svg viewBox="0 0 ${W2} ${H}" width="100%" id="sc-svg" style="display:block">
+          <line x1="${padL}" y1="${padT + plotH}" x2="${W2 - padR}" y2="${padT + plotH}" stroke="var(--grid)"></line>
+          <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + plotH}" stroke="var(--grid)"></line>
+          ${dots}${xTicks}${yTicks}
+          <text x="${W2 - padR}" y="${H - 12}" text-anchor="end">zasięg w tygodniu →</text>
+        </svg>
+        <div class="legend">
+          <span><i class="swatch dot" style="background:var(--tt)"></i>pełny tydzień</span>
+          <span><i class="swatch dot" style="border:2px solid var(--warn)"></i>tydzień z wydarzeniem (poza korelacją)</span>
+          ${SC_REACH === 'all' ? '<span><i class="swatch dot" style="border:2px dashed var(--text-muted)"></i>niepełny zasięg FB/IG (poza korelacją)</span>' : ''}
+          <span style="font-weight:700">korelacja r = ${r == null ? '—' : (r > 0 ? '+' : '') + r} <span class="muted">(${valid.length} pełnych tygodni, pieniądze ${SC_LAG ? 'z następnego tygodnia' : 'z tego samego tygodnia'})</span></span>
+        </div>
+      </div>`;
+    }
+    function bindScatter() {
+      const sc = document.getElementById('sc');
+      sc.querySelectorAll('.chip[data-r]').forEach((b) => b.addEventListener('click', () => { SC_REACH = b.dataset.r; sc.innerHTML = renderScatter(); bindScatter(); }));
+      sc.querySelectorAll('.chip[data-l]').forEach((b) => b.addEventListener('click', () => { SC_LAG = Number(b.dataset.l); sc.innerHTML = renderScatter(); bindScatter(); }));
+      const pts = scatterPoints();
+      sc.querySelectorAll('.sc-dot').forEach((d) => {
+        const p = pts[Number(d.dataset.k)];
+        d.addEventListener('mousemove', (e) => showTip(e, `<b>tydz. ${esc(p.label)}</b><br>zasięg: ${fmtC(p.reach)}<br>wyceny+sprzedaż${SC_LAG ? ' (nast. tydz.)' : ''}: ${fmtZl(p.money)}`
+          + (p.ev ? `<br><span style="color:var(--warn)">⚠️ ${esc(p.ev.label)}</span>` : '')
+          + (p.staleWeek ? '<br><span class="muted">niepełne dane FB/IG</span>' : '')));
+        d.addEventListener('mouseleave', hideTip);
+      });
     }
 
     // ── SPLIT hero ──
@@ -138,16 +473,16 @@
           <span class="k-label">${p.n} — zasięg (okno)</span>
           <span class="k-value">${fmtC(s.reach)}</span>
           <span class="k-sub">${s.udzial_pct}% zasięgu · ${s.posty == null ? 'tylko dzienny agregat' : s.posty + ' rolek'}</span>
-          <span class="k-note">${s.ma_format ? '✅ formaty + okładki' : '⚠️ brak formatów (Faza 2/3)'}</span>
+          <span class="k-note">${s.ma_format ? '✅ formaty + okładki' : '⚠️ brak formatów (Faza 2/3)'} · dane do ${esc((DATA.dane_do || {})[s.platform] || '—')}</span>
         </div>`;
       }).join('')}</div>`;
     }
 
-    // ── TIMELINE: słupki pieniądze (wyceny/sprzedaż) + linie zasięgu 3 platform ──
+    // ── TIMELINE: słupki pieniądze + linie zasięgu + strefy wydarzeń/świeżości ──
     function renderTimeline(tl) {
       const n = tl.labels.length;
-      const W = 1000, H = 300, padL = 8, padR = 8, padT = 14, padB = 26;
-      const plotW = W - padL - padR, plotH = H - padT - padB;
+      const W2 = 1000, H = 300, padL = 8, padR = 8, padT = 14, padB = 26;
+      const plotW = W2 - padL - padR, plotH = H - padT - padB;
       const maxMoney = Math.max(1, ...tl.wyceny_zl);
       const reachAll = [...tl.reach.tiktok, ...tl.reach.instagram, ...tl.reach.facebook];
       const maxReach = Math.max(1, ...reachAll);
@@ -156,6 +491,16 @@
       const bw = xStep * 0.6;
       const yMoney = (v) => padT + plotH - (v / maxMoney) * plotH;
       const yReach = (v) => padT + plotH - (v / maxReach) * plotH;
+      // Strefy wydarzeń (⚠️) i niepełnych danych FB/IG (szary pas).
+      const evWeeks = new Set((DATA.wydarzenia || []).flatMap((e) => e.tygodnie || []));
+      const zones = [...evWeeks].map((i) => `<rect x="${(padL + xStep * i).toFixed(1)}" y="${padT}" width="${xStep.toFixed(1)}" height="${plotH}" fill="var(--warn)" opacity="0.10"></rect>`
+        + `<text x="${(padL + xStep * i + xStep / 2).toFixed(1)}" y="${padT + 12}" text-anchor="middle">⚠️</text>`).join('');
+      const stale = staleOd();
+      let staleZone = '';
+      if (stale) {
+        const firstStale = tl.labels.findIndex((_, i) => weekEndKey(i) > stale);
+        if (firstStale >= 0) staleZone = `<rect x="${(padL + xStep * firstStale).toFixed(1)}" y="${padT}" width="${(xStep * (n - firstStale)).toFixed(1)}" height="${plotH}" fill="var(--text-muted)" opacity="0.07"></rect>`;
+      }
       const bars = tl.wyceny_zl.map((v, i) => {
         const spr = tl.sprzedaz_zl[i] || 0;
         const yw = yMoney(v), ys = yMoney(spr);
@@ -170,11 +515,10 @@
       const everyN = Math.ceil(n / 13);
       const labels = tl.labels.map((l, i) => (i % everyN === 0 || i === n - 1)
         ? `<text x="${(bx(i) + bw / 2).toFixed(1)}" y="${H - 8}" text-anchor="middle">${esc(l)}</text>` : '').join('');
-      // niewidzialne strefy hoveru
       const hovers = tl.labels.map((l, i) => `<rect x="${(padL + xStep * i).toFixed(1)}" y="${padT}" width="${xStep.toFixed(1)}" height="${plotH}" fill="transparent" data-i="${i}"></rect>`).join('');
       return `<div class="chart-wrap">
-        <svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="none" id="tl-svg" style="display:block;height:300px">
-          ${bars}${lines}${labels}${hovers}
+        <svg viewBox="0 0 ${W2} ${H}" width="100%" preserveAspectRatio="none" id="tl-svg" style="display:block;height:300px">
+          ${staleZone}${zones}${bars}${lines}${labels}${hovers}
         </svg>
         <div class="legend">
           <span><i class="swatch" style="background:var(--money);opacity:0.85"></i>sprzedaż (zł)</span>
@@ -182,102 +526,96 @@
           <span><i class="swatch line" style="background:var(--tt)"></i>zasięg TikTok</span>
           <span><i class="swatch line" style="background:var(--ig)"></i>zasięg Instagram</span>
           <span><i class="swatch line" style="background:var(--fb)"></i>zasięg Facebook</span>
-          <span class="muted">słupki = pieniądze (skala zł); linie = zasięg (skala względna)</span>
+          <span class="muted">⚠️ = tydzień z wydarzeniem · szary pas = niepełne dane FB/IG</span>
         </div>
       </div>`;
     }
-
     function bindTimelineHover(tl) {
       const svg = document.getElementById('tl-svg');
-      const tt = document.getElementById('tt');
       if (!svg) return;
       svg.querySelectorAll('rect[data-i]').forEach((r) => {
         r.addEventListener('mousemove', (e) => {
           const i = Number(r.dataset.i);
-          tt.innerHTML = `<b>tydz. ${esc(tl.labels[i])}</b><br>`
+          const ev = eventForWeek(i);
+          showTip(e, `<b>tydz. ${esc(tl.labels[i])}</b><br>`
             + `wyceny: ${fmtZl(tl.wyceny_zl[i])}<br>sprzedaż: ${fmtZl(tl.sprzedaz_zl[i])}<br>`
-            + `<span style="color:var(--tt)">TT ${fmtC(tl.reach.tiktok[i])}</span> · <span style="color:var(--ig)">IG ${fmtC(tl.reach.instagram[i])}</span> · <span style="color:var(--fb)">FB ${fmtC(tl.reach.facebook[i])}</span>`;
-          tt.style.opacity = '1';
-          tt.style.left = Math.min(window.innerWidth - 250, e.clientX + 12) + 'px';
-          tt.style.top = (e.clientY + 12) + 'px';
+            + `<span style="color:var(--tt)">TT ${fmtC(tl.reach.tiktok[i])}</span> · <span style="color:var(--ig)">IG ${fmtC(tl.reach.instagram[i])}</span> · <span style="color:var(--fb)">FB ${fmtC(tl.reach.facebook[i])}</span>`
+            + (ev ? `<br><span style="color:var(--warn)">⚠️ ${esc(ev.label)}</span>` : ''));
         });
-        r.addEventListener('mouseleave', () => { tt.style.opacity = '0'; });
+        r.addEventListener('mouseleave', hideTip);
       });
     }
 
-    // ── KATALOG rolek ──
-    function renderKatalog() {
-      const formaty = DATA.formaty || [];
-      const filterChips = [`<button class="chip ${KAT_FMT === '' ? 'active' : ''}" data-f="">Wszystkie</button>`]
-        .concat(formaty.filter((f) => f.rolek > 0).map((f) => `<button class="chip ${KAT_FMT === f.slug ? 'active' : ''}" data-f="${esc(f.slug)}">${esc(f.name)} (${f.rolek})</button>`)).join('');
-      const sortChips = `<button class="chip ${KAT_SORT === 'sprzedaz' ? 'active' : ''}" data-s="sprzedaz">wg zbieżności</button>`
-        + `<button class="chip ${KAT_SORT === 'views' ? 'active' : ''}" data-s="views">wg zasięgu</button>`;
-      let rolki = (DATA.katalog || []).filter((r) => !KAT_FMT || r.format === KAT_FMT);
-      rolki = rolki.slice().sort((a, b) => KAT_SORT === 'views' ? b.views - a.views : b.szac_sprzedaz - a.szac_sprzedaz).slice(0, 60);
-      const cards = rolki.map((r) => `
-        <a class="reel" href="${esc(r.url)}" target="_blank" rel="noopener" title="${esc(r.format_name)} · ${fmtC(r.views)} wyśw. · tydz. ${esc(r.tydzien || '—')}">
-          <div class="thumb">${r.cover_url ? `<img src="${esc(r.cover_url)}" loading="lazy" alt="">` : ''}</div>
-          <div class="meta">
-            <div class="money">${fmtZl(r.szac_sprzedaz)}</div>
-            <div class="fmt">${esc(r.format_name)}</div>
-            <div class="vw">${fmtC(r.views)} wyśw. · ${esc(r.tydzien || '—')}</div>
-          </div>
-        </a>`).join('');
-      return `<div class="chips" style="margin:0 0 0.6rem">${filterChips}</div>
-        <div class="chips" style="margin:0 0 0.8rem"><span class="muted" style="font-size:0.78rem">sortuj:</span>${sortChips}<span class="muted" style="font-size:0.76rem">${rolki.length} z ${(DATA.katalog || []).length} rolek (TikTok)</span></div>
-        <div class="reels">${cards || '<div class="muted">Brak rolek dla tego filtra.</div>'}</div>`;
-    }
-    function bindKatalog() {
-      document.querySelectorAll('#kat-filters .chip').forEach((b) => b.addEventListener('click', () => { KAT_FMT = b.dataset.f; document.getElementById('kat').innerHTML = renderKatalog(); bindKatalog(); }));
-      document.querySelectorAll('#kat .chip[data-s]').forEach((b) => b.addEventListener('click', () => { KAT_SORT = b.dataset.s; document.getElementById('kat').innerHTML = renderKatalog(); bindKatalog(); }));
-      document.querySelectorAll('#kat .chip[data-f]').forEach((b) => b.addEventListener('click', () => { KAT_FMT = b.dataset.f; document.getElementById('kat').innerHTML = renderKatalog(); bindKatalog(); }));
-    }
-
-    // ── FORMAT → SPRZEDAŻ tabela ──
+    // ── FORMAT → SPRZEDAŻ tabela (szczegóły pod mapą) ──
     const korCol = (c) => c == null ? 'var(--text-muted)' : (c >= 0.3 ? 'var(--good)' : (c <= -0.3 ? 'var(--bad)' : 'var(--text-secondary)'));
     const korTxt = (c) => c == null ? '—' : (c > 0 ? '+' : '') + c;
     function renderFormaty(formaty) {
       const maxV = Math.max(1, ...formaty.map((f) => f.views));
       const rows = formaty.map((f) => {
-        const badge = f.werdykt === 'ciągnie sprzedaż'
-          ? '<span class="pill" style="background:var(--good-soft);color:var(--good)">🟢 ciągnie</span>'
-          : f.werdykt === 'przepala zasięg' ? '<span class="pill crit">🔴 przepala</span>' : `<span class="pill ok">${esc(f.werdykt)}</span>`;
         const frac = Math.max(2, Math.round(f.views / maxV * 100));
         return `<tr>
           <td><strong>${esc(f.name)}</strong><div class="subt">${esc(f.slug)}</div></td>
           <td class="num">${f.rolek}</td>
           <td><div style="display:flex;align-items:center;gap:0.5rem;min-width:120px"><div style="flex:1;height:8px;background:var(--grid);border-radius:999px;overflow:hidden"><div style="width:${frac}%;height:100%;background:var(--tt)"></div></div><span class="num" style="min-width:42px">${f.udzial_zasiegu_pct}%</span></div></td>
-          <td class="num">${fmtC(f.avg_views)}</td>
+          <td class="num">${f.zl_per_1k != null ? fmtInt(f.zl_per_1k) : '—'}</td>
           <td class="num" style="color:${korCol(f.korelacja)};font-weight:700">${korTxt(f.korelacja)}</td>
           <td class="num" style="color:${korCol(f.korelacja_lag1)};font-weight:700">${korTxt(f.korelacja_lag1)}</td>
+          <td class="num">${korTxt(f.korelacja_placebo)}</td>
+          <td class="num">${f.przypadek_pct != null ? '~' + f.przypadek_pct + '%' : '—'}</td>
           <td class="num">${f.n_tygodni}<div class="subt">${esc(f.pewnosc)}</div></td>
-          <td>${badge}</td>
+          <td>${werdyktPill(f)}</td>
         </tr>`;
       }).join('');
       return `<div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>Format</th><th class="num">Rolek</th><th>Udział zasięgu</th><th class="num">Śr. wyśw.</th><th class="num">Korel.</th><th class="num">+1 tyg.</th><th class="num">N / pewność</th><th>Werdykt</th></tr></thead>
+        <thead><tr><th>Format</th><th class="num">Rolek</th><th>Udział zasięgu</th><th class="num">zł/1000 wyśw. (szac.)</th><th class="num">Korel.</th><th class="num">+1 tyg.</th><th class="num">Placebo</th><th class="num">Przypadek</th><th class="num">N / pewność</th><th>Werdykt</th></tr></thead>
         <tbody>${rows}</tbody></table></div>`;
     }
 
+    // ── Baner świeżości (dynamiczny — z dane_do zamiast na sztywno) ──
+    function renderBanner() {
+      const dd = DATA.dane_do || {};
+      const stale = staleOd();
+      if (!stale || stale >= DATA.okno_do) return '';
+      return `<div class="banner">⚠️ Zasięg Instagram w bazie kończy się ${esc(dd.instagram || '—')}, Facebook ${esc(dd.facebook || '—')} (ETL nieaktualny) — ostatnie tygodnie tych platform są zaniżone, nie myl z realnym spadkiem. TikTok świeży (do ${esc(dd.tiktok || '—')}). Re-upload eksportów odświeży FB/IG.</div>`;
+    }
+
     function render(d) {
-      const stale = 'Zasięg Facebook/Instagram w bazie kończy się ~13.07 (ETL nieaktualny) — ostatnie tygodnie zaniżone, nie myl z realnym spadkiem. TikTok świeży. Re-upload eksportów odświeży FB/IG.';
       const wn = (d.wnioski || []).map((w) => `<div class="insight">${esc(w)}</div>`).join('');
       document.getElementById('body').innerHTML = `
-        <div class="banner">⚠️ ${esc(stale)}</div>
-        <div class="section-title">Split platformowy <span class="muted">— okno ${d.weeks} tyg. (${esc(d.okno_od)} → ${esc(d.okno_do)})</span></div>
-        ${renderSplit(d.split)}
-        <div class="section-title">Timeline: zasięg treści ↔ pieniądze <span class="muted">— „czy rolki podniosły sprzedaż" (najedź na tydzień)</span></div>
-        ${renderTimeline(d.timeline)}
+        ${renderBanner()}
+        <div class="section-title">Mapa formatów <span class="muted">— co robić, żeby zarabiać (okno ${d.weeks} tyg.: ${esc(d.okno_od)} → ${esc(d.okno_do)})</span></div>
+        <div id="mapa">${renderMapa()}</div>
         <div class="section-title">Wnioski</div>
         <div class="insights">${wn || '<div class="muted">Za mało danych.</div>'}</div>
-        <div class="section-title">Katalog rolek <span class="muted">— „zbieżność" = proxy sprzedaży (udział zasięgu w tygodniu × pieniądze tydz.+następny); NIE atrybucja per-rolka</span></div>
-        <div id="kat-filters"></div>
+        <div id="fmt-detail"></div>
+        <div class="section-title">Katalog rolek <span class="muted">— klik w miniaturkę otwiera kartę rolki (statystyki + link do TikToka)</span></div>
         <div id="kat">${renderKatalog()}</div>
-        <div class="section-title">Format → sprzedaż <span class="muted">— który format zbiega się ze sprzedażą (TikTok)</span></div>
+        <div class="section-title">Czy zasięg w ogóle robi pieniądze? <span class="muted">— każda kropka = tydzień</span></div>
+        <div id="sc">${renderScatter()}</div>
+        <div class="section-title">Timeline: zasięg treści ↔ pieniądze <span class="muted">— najedź na tydzień</span></div>
+        ${renderTimeline(d.timeline)}
+        <div class="section-title">Split platformowy</div>
+        ${renderSplit(d.split)}
+        <div class="section-title">Format → sprzedaż (szczegóły liczbowe)</div>
         ${renderFormaty(d.formaty || [])}
-        <div class="muted" style="margin-top:1rem;font-size:0.76rem">Faza 1 (TikTok). IG dostaje formaty przez scalenie po creative_id (Faza 2), FB po re-uploadzie eksportu (Faza 3).</div>`;
-      bindTimelineHover(d.timeline);
+        <div class="section-title">Jak to liczymy (i czego te liczby NIE mówią)</div>
+        <div class="metodyka">
+          <ul style="margin:0;padding-left:1.1rem">
+            <li><b>Pieniądze</b> = wyceny + sprzedaże po dacie utworzenia (pełna historia, razem z migracją z Make — daty prawdziwe).</li>
+            <li><b>Zbieżność, nie atrybucja:</b> nie wiemy, który klient przyszedł z której rolki. Liczymy, czy tygodnie z zasięgiem formatu to też tygodnie z pieniędzmi (+ tydzień poślizgu).</li>
+            <li><b>zł/1000 wyśw. służy do PORÓWNANIA formatów, nie jako cennik</b> — pieniądze płyną też z telefonu/FB, więc wartości absolutne są zawyżone; różnice między formatami są miarodajne.</li>
+            <li><b>Placebo:</b> liczymy też „korelację" z pieniędzmi z POPRZEDNIEGO tygodnia (treść nie może powodować przeszłej sprzedaży). Jeśli wychodzi podobna — to trend, nie efekt; format dostaje 🟠.</li>
+            <li><b>Test tasowania:</b> mieszamy tygodnie pieniędzy 200 razy i patrzymy, jak często korelacja wychodzi „sama z siebie". ~1/100 = mocny sygnał, ~50/100 = szum.</li>
+            <li><b>Tygodnie z wydarzeniami</b> (migracja systemu, awaria telefonu) są oznaczone ⚠️ i wyłączone z korelacji tygodniowej na wykresie punktowym.</li>
+          </ul>
+          <div class="muted" style="margin-top:0.5rem;font-size:0.72rem">${esc(d.metoda || '')}</div>
+        </div>
+        <div class="muted" style="margin-top:1rem;font-size:0.76rem">Faza 1 (TikTok: ${(d.inwentarz || {}).tiktok_rolek_okno ?? '—'} rolek w oknie). IG dostaje formaty przez scalenie po creative_id (Faza 2), FB po re-uploadzie eksportu (Faza 3).</div>`;
+      bindMapa();
+      renderFmtDetail();
       bindKatalog();
+      bindScatter();
+      bindTimelineHover(d.timeline);
     }
 
     mountChips();
