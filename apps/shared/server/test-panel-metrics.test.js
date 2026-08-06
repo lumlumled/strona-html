@@ -31,16 +31,16 @@ test('parseDataPL i last9', () => {
   assert.equal(last9('511 222 333'), '511222333');
 });
 
-test('effectiveStartMs: lead z nocy startuje o 8:00 Warszawy', () => {
-  // 23:30 Warszawy (21:30Z latem) -> zegar rusza nazajutrz o 8:00 (06:00Z).
+test('effectiveStartMs: lead z nocy startuje o 9:00 Warszawy (uzgodnienie 6.08)', () => {
+  // 23:30 Warszawy (21:30Z latem) -> zegar rusza nazajutrz o 9:00 (07:00Z).
   const nocny = Date.parse('2026-08-05T21:30:00Z');
-  assert.equal(new Date(effectiveStartMs(nocny)).toISOString(), '2026-08-06T06:00:00.000Z');
+  assert.equal(new Date(effectiveStartMs(nocny)).toISOString(), '2026-08-06T07:00:00.000Z');
   // 12:00 Warszawy — bez klamry.
   const dzienny = Date.parse('2026-08-05T10:00:00Z');
   assert.equal(effectiveStartMs(dzienny), dzienny);
-  // 5:00 Warszawy (03:00Z) -> ten sam dzień 8:00.
+  // 5:00 Warszawy (03:00Z) -> ten sam dzień 9:00.
   const ranny = Date.parse('2026-08-05T03:00:00Z');
-  assert.equal(new Date(effectiveStartMs(ranny)).toISOString(), '2026-08-05T06:00:00.000Z');
+  assert.equal(new Date(effectiveStartMs(ranny)).toISOString(), '2026-08-05T07:00:00.000Z');
 });
 
 test('R1: SLA liczy minuty od wpadnięcia i łapie czekających', () => {
@@ -63,8 +63,8 @@ test('R1: SLA liczy minuty od wpadnięcia i łapie czekających', () => {
   assert.equal(k.sla.naruszenia[0].id, 2);
   assert.equal(k.sla.czekaja.length, 1);
   assert.equal(k.sla.czekaja[0].id, 3);
-  // czeka ~3,5 h = 210 min od 06:30Z (8:30 Warszawy, w godzinach pracy)
-  assert.ok(k.sla.czekaja[0].min >= 205 && k.sla.czekaja[0].min <= 215);
+  // lead z 8:30 Warszawy: zegar od 9:00 (07:00Z), teraz 10:00Z -> 180 min
+  assert.ok(k.sla.czekaja[0].min >= 175 && k.sla.czekaja[0].min <= 185);
 });
 
 test('R2: cisza 3 dni przy <5 probach = lead umiera; umówiony termin ratuje', () => {

@@ -19,7 +19,7 @@ const DZIEN_MS = 24 * 60 * 60 * 1000;
 
 // Treść umowy wprost w kodzie — panel ma PRZYPOMINAĆ zasady, nie tylko liczyć.
 const REGULY = [
-  { key: 'sla', nr: 1, tytul: 'Telefon w 15 minut', tresc: 'Nowy lead = pierwsza próba telefonu w 15 minut (w godzinach 8:00-20:00; lead z nocy startuje o 8:00).' },
+  { key: 'sla', nr: 1, tytul: 'Telefon w 15 minut', tresc: 'Nowy lead = pierwsza próba telefonu w 15 minut. Okno dzwonienia 8:00-20:00; dla leadów z nocy/poranka zegar startuje o 9:00 (uzgodnione 6.08).' },
   { key: 'kadencja', nr: 2, tytul: 'Min. 5 prób, zanim lead umrze', tresc: 'Lead nie umiera przed 5 próbami w 14 dni, próby w różnych porach dnia. Cisza 3 dni bez umówionego terminu = lead umiera po cichu.' },
   { key: 'next_step', nr: 3, tytul: 'Każda rozmowa kończy się datą', tresc: 'Rozmowa bez zapisanej daty i godziny następnego kroku ("jesteśmy w kontakcie") = rozmowa niedokończona. Wyjątek: klient definitywnie stracony.' },
   { key: 'godziny', nr: 4, tytul: 'Blok 13-15, zakaz po 19', tresc: 'Blok obdzwonkowy 13:00-15:00 (najlepsza dodzwanialność: 91%). Zakaz PIERWSZYCH kontaktów po 19:00.' },
@@ -54,20 +54,21 @@ function warsaw(dateLike) {
   return { ymd: s.slice(0, 10), h: Number(s.slice(11, 13)), min: Number(s.slice(14, 16)) };
 }
 
-// SLA liczymy od momentu, w którym WOLNO było dzwonić: lead z 20:00-8:00
-// startuje zegar o 8:00 rano (Warszawa). Zwraca timestamp (ms).
+// SLA liczymy od momentu, w którym WOLNO było dzwonić. Uzgodnienie z rozmowy
+// Antoni-Lorenzo 6.08: okno dzwonienia 8-20, ale zegar SLA dla leadów z nocy
+// startuje o 9:00 (nie dzwonimy ludziom przed 9). Zwraca timestamp (ms).
 function effectiveStartMs(createdMs) {
   const { ymd, h } = warsaw(new Date(createdMs));
-  if (h >= 8 && h < 20) return createdMs;
-  // 8:00 czasu warszawskiego danego dnia: różnica UTC-Warszawa zmienna (DST),
+  if (h >= 9 && h < 20) return createdMs;
+  // 9:00 czasu warszawskiego danego dnia: różnica UTC-Warszawa zmienna (DST),
   // więc liczymy ją z samego formatu — createdMs cofnięte do godziny h daje offset.
   const base = new Date(createdMs);
   const warsawMinutes = h * 60 + warsaw(base).min;
   const utcMinutes = base.getUTCHours() * 60 + base.getUTCMinutes();
   const offsetMin = ((warsawMinutes - utcMinutes) % (24 * 60) + 24 * 60) % (24 * 60);
   const dayStartUtc = Date.parse(`${ymd}T00:00:00Z`) - offsetMin * 60 * 1000;
-  const at8 = dayStartUtc + 8 * 60 * 60 * 1000;
-  return h < 8 ? at8 : at8 + DZIEN_MS; // po 20:00 -> jutro 8:00
+  const at9 = dayStartUtc + 9 * 60 * 60 * 1000;
+  return h < 9 ? at9 : at9 + DZIEN_MS; // po 20:00 -> jutro 9:00
 }
 
 function median(nums) {
