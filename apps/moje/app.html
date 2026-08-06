@@ -215,7 +215,7 @@
         <div id="todo"></div>
       </section>
 
-      <section id="sec-wyceny">
+      <section id="sec-wyceny" class="domyslnie-zwiniete">
         <h2 class="toggler" id="wyc-head">💰 Wyceny do domknięcia <span class="licz" id="wyc-licz">0</span><span class="chev">▾</span></h2>
         <div id="wyceny" class="zwijane"></div>
       </section>
@@ -611,7 +611,11 @@
       const sec = h.closest('section');
       if (!sec || !sec.id) return;
       const key = `mojeZwin:${sec.id}`;
-      if (localStorage.getItem(key) === '1') sec.classList.add('zwiniete');
+      // Brak zapisu -> stan domyślny sekcji (klasa domyslnie-zwiniete = złożone
+      // na start); zapis '1'/'0' -> świadomy wybór użytkownika wygrywa.
+      const zapis = localStorage.getItem(key);
+      const zwin = zapis === null ? sec.classList.contains('domyslnie-zwiniete') : zapis === '1';
+      sec.classList.toggle('zwiniete', zwin);
       h.addEventListener('click', () => {
         const z = sec.classList.toggle('zwiniete');
         localStorage.setItem(key, z ? '1' : '0');
