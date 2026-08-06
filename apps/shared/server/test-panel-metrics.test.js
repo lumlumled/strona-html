@@ -169,6 +169,25 @@ test('R7: uczciwy licznik — liczy sie tylko sprzedaz po odebranej rozmowie Lor
   assert.equal(k.cel.sklepSam, 2);
 });
 
+test('Wyceny do domkniecia: tylko otwarte wyceny handlowca, suma + sort', () => {
+  const calls = [
+    call({ phone: '511111111', at: '2026-08-06T10:00:00Z' }), // dotknięta rozmowa Lorenza
+  ];
+  const wycenyOpen = [
+    { id: 1, telefon_digits: '511111111', status: 'Open', owner: 'Lorenzo', imie_nazwisko: 'Anna', kwota_proponowana_brutto: '2000', created_at: '2026-08-01T10:00:00Z' },   // dotknięta
+    { id: 2, telefon_digits: '522222222', status: 'Open', owner: 'Lorenzo', imie_nazwisko: 'Bartek', kwota_proponowana_brutto: '3000', created_at: '2026-07-20T10:00:00Z' },  // nietknięta, starsza
+    { id: 3, telefon_digits: '533333333', status: 'Open', owner: 'Antoni', kwota_proponowana_brutto: '9000', created_at: '2026-08-01T10:00:00Z' },                            // nie jego — pomijamy
+  ];
+  const k = computeKokpit({ leads: [], calls, wycenyPaid: [], wycenyOpen, scoresWeek: [], now: NOW, start: START });
+  assert.equal(k.wyceny.n, 2);                 // tylko Lorenzo
+  assert.equal(k.wyceny.sumaKwota, 5000);      // 2000 + 3000
+  assert.equal(k.wyceny.dotknietych, 1);
+  assert.equal(k.wyceny.lista[0].id, 1);       // dotknięta na górze
+  assert.equal(k.wyceny.lista[0].dotkniete, true);
+  assert.equal(k.wyceny.lista[1].id, 2);       // nietknięta niżej
+  assert.equal(k.wyceny.lista[1].dotkniete, false);
+});
+
 test('pickOdsluch: 1 wzorcowa + problemowe z roznymi dominujacymi wadami', () => {
   const mk = (log_id, scores) => ({ log_id, scores, flagi: {}, pominieta: false });
   const wynik = pickOdsluch([

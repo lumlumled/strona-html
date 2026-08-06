@@ -70,7 +70,7 @@ async function fetchDane(supabase) {
       .select('id,telefon_digits,status,paid,paid_at,kwota_sprzedazy_brutto,imie_nazwisko,owner')
       .eq('paid', true).gte('paid_at', TEST_START),
     supabase.from('wyceny')
-      .select('id,telefon_digits,status')
+      .select('id,telefon_digits,status,owner,imie_nazwisko,kwota_proponowana_brutto,kwota_sprzedazy_brutto,created_at,lead_id')
       .eq('paid', false).in('status', ['Open', 'Waiting for payment']),
   ]);
   for (const r of [leadyRes, callsRes, paidRes, openRes]) if (r.error) throw new Error(r.error.message);

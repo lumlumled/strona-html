@@ -141,6 +141,12 @@
     .err { background: var(--zle-soft); border: 1px solid var(--zle); color: var(--zle); border-radius: 12px; padding: .7rem .9rem; font-size: .85rem; margin: 1rem 0; }
     .czysto { background: var(--ok-soft); border: 1px solid var(--ok); color: var(--ok); border-radius: 12px; padding: .8rem 1rem; font-size: .9rem; font-weight: 600; }
 
+    /* ── Wyceny do domknięcia ── */
+    .wyc-suma { font-size: .85rem; color: var(--text-secondary); margin-bottom: .55rem; }
+    .wyc-suma b { color: var(--text-primary); font-weight: 800; }
+    .karta-akcja .kwota { font-weight: 800; font-variant-numeric: tabular-nums; }
+    .karta-akcja.wyc.zimna { border-style: dashed; }
+
     /* ── Klikalność: karta akcji / wiersz reguły otwiera pełną kartę leada ── */
     .karta-akcja[data-tel], .regula details li[data-tel] { cursor: pointer; }
     .karta-akcja[data-tel]:hover { border-color: var(--border-strong); }
@@ -183,6 +189,11 @@
       <section>
         <h2>🔥 Zrób teraz <span class="licz" id="todo-licz">0</span></h2>
         <div id="todo"></div>
+      </section>
+
+      <section>
+        <h2>💰 Wyceny do domknięcia <span class="licz" id="wyc-licz">0</span></h2>
+        <div id="wyceny"></div>
       </section>
 
       <section>
@@ -327,6 +338,28 @@
       renderSla();
     }
 
+    // ── Wyceny do domknięcia (kasa) ─────────────────────────────────────────
+    const zl = (n) => `${Number(n).toLocaleString('pl-PL')} zł`;
+    function renderWyceny(k) {
+      const w = k.wyceny || { lista: [], n: 0, sumaKwota: 0, dotknietych: 0 };
+      $('wyc-licz').textContent = w.n;
+      if (!w.n) { $('wyceny').innerHTML = '<div class="pusto">Brak otwartych wycen na Tobie. Jak wejdą, tu zobaczysz kasę do domknięcia.</div>'; return; }
+      const naglowek = `<div class="wyc-suma">Otwarta kasa: <b>${w.sumaKwota ? zl(w.sumaKwota) : '—'}</b> · ${w.n} ${w.n === 1 ? 'wycena' : 'wycen'} · dotkniętych telefonem: <b>${w.dotknietych}/${w.n}</b></div>`;
+      const rows = w.lista.map((x) => {
+        const opis = x.dotkniete
+          ? `${x.rozmow} ${x.rozmow === 1 ? 'rozmowa' : 'rozmów'} · cisza ${x.dniCiszy ?? '—'} dni`
+          : `nietknięta telefonem · wiek ${x.wiekDni ?? '—'} dni`;
+        return `<div class="karta-akcja wyc ${x.dotkniete ? '' : 'zimna'}" data-tel="${esc(x.telefon)}" data-name="${esc(x.name || '')}">
+          <span class="kto">${esc(x.name || '(bez imienia)')}</span>
+          <span class="tel">${tel(x.telefon)}</span>
+          <span class="spacer"></span>
+          <span class="kwota">${x.kwota ? zl(x.kwota) : 'kwota —'}</span>
+          <span class="co">${opis}</span>
+        </div>`;
+      }).join('');
+      $('wyceny').innerHTML = naglowek + `<div class="lista">${rows}</div>`;
+    }
+
     // ── Lekki postęp (kafle) ────────────────────────────────────────────────
     function tile(cls, v, k) { return `<div class="tile ${cls}"><div class="v">${v}</div><div class="k">${k}</div></div>`; }
 
@@ -435,6 +468,7 @@
       $('dni-lab').textContent = `dzień ${k.dzien} z ${k.dniTestu}`;
       $('cel-lab').textContent = `cel: ${k.cel.domkniete.length}/${k.cel.target} wycen domkniętych telefonem`;
       renderTodo(k);
+      renderWyceny(k);
       renderTiles(k);
       renderReguly(k);
     }

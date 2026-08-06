@@ -282,6 +282,30 @@ function computeKokpit({ leads, calls, wycenyPaid, wycenyOpen, scoresWeek, now =
       c.handlowiec === HANDLOWIEC && new Date(c.data_zmiany).getTime() >= weekMs);
   }).length;
 
+  // ── Wyceny do domknięcia (kasa) — CAŁA otwarta książka handlowca, nie tylko
+  // od startu testu. „Kasa leżąca odłogiem": suma + lista posortowana tak, by
+  // realni klienci (już dotknięci telefonem) i najdłużej cisi byli na górze.
+  const wyceny = { lista: [], sumaKwota: 0, n: 0, dotknietych: 0 };
+  for (const w of wycenyOpen || []) {
+    if (String(w.owner || '').trim().toLowerCase() !== HANDLOWIEC.toLowerCase()) continue;
+    const phone = last9(w.telefon_digits);
+    const kwota = Number(w.kwota_proponowana_brutto) || Number(w.kwota_sprzedazy_brutto) || null;
+    const createdMs = w.created_at ? new Date(w.created_at).getTime() : null;
+    const wiekDni = createdMs ? Math.floor((nowMs - createdMs) / DZIEN_MS) : null;
+    const rozmowy = phone ? phoneCalls(phone).filter((c) => c.disposition === 'answered' && c.handlowiec === HANDLOWIEC) : [];
+    const ostatniaMs = rozmowy.length ? new Date(rozmowy[rozmowy.length - 1].data_zmiany).getTime() : null;
+    const dniCiszy = ostatniaMs ? Math.floor((nowMs - ostatniaMs) / DZIEN_MS) : wiekDni;
+    wyceny.lista.push({
+      id: w.id, name: w.imie_nazwisko || nameByPhone.get(phone) || null, telefon: phone,
+      kwota, wiekDni, dniCiszy, rozmow: rozmowy.length, dotkniete: rozmowy.length > 0, status: w.status,
+    });
+    if (kwota) wyceny.sumaKwota += kwota;
+    if (rozmowy.length) wyceny.dotknietych += 1;
+  }
+  wyceny.n = wyceny.lista.length;
+  wyceny.lista.sort((a, b) =>
+    (Number(b.dotkniete) - Number(a.dotkniete)) || ((b.dniCiszy ?? 0) - (a.dniCiszy ?? 0)) || ((b.kwota ?? 0) - (a.kwota ?? 0)));
+
   // ── Umierające leady (zbiorcza lista ostrzeżeń na górę panelu) ────────────
   const umierajace = [
     ...sla.czekaja.map((x) => ({ waga: 3, typ: 'PALI SIĘ', opis: `nowy lead bez ŻADNEJ próby od ${x.min >= 60 ? `${Math.round(x.min / 60)} h` : `${x.min} min`}`, ...x })),
@@ -335,7 +359,7 @@ function computeKokpit({ leads, calls, wycenyPaid, wycenyOpen, scoresWeek, now =
     start, dzien, dniTestu: 30, todayYmd,
     nowychLeadow: noweLeady.length,
     reguly: REGULY.map((r) => ({ ...r, status: statusReguly(r.key) })),
-    sla, kadencja, nextStep, godziny, obietnice, styl, cel, umierajace,
+    sla, kadencja, nextStep, godziny, obietnice, styl, cel, wyceny, umierajace,
   };
 }
 
