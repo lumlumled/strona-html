@@ -16,6 +16,9 @@ const { recordInboundSms } = require('../../shared/server/kontakt-send');
 const { autoSmsPoNieodebranym } = require('../../shared/server/auto-sms');
 const metaCapi = require('../../shared/server/meta-capi');
 const { scoreCase, applyScoring, normalizeTemperatura, SCORED_CATEGORIES } = require('./scoring');
+// Silnik testu umowy — reużywany w cronie nudge SLA (ten sam zegar 15 min od
+// 9:00 co panel /moje: effectiveStartMs, last9, imię handlowca).
+const { effectiveStartMs, last9: last9Digits, HANDLOWIEC: TEST_HANDLOWIEC } = require('../../shared/server/test-panel-metrics');
 
 const app = express();
 app.use(cors());
@@ -3655,6 +3658,71 @@ app.all('/api/cron/feedback-reminder', async (req, res) => {
     res.json({ ok: true, ...raport });
   } catch (err) {
     await logOperation(supabase, 'feedback_reminder_cron', 'error', { message: err.message }).catch(() => {});
+    handleError(res, err, 502);
+  }
+});
+
+// Nudge SLA dla handlowca (panel /moje): świeży lead bez ANI JEDNEJ próby, ~10
+// min po starcie zegara -> jeden celny push „zadzwoń, leży kasa". Świadomie
+// JEDEN push na lead (marker marketing_meta.sla_nudged_at), żeby nie wrócić do
+// alert fatigue watchdoga. pg_cron woła co ~5 min. Zegar 15 min liczony od 9:00
+// dla leadów z nocy (effectiveStartMs — ten sam co /moje). Okno [10,25] min:
+// wcześniej za wcześnie, później zostawiamy „umierającym leadom" w panelu.
+const SLA_NUDGE_MIN = 10;   // minuty od startu zegara, kiedy najwcześniej pingujemy
+const SLA_NUDGE_MAX = 25;   // po tym oknie nie pingujemy (nie jest już „świeży")
+const SLA_NUDGE_FINAL = ['Sprzedane', 'Stracony', 'Błędne dane'];
+app.all('/api/cron/sla-nudge', async (req, res) => {
+  const supabase = getClient();
+  try {
+    if (!isCronAuthorized(req)) return res.status(401).json({ error: 'Brak autoryzacji' });
+    const nowMs = Date.now();
+    const sinceIso = new Date(nowMs - 30 * 60 * 1000).toISOString();
+    // Tylko świeże leady handlowca (created w ostatnich 30 min) z dokładnym
+    // czasem wpadnięcia — nudge bez znanej minuty nie ma sensu.
+    const { data: leady, error } = await supabase.from(LEADY_B2C_TABLE)
+      .select('"ID Leada",Name,"Phone number","Deal stage",Owner,marketing_meta')
+      .ilike('Owner', TEST_HANDLOWIEC)
+      .gte('marketing_meta->>date_created', sinceIso);
+    if (error) throw error;
+
+    // Zbiór numerów, do których była wychodząca próba (ostatnie 40 min) —
+    // jeśli lead ma próbę, nie ma po co pingować.
+    const callsSince = new Date(nowMs - 40 * 60 * 1000).toISOString();
+    const { data: calls } = await supabase.from(LOG_ZMIAN_TABLE)
+      .select('telefon,kierunek,data_zmiany')
+      .eq('kierunek', 'wychodzące').gte('data_zmiany', callsSince);
+    const dzwoniono = new Set((calls || []).map((c) => last9Digits(c.telefon)));
+
+    let sent = 0, skipped = 0;
+    for (const lead of leady || []) {
+      const meta = lead.marketing_meta || {};
+      const createdMs = meta.date_created ? Date.parse(meta.date_created) : NaN;
+      if (Number.isNaN(createdMs)) { skipped += 1; continue; }
+      if (meta.sla_nudged_at) { skipped += 1; continue; }                       // już pingowany
+      if (SLA_NUDGE_FINAL.includes(String(lead['Deal stage'] || ''))) { skipped += 1; continue; }
+      const elapsedMin = (nowMs - effectiveStartMs(createdMs)) / 60000;
+      if (elapsedMin < SLA_NUDGE_MIN || elapsedMin > SLA_NUDGE_MAX) { skipped += 1; continue; }
+      if (dzwoniono.has(last9Digits(lead['Phone number']))) { skipped += 1; continue; }
+
+      const kto = lead['Name'] || `+${lead['Phone number'] || ''}`;
+      await pushToOwner(lead['Owner'], {
+        title: 'Lead czeka — zadzwoń',
+        body: `${kto} — minęło ~${Math.round(elapsedMin)} min, zegar 15 min leci`,
+        url: '/moje/',
+        tag: `sla-nudge-${lead['ID Leada']}`,
+      });
+      // Marker w marketing_meta (bez migracji): jeden push na lead.
+      await supabase.from(LEADY_B2C_TABLE)
+        .update({ marketing_meta: { ...meta, sla_nudged_at: new Date(nowMs).toISOString() } })
+        .eq('ID Leada', lead['ID Leada']);
+      sent += 1;
+    }
+
+    const raport = { kandydatow: (leady || []).length, sent, skipped };
+    await logOperation(supabase, 'sla_nudge_cron', 'ok', raport).catch(() => {});
+    res.json({ ok: true, ...raport });
+  } catch (err) {
+    await logOperation(supabase, 'sla_nudge_cron', 'error', { message: err.message }).catch(() => {});
     handleError(res, err, 502);
   }
 });

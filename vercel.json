@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "api/index.js": {
-      "includeFiles": "{apps/hub/app.html,apps/hub/pozwolenia.html,apps/hub/wkrotce.html,apps/hub/assets/**,apps/feedbacki/app.html,apps/feedbacki/assets/**,apps/test/app.html,apps/test/assets/**,apps/shared/**}",
+      "includeFiles": "{apps/hub/app.html,apps/hub/pozwolenia.html,apps/hub/wkrotce.html,apps/hub/assets/**,apps/feedbacki/app.html,apps/feedbacki/assets/**,apps/test/app.html,apps/test/assets/**,apps/moje/app.html,apps/moje/assets/**,apps/shared/**}",
       "maxDuration": 180
     },
     "api/backlog-b2c.js": {
@@ -67,7 +67,8 @@
     { "source": "/doradca", "destination": "/doradca/", "permanent": false },
     { "source": "/kampanie", "destination": "/kampanie/", "permanent": false },
     { "source": "/feedbacki", "destination": "/feedbacki/", "permanent": false },
-    { "source": "/test", "destination": "/test/", "permanent": false }
+    { "source": "/test", "destination": "/test/", "permanent": false },
+    { "source": "/moje", "destination": "/moje/", "permanent": false }
   ],
   "rewrites": [
     { "source": "/backlog-b2c/", "destination": "/api/backlog-b2c" },
@@ -101,6 +102,8 @@
     { "source": "/feedbacki/:path*", "destination": "/api/index" },
     { "source": "/test/", "destination": "/api/index" },
     { "source": "/test/:path*", "destination": "/api/index" },
+    { "source": "/moje/", "destination": "/api/index" },
+    { "source": "/moje/:path*", "destination": "/api/index" },
     { "source": "/assets/:path*", "destination": "/api/index" },
     { "source": "/shared/:path*", "destination": "/api/index" },
     { "source": "/api/:path*", "destination": "/api/index" }

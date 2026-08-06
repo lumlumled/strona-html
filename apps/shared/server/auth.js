@@ -45,6 +45,7 @@ const PANELS = [
   { key: 'kampanie', label: 'Kampanie', desc: 'Kampanie SMS/mail: AI personalizuje wiadomości do starych wycen, Ty akceptujesz próbkę', status: 'live' },
   { key: 'feedbacki', label: 'Feedbacki', desc: 'Kalendarz terminów kontaktu: Tydzień/Miesiąc/Dzień, natężenie feedbacków, karta klienta w szufladzie', status: 'live' },
   { key: 'test', label: 'Test', desc: 'Kokpit umowy 30 dni handlowca: SLA, kadencja, obietnice, uczciwy licznik, karta ocen rozmów', status: 'live', adminOnly: true },
+  { key: 'moje', label: 'Moje wyniki', desc: 'Twój dzień wg umowy: kogo dzwonić teraz (zegar 15 min), próby do dobicia, obietnice, gdzie jesteś z 7 zasadami', status: 'live' },
   { key: 'pozwolenia', label: 'Pozwolenia', desc: 'Użytkownicy i dostępy do paneli oraz arkuszy', status: 'live', adminOnly: true },
 ];
 
@@ -161,6 +162,7 @@ function panelLinks() {
       kampanie: '/kampanie/',
       feedbacki: '/feedbacki/',
       test: '/test/',
+      moje: '/moje/',
       pozwolenia: '/pozwolenia',
     };
   }
@@ -179,6 +181,7 @@ function panelLinks() {
     kampanie: 'http://localhost:3012/',
     feedbacki: 'http://localhost:3013/',
     test: 'http://localhost:3014/',
+    moje: 'http://localhost:3015/',
     pozwolenia: `${hub}/pozwolenia`,
   };
 }

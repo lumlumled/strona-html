@@ -77,22 +77,25 @@ async function fetchDane(supabase) {
   return { leads: leadyRes.data || [], calls: callsRes.data || [], wycenyPaid: paidRes.data || [], wycenyOpen: openRes.data || [] };
 }
 
+// Buduje pełny kokpit umowy (te same liczby dla /test i /moje — panel Lorenza
+// reużywa tego samego silnika). Flagi stylu (reguła 6) tylko z rozmów OD STARTU
+// testu — karta ocen może zawierać starsze rozmowy (materiał na odsłuch), ale
+// one nie obciążają wyniku umowy.
+async function buildKokpit(supabase) {
+  const weekAgo = new Date(Date.now() - 7 * 864e5).toISOString();
+  const odKiedy = weekAgo > TEST_START ? weekAgo : TEST_START;
+  const [dane, scoresRes] = await Promise.all([
+    fetchDane(supabase),
+    supabase.from(SCORES_TABLE).select('log_id,scores,flagi,pominieta').gte('data_rozmowy', odKiedy),
+  ]);
+  if (scoresRes.error) throw new Error(scoresRes.error.message);
+  return computeKokpit({ ...dane, scoresWeek: (scoresRes.data || []).filter((s) => !s.pominieta), start: TEST_START });
+}
+
 function registerTestPanelEndpoints(app, { getClient }) {
   app.get('/api/test/kokpit', async (req, res) => {
     try {
-      const supabase = getClient();
-      // Flagi stylu (reguła 6) tylko z rozmów OD STARTU testu — karta ocen może
-      // zawierać też starsze rozmowy (materiał treningowy na odsłuch), ale one
-      // nie obciążają wyniku umowy.
-      const weekAgo = new Date(Date.now() - 7 * 864e5).toISOString();
-      const odKiedy = weekAgo > TEST_START ? weekAgo : TEST_START;
-      const [dane, scoresRes] = await Promise.all([
-        fetchDane(supabase),
-        supabase.from(SCORES_TABLE).select('log_id,scores,flagi,pominieta').gte('data_rozmowy', odKiedy),
-      ]);
-      if (scoresRes.error) throw new Error(scoresRes.error.message);
-      const kokpit = computeKokpit({ ...dane, scoresWeek: (scoresRes.data || []).filter((s) => !s.pominieta), start: TEST_START });
-      res.json(kokpit);
+      res.json(await buildKokpit(getClient()));
     } catch (err) {
       console.error('Kokpit testu:', err.message);
       res.status(500).json({ error: err.message });
@@ -192,4 +195,4 @@ function registerTestPanelEndpoints(app, { getClient }) {
   });
 }
 
-module.exports = { registerTestPanelEndpoints, TEST_START, scoreTranscript, fetchDane };
+module.exports = { registerTestPanelEndpoints, buildKokpit, TEST_START, scoreTranscript, fetchDane };

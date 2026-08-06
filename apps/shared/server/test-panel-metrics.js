@@ -22,7 +22,7 @@ const REGULY = [
   { key: 'sla', nr: 1, tytul: 'Telefon w 15 minut', tresc: 'Nowy lead = pierwsza próba telefonu w 15 minut. Okno dzwonienia 8:00-20:00; dla leadów z nocy/poranka zegar startuje o 9:00 (uzgodnione 6.08).' },
   { key: 'kadencja', nr: 2, tytul: 'Min. 5 prób, zanim lead umrze', tresc: 'Lead nie umiera przed 5 próbami w 14 dni, próby w różnych porach dnia. Cisza 3 dni bez umówionego terminu = lead umiera po cichu.' },
   { key: 'next_step', nr: 3, tytul: 'Każda rozmowa kończy się datą', tresc: 'Rozmowa bez zapisanej daty i godziny następnego kroku ("jesteśmy w kontakcie") = rozmowa niedokończona. Wyjątek: klient definitywnie stracony.' },
-  { key: 'godziny', nr: 4, tytul: 'Blok 13-15, zakaz po 19', tresc: 'Blok obdzwonkowy 13:00-15:00 (najlepsza dodzwanialność: 91%). Zakaz PIERWSZYCH kontaktów po 19:00.' },
+  { key: 'godziny', nr: 4, tytul: 'Blok 13-17, nacisk 13-15', tresc: 'Główny blok obdzwonkowy 13:00-17:00, z naciskiem na 13:00-15:00 (najlepsza dodzwanialność). Zakaz PIERWSZYCH kontaktów po 19:00. (Test 2 tyg., przegląd danych 20.08.)' },
   { key: 'obietnice', nr: 5, tytul: 'Obietnica jest święta', tresc: '"Zadzwonię jutro o 9" wykonane o 19:11 = złamane. Umówiony termin = telefon tego dnia.' },
   { key: 'styl', nr: 6, tytul: 'Rabat za zobowiązanie, zero odsyłania', tresc: 'Rabat/gratis tylko w zamian za zobowiązanie klienta. Nie odsyłamy klienta "niech pan poszuka na rynku". (Liczone z karty ocen AI.)' },
   { key: 'cel', nr: 7, tytul: 'Cel: 2 wyceny domknięte telefonem', tresc: 'Uczciwy licznik: sprzedaż liczy się tylko, gdy przed opłaceniem była odebrana rozmowa handlowca z tym numerem.' },
@@ -131,13 +131,18 @@ function computeKokpit({ leads, calls, wycenyPaid, wycenyOpen, scoresWeek, now =
   }
 
   // ── R1: SLA 15 minut ──────────────────────────────────────────────────────
-  const sla = { tydzien: { probki: [], pct15: null, mediana: null }, total: { probki: [], pct15: null, mediana: null }, naruszenia: [], czekaja: [] };
+  // `doZadzwonienia` = wszystkie nowe leady bez ani jednej próby (z effStartMs,
+  // czyli momentem, od którego biegnie zegar 15 min) — panel Lorenza tyka z tego
+  // na żywo licznik. `czekaja` to podzbiór już spóźnionych (>15 min), używany też
+  // w /test i w liście „umierają".
+  const sla = { tydzien: { probki: [], pct15: null, mediana: null }, total: { probki: [], pct15: null, mediana: null }, naruszenia: [], czekaja: [], doZadzwonienia: [] };
   for (const nl of noweLeady) {
     const out = wychodzace(phoneCalls(nl.phone)).filter((c) => new Date(c.data_zmiany).getTime() >= nl.createdMs - 5 * 60 * 1000);
     const effStart = effectiveStartMs(nl.createdMs);
     if (!out.length) {
       const czekaMin = Math.max(0, Math.round((nowMs - effStart) / 60000));
-      if (czekaMin > 15) sla.czekaja.push({ id: nl.id, name: nl.name, telefon: nl.phone, min: czekaMin, dokladnyCzas: nl.dokladnyCzas });
+      sla.doZadzwonienia.push({ id: nl.id, name: nl.name, telefon: nl.phone, effStartMs: effStart, createdMs: nl.createdMs, dokladnyCzas: nl.dokladnyCzas });
+      if (czekaMin > 15) sla.czekaja.push({ id: nl.id, name: nl.name, telefon: nl.phone, min: czekaMin, effStartMs: effStart, dokladnyCzas: nl.dokladnyCzas });
       continue;
     }
     if (!nl.dokladnyCzas) continue; // znamy tylko dzień — minuty byłyby zmyślone
@@ -155,6 +160,7 @@ function computeKokpit({ leads, calls, wycenyPaid, wycenyOpen, scoresWeek, now =
   }
   sla.naruszenia.sort((a, b) => b.min - a.min);
   sla.czekaja.sort((a, b) => b.min - a.min);
+  sla.doZadzwonienia.sort((a, b) => a.effStartMs - b.effStartMs); // najbardziej spóźnione na górze
 
   // ── R2: kadencja + umierające leady ───────────────────────────────────────
   const kadencja = { rozklad: { 0: 0, '1-2': 0, '3-4': 0, '5+': 0 }, umieraja: [], srednioProb: null };
@@ -197,13 +203,18 @@ function computeKokpit({ leads, calls, wycenyPaid, wycenyOpen, scoresWeek, now =
   nextStep.bezDaty.sort((a, b) => new Date(b.data) - new Date(a.data));
 
   // ── R4: godziny dzwonienia ────────────────────────────────────────────────
-  const godziny = { hist: Array.from({ length: 24 }, (_, h) => ({ h, proby: 0 })), blok1315: { proby: 0, wszystkie: 0 }, pierwszePo19: [] };
+  // Uzgodnienie z Antonim (6.08, do przeglądu 20.08): akceptowalny blok to
+  // 13:00-17:00, ze SWEET SPOTEM 13:00-15:00 (największa dodzwanialność).
+  // `proby` = trafienia w 13-17, `sweet` = trafienia w 13-15, oba liczone jako
+  // udział we wszystkich rozmowach z okna dzwonienia 8-20.
+  const godziny = { hist: Array.from({ length: 24 }, (_, h) => ({ h, proby: 0 })), blok: { proby: 0, sweet: 0, wszystkie: 0 }, pierwszePo19: [] };
   for (const c of rozmowyOdStartu) {
     const { h } = warsaw(c.data_zmiany);
     godziny.hist[h].proby += 1;
     if (h >= 8 && h < 20) {
-      godziny.blok1315.wszystkie += 1;
-      if (h >= 13 && h < 15) godziny.blok1315.proby += 1;
+      godziny.blok.wszystkie += 1;
+      if (h >= 13 && h < 17) godziny.blok.proby += 1;
+      if (h >= 13 && h < 15) godziny.blok.sweet += 1;
     }
     // Pierwszy kontakt W ŻYCIU z tym numerem po 19:00 = naruszenie.
     const wszystkieDoNumeru = wychodzace(phoneCalls(c.telefon));
@@ -211,7 +222,8 @@ function computeKokpit({ leads, calls, wycenyPaid, wycenyOpen, scoresWeek, now =
       godziny.pierwszePo19.push({ logId: c.id, telefon: last9(c.telefon), name: nameByPhone.get(last9(c.telefon)) || null, data: c.data_zmiany, godzina: h });
     }
   }
-  godziny.blok1315.pct = pct(godziny.blok1315.proby, godziny.blok1315.wszystkie);
+  godziny.blok.pct = pct(godziny.blok.proby, godziny.blok.wszystkie);
+  godziny.blok.pctSweet = pct(godziny.blok.sweet, godziny.blok.wszystkie);
   godziny.hist = godziny.hist.filter((x) => x.proby > 0);
 
   // ── R5: obietnice (data_feedbacku_po ustawiona od startu) ────────────────
@@ -293,9 +305,11 @@ function computeKokpit({ leads, calls, wycenyPaid, wycenyOpen, scoresWeek, now =
         return w.pct >= 90 ? 'ok' : w.pct >= 70 ? 'uwaga' : 'zle';
       }
       case 'godziny': {
-        if (!godziny.blok1315.wszystkie) return 'brak';
+        if (!godziny.blok.wszystkie) return 'brak';
         if (godziny.pierwszePo19.length > 3) return 'zle';
-        if (godziny.pierwszePo19.length > 0 || (godziny.blok1315.pct ?? 0) < 25) return 'uwaga';
+        // Próg dla szerszego bloku 13-17 (4 h z okna 8-20): poniżej 40% udziału
+        // rozmów w bloku = rozjazd wart uwagi. Do rewizji z danymi 20.08.
+        if (godziny.pierwszePo19.length > 0 || (godziny.blok.pct ?? 0) < 40) return 'uwaga';
         return 'ok';
       }
       case 'obietnice':

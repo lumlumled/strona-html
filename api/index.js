@@ -15,10 +15,14 @@ const feedbackiApp = require('../apps/feedbacki/server/server.js');
 // Panel Test (kokpit umowy 30 dni) dzieli funkcję z hubem z tego samego
 // powodu co Feedbacki — limit 12 funkcji na Hobby. Lokalnie stoi na :3014.
 const testApp = require('../apps/test/server/server.js');
+// Panel Moje wyniki (widok handlowca na własną umowę) — również foldowany do
+// tej funkcji (bez nowej funkcji Vercel). Lokalnie stoi na :3015.
+const mojeApp = require('../apps/moje/server/server.js');
 
 const wrapper = express();
 wrapper.use('/feedbacki', feedbackiApp);
 wrapper.use('/test', testApp);
+wrapper.use('/moje', mojeApp);
 wrapper.use('/', hubApp);
 
 module.exports = wrapper;

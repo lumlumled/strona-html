@@ -65,6 +65,11 @@ test('R1: SLA liczy minuty od wpadnięcia i łapie czekających', () => {
   assert.equal(k.sla.czekaja[0].id, 3);
   // lead z 8:30 Warszawy: zegar od 9:00 (07:00Z), teraz 10:00Z -> 180 min
   assert.ok(k.sla.czekaja[0].min >= 175 && k.sla.czekaja[0].min <= 185);
+  // doZadzwonienia = leady bez ani jednej próby (pod żywy licznik /moje); tu tylko
+  // lead 3 (1,2 mają telefon, 4 sprzed startu) — z effStartMs do tykania.
+  assert.equal(k.sla.doZadzwonienia.length, 1);
+  assert.equal(k.sla.doZadzwonienia[0].id, 3);
+  assert.equal(typeof k.sla.doZadzwonienia[0].effStartMs, 'number');
 });
 
 test('R2: cisza 3 dni przy <5 probach = lead umiera; umówiony termin ratuje', () => {
@@ -111,6 +116,20 @@ test('R4: pierwszy kontakt w zyciu po 19 Warszawy = naruszenie, kolejny nie', ()
   const k = computeKokpit({ leads: [], calls, wycenyPaid: [], wycenyOpen: [], scoresWeek: [], now: NOW, start: START });
   assert.equal(k.godziny.pierwszePo19.length, 1);
   assert.equal(k.godziny.pierwszePo19[0].telefon, '511111111');
+});
+
+test('R4: blok 13-17 akceptowalny, 13-15 sweet spot (uzgodnienie 6.08)', () => {
+  const calls = [
+    call({ phone: '511111111', at: '2026-08-06T12:00:00Z' }), // 14:00 Warszawy — sweet spot 13-15 (i blok 13-17)
+    call({ phone: '522222222', at: '2026-08-06T14:00:00Z' }), // 16:00 Warszawy — blok 13-17, poza sweet spotem
+    call({ phone: '533333333', at: '2026-08-06T07:00:00Z' }), // 09:00 Warszawy — okno 8-20, poza blokiem
+  ];
+  const k = computeKokpit({ leads: [], calls, wycenyPaid: [], wycenyOpen: [], scoresWeek: [], now: NOW, start: START });
+  assert.equal(k.godziny.blok.wszystkie, 3);
+  assert.equal(k.godziny.blok.proby, 2);      // 14:00 i 16:00
+  assert.equal(k.godziny.blok.sweet, 1);      // tylko 14:00
+  assert.equal(k.godziny.blok.pct, 67);       // 2/3
+  assert.equal(k.godziny.blok.pctSweet, 33);  // 1/3
 });
 
 test('R5: obietnica dotrzymana proba w dniu terminu, zlamana bez proby', () => {

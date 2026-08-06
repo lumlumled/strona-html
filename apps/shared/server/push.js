@@ -13,6 +13,60 @@ const webpush = require('web-push');
 
 const SUBSCRIPTIONS_TABLE = 'push_subscriptions';
 
+// ── Wyciszanie powiadomień per użytkownik (alert fatigue) ────────────────────
+// Handlowiec w teście umowy tonął w powiadomieniach i przez to gubił te ważne:
+// Lorenzo PRZEGAPIŁ nowego leada, bo watchdog spamował go „temat ucieka".
+// Decyzja Antoniego (6.08): Lorenzo dostaje tylko nowy lead, przypomnienie
+// feedbacku, SMS od klienta oraz pingi o sprzedaży — a watchdog ma milczeć.
+//
+// Realizacja jako DENYLISTA (nie allowlista): dla handlowca gorzej ZGUBIĆ sygnał
+// (leada) niż wpuścić trochę szumu, więc odcinamy tylko jawnie hałaśliwe typy
+// (watchdog), a nowe/nieznane typy nadal dochodzą. Typ wnioskujemy z prefiksu
+// `tag`, który każdy producent i tak już nadaje. Wszystko idzie przez notifyUser,
+// więc jedna bramka pokrywa wszystkich producentów (push do ownera, crony, itd.).
+//
+// Konfiguracja env (opcjonalna, nadpisuje domyślne):
+//   PUSH_MUTE_RULES = "Lorenzo:watchdog;Ktoś:watchdog,wiadomosc"
+// Pusty env => domyślne poniżej. "0"/"off" => wyłącza wyciszanie całkowicie.
+const DEFAULT_MUTE_RULES = { lorenzo: ['watchdog'] };
+
+// Prefiks `tag` -> typ powiadomienia. Nowy producent, który ma podlegać
+// wyciszaniu, dopisuje tu swój prefiks; nierozpoznane = 'inne' (nie wyciszane).
+function tagKind(tag) {
+  const t = String(tag || '');
+  if (t.startsWith('watchdog')) return 'watchdog';
+  if (t.startsWith('nowy-lead') || t.startsWith('new-lead')) return 'nowy_lead';
+  if (t.startsWith('sla-')) return 'sla';
+  if (t.startsWith('feedback-reminder')) return 'feedback';
+  if (t.startsWith('sms-')) return 'sms';
+  if (t.startsWith('wycena-') || t.startsWith('sklep-') || t.startsWith('fulfillment')) return 'sprzedaz';
+  if (t.startsWith('kom-msg')) return 'wiadomosc';
+  if (t.startsWith('push-test')) return 'test';
+  return 'inne';
+}
+
+// Parsuje PUSH_MUTE_RULES do mapy { imię(lowercase): [typy] }. Bez env = domyślne.
+function muteRules() {
+  const raw = String(process.env.PUSH_MUTE_RULES ?? '').trim();
+  if (!raw) return DEFAULT_MUTE_RULES;
+  if (raw === '0' || raw.toLowerCase() === 'off') return {};
+  const rules = {};
+  for (const part of raw.split(';').map((s) => s.trim()).filter(Boolean)) {
+    const idx = part.indexOf(':');
+    if (idx < 0) continue;
+    const name = part.slice(0, idx).trim().toLowerCase();
+    const kinds = part.slice(idx + 1).split(',').map((k) => k.trim().toLowerCase()).filter(Boolean);
+    if (name && kinds.length) rules[name] = kinds;
+  }
+  return rules;
+}
+
+// Czy powiadomienie z danym `tag` jest wyciszone dla użytkownika o tym imieniu?
+function isMuted(name, tag) {
+  const muted = muteRules()[String(name || '').trim().toLowerCase()];
+  return Array.isArray(muted) && muted.includes(tagKind(tag));
+}
+
 let vapidConfigured = false;
 function ensureVapid() {
   if (vapidConfigured) return true;
@@ -30,6 +84,25 @@ function ensureVapid() {
 async function notifyUser(getClient, userId, { title, body, url, tag }) {
   if (!ensureVapid()) throw new Error('Brak kluczy VAPID w env (VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY)');
   const supabase = getClient();
+
+  // Wyciszanie per użytkownik (alert fatigue) — patrz muteRules(). Sprawdzamy
+  // dopiero gdy jakiekolwiek reguły istnieją, żeby nie dokładać zapytania o imię
+  // przy każdym pushu, gdy wyciszanie jest wyłączone. Błąd lookupu = nie wyciszaj
+  // (lepiej wysłać, niż zgubić przez awarię tabeli app_users).
+  const rules = muteRules();
+  if (Object.keys(rules).length) {
+    let name = null;
+    try {
+      const { data } = await supabase.from('app_users').select('name').eq('id', userId).maybeSingle();
+      name = data?.name || null;
+    } catch (err) {
+      console.warn('notifyUser: lookup imienia do wyciszenia nie wyszedł:', err.message);
+    }
+    if (name && isMuted(name, tag)) {
+      return { sent: 0, gone: 0, failed: 0, muted: true };
+    }
+  }
+
   const { data: subs, error } = await supabase
     .from(SUBSCRIPTIONS_TABLE)
     .select('id,endpoint,p256dh,auth')
@@ -160,4 +233,4 @@ function registerPushEndpoints(app, { getClient }) {
   });
 }
 
-module.exports = { servePushWorker, registerPushEndpoints, notifyUser };
+module.exports = { servePushWorker, registerPushEndpoints, notifyUser, tagKind, muteRules, isMuted };

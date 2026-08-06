@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <meta name="theme-color" content="#000000">
+  <title>Moje wyniki — umowa 30 dni</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="shared/topbar.css">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --surface-1: #ffffff;
+      --surface-2: #faf9f7;
+      --page: #f5f5f4;
+      --text-primary: #111111;
+      --text-secondary: #52514e;
+      --text-muted: #8a8984;
+      --border: rgba(17, 17, 17, 0.12);
+      --border-strong: rgba(17, 17, 17, 0.2);
+      --accent: #111111;
+      --accent-contrast: #ffffff;
+      --ok: #0ca30c;      --ok-soft: rgba(12, 163, 12, 0.12);
+      --uwaga: #b57e12;   --uwaga-soft: rgba(181, 126, 18, 0.12);
+      --zle: #b5433f;     --zle-soft: rgba(181, 67, 63, 0.1);
+      --brak: #8a8984;    --brak-soft: rgba(138, 137, 132, 0.12);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-1: #161616;
+        --surface-2: #1d1d1d;
+        --page: #0a0a0a;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted: #8a8984;
+        --border: rgba(255, 255, 255, 0.14);
+        --border-strong: rgba(255, 255, 255, 0.24);
+        --accent: #ffffff;
+        --accent-contrast: #0a0a0a;
+        --ok: #16c116;      --ok-soft: rgba(22, 193, 22, 0.14);
+        --uwaga: #e0b055;   --uwaga-soft: rgba(224, 176, 85, 0.14);
+        --zle: #e08585;     --zle-soft: rgba(224, 133, 133, 0.14);
+        --brak: #8a8984;    --brak-soft: rgba(138, 137, 132, 0.16);
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--page); color: var(--text-primary);
+      min-height: 100vh; -webkit-font-smoothing: antialiased;
+    }
+    button { font-family: inherit; cursor: pointer; }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 1rem 1rem 4rem; }
+
+    .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem 1rem; margin: 1.1rem 0 .4rem; }
+    .head h1 { font-size: 1.35rem; font-weight: 800; letter-spacing: -.01em; }
+    .head .sub { color: var(--text-muted); font-size: .85rem; }
+    .head .spacer { flex: 1; }
+    .btn { border: 1px solid var(--border-strong); background: var(--surface-1); color: var(--text-primary); border-radius: 999px; font-size: .8rem; font-weight: 600; padding: .42rem .9rem; }
+    .btn[disabled] { opacity: .5; cursor: wait; }
+    .autotick { font-size: .72rem; color: var(--text-muted); }
+
+    .progress { margin: .3rem 0 1.2rem; }
+    .progress .bar { height: 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; }
+    .progress .fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width .4s; }
+    .progress .lab { display: flex; justify-content: space-between; font-size: .75rem; color: var(--text-muted); margin-top: .3rem; }
+
+    section { margin-bottom: 1.6rem; }
+    h2 { font-size: .95rem; font-weight: 700; margin-bottom: .55rem; display: flex; align-items: center; gap: .45rem; }
+    h2 .licz { font-size: .72rem; font-weight: 700; color: var(--accent-contrast); background: var(--accent); border-radius: 999px; padding: .05rem .5rem; }
+    .pusto { color: var(--text-muted); font-size: .85rem; padding: .4rem 0; }
+
+    /* ── ZRÓB TERAZ: podsekcje z akcjami ── */
+    .grupa { margin-bottom: 1rem; }
+    .grupa .gh { font-size: .8rem; font-weight: 700; color: var(--text-secondary); margin-bottom: .4rem; display: flex; align-items: center; gap: .4rem; }
+    .grupa .gh .n { font-size: .7rem; font-weight: 800; color: var(--text-muted); }
+    .lista { display: flex; flex-direction: column; gap: .45rem; }
+    .karta-akcja {
+      display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .7rem;
+      background: var(--surface-1); border: 1px solid var(--border);
+      border-radius: 12px; padding: .55rem .8rem; font-size: .86rem;
+    }
+    .karta-akcja .kto { font-weight: 700; }
+    .karta-akcja .tel { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+    .karta-akcja .co { color: var(--text-secondary); }
+    .karta-akcja .spacer { flex: 1; }
+
+    /* Żywy licznik SLA */
+    .karta-akcja.sla { border-color: var(--border-strong); }
+    .karta-akcja.sla.soon { border-color: var(--uwaga); background: var(--uwaga-soft); }
+    .karta-akcja.sla.late { border-color: var(--zle); background: var(--zle-soft); }
+    .zegar { font-variant-numeric: tabular-nums; font-weight: 800; font-size: .95rem; padding: .18rem .55rem; border-radius: 999px; white-space: nowrap; background: var(--surface-2); border: 1px solid var(--border); }
+    .zegar.ok { color: var(--ok); }
+    .zegar.soon { color: var(--uwaga); border-color: var(--uwaga); }
+    .zegar.late { color: var(--zle); border-color: var(--zle); }
+    .zegar.wait { color: var(--text-muted); font-weight: 700; font-size: .8rem; }
+
+    /* ── Kafle liczb (lekki postęp) ── */
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .6rem; }
+    .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px; padding: .75rem .85rem; }
+    .tile .v { font-size: 1.45rem; font-weight: 800; letter-spacing: -.02em; }
+    .tile .v small { font-size: .8rem; font-weight: 600; color: var(--text-muted); }
+    .tile .k { font-size: .72rem; color: var(--text-secondary); margin-top: .15rem; line-height: 1.25; }
+    .tile.ok .v { color: var(--ok); } .tile.uwaga .v { color: var(--uwaga); }
+    .tile.zle .v { color: var(--zle); } .tile.brak .v { color: var(--brak); }
+
+    /* ── Reguły ── */
+    .reguly { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: .7rem; }
+    .regula { background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px; padding: .85rem .95rem; }
+    .regula.zle { border-color: var(--zle); }
+    .regula.uwaga { border-color: var(--uwaga); }
+    .regula .top { display: flex; align-items: center; gap: .55rem; margin-bottom: .35rem; }
+    .regula .nr { width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--accent-contrast); font-size: .72rem; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+    .regula .tytul { font-weight: 700; font-size: .92rem; flex: 1; }
+    .pill { font-size: .66rem; font-weight: 800; letter-spacing: .05em; padding: .22rem .55rem; border-radius: 999px; white-space: nowrap; }
+    .pill.ok { background: var(--ok-soft); color: var(--ok); }
+    .pill.uwaga { background: var(--uwaga-soft); color: var(--uwaga); }
+    .pill.zle { background: var(--zle-soft); color: var(--zle); }
+    .pill.brak { background: var(--brak-soft); color: var(--brak); }
+    .regula .tresc { font-size: .76rem; color: var(--text-muted); line-height: 1.45; margin-bottom: .5rem; }
+    .regula .metry { font-size: .84rem; color: var(--text-primary); line-height: 1.5; }
+    .regula .metry b { font-weight: 800; }
+    .regula details { margin-top: .45rem; }
+    .regula summary { font-size: .76rem; color: var(--text-secondary); cursor: pointer; user-select: none; }
+    .regula details ul { margin: .4rem 0 0 1rem; font-size: .78rem; color: var(--text-secondary); display: flex; flex-direction: column; gap: .2rem; }
+    .hist { display: flex; align-items: flex-end; gap: 3px; height: 44px; margin-top: .45rem; }
+    .hist .col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+    .hist .bar { width: 100%; border-radius: 3px 3px 0 0; background: var(--border-strong); min-height: 2px; }
+    .hist .col.dobra .bar { background: var(--ok); }
+    .hist .col.zla .bar { background: var(--zle); }
+    .hist .h { font-size: .58rem; color: var(--text-muted); }
+
+    .loading { color: var(--text-muted); font-size: .9rem; padding: 2rem 0; text-align: center; }
+    .err { background: var(--zle-soft); border: 1px solid var(--zle); color: var(--zle); border-radius: 12px; padding: .7rem .9rem; font-size: .85rem; margin: 1rem 0; }
+    .czysto { background: var(--ok-soft); border: 1px solid var(--ok); color: var(--ok); border-radius: 12px; padding: .8rem 1rem; font-size: .9rem; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <header id="site-header"></header>
+  <div class="wrap">
+    <div class="head">
+      <h1 id="tytul">Moje wyniki — umowa 30 dni</h1>
+      <span class="sub" id="sub"></span>
+      <span class="spacer"></span>
+      <span class="autotick" id="autotick"></span>
+      <button class="btn" id="btn-refresh">Odśwież</button>
+    </div>
+    <div class="progress">
+      <div class="bar"><div class="fill" id="dni-fill" style="width:0%"></div></div>
+      <div class="lab"><span id="dni-lab"></span><span id="cel-lab"></span></div>
+    </div>
+
+    <div id="blad"></div>
+    <div class="loading" id="loading">Ładuję Twój dzień…</div>
+
+    <div id="tresc" style="display:none">
+      <section>
+        <h2>🔥 Zrób teraz <span class="licz" id="todo-licz">0</span></h2>
+        <div id="todo"></div>
+      </section>
+
+      <section>
+        <h2>📈 Jak Ci idzie</h2>
+        <div class="tiles" id="tiles"></div>
+      </section>
+
+      <section>
+        <h2>📜 7 zasad umowy — gdzie jesteś</h2>
+        <div class="reguly" id="reguly"></div>
+      </section>
+    </div>
+  </div>
+
+  <script src="shared/topbar.js"></script>
+  <script>
+    const API_BASE = window.API_BASE || '';
+    LumTopbar.mount({ active: 'moje', into: document.getElementById('site-header') });
+
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const tel = (t) => String(t || '').replace(/(\d{3})(\d{3})(\d{3})$/, '$1 $2 $3');
+    const dataPL = (iso) => { const d = new Date(iso); return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+    const ymdPL = (ymd) => ymd ? `${ymd.slice(8, 10)}.${ymd.slice(5, 7)}` : '';
+    const minH = (m) => m >= 90 ? `${Math.round(m / 6) / 10} h` : `${m} min`;
+    const PILL = { ok: 'OK', uwaga: 'UWAGA', zle: 'ŹLE', brak: 'BRAK DANYCH' };
+    const os = (x) => `${esc(x.name || '(bez imienia)')} · <span class="tel">${tel(x.telefon)}</span>`;
+
+    let KOKPIT = null;      // ostatni pobrany kokpit
+    let tickTimer = null;   // interwał sekundowy do żywego licznika SLA
+
+    async function apiGet(path) {
+      const res = await fetch(`${API_BASE}${path}`);
+      if (res.status === 401 || res.status === 403) { location.href = `${API_BASE}/login`; throw new Error('auth'); }
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || `Błąd ${res.status}`);
+      return body;
+    }
+
+    // ── Żywy licznik SLA ────────────────────────────────────────────────────
+    // deadline = effStartMs + 15 min. Zielony >5 min, bursztyn <5 min, czerwony
+    // po terminie. Leady z nocy (effStartMs w przyszłości) czekają na start 9:00.
+    function slaZegar(effStartMs) {
+      const now = Date.now();
+      if (effStartMs > now + 60000) {
+        const d = new Date(effStartMs);
+        return { cls: 'wait', txt: `zegar rusza ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` };
+      }
+      const rem = effStartMs + 15 * 60000 - now;
+      if (rem > 0) {
+        const m = Math.floor(rem / 60000), s = Math.floor((rem % 60000) / 1000);
+        return { cls: rem < 5 * 60000 ? 'soon' : 'ok', txt: `${m}:${String(s).padStart(2, '0')} do telefonu` };
+      }
+      const over = Math.round(-rem / 60000);
+      return { cls: 'late', txt: `spóźnione o ${over >= 90 ? minH(over) : over + ' min'}` };
+    }
+
+    function renderSla() {
+      const lista = (KOKPIT?.sla?.doZadzwonienia) || [];
+      const box = $('sla-lista');
+      if (!box) return;
+      box.innerHTML = lista.map((x) => {
+        const z = slaZegar(x.effStartMs);
+        return `<div class="karta-akcja sla ${z.cls === 'late' ? 'late' : z.cls === 'soon' ? 'soon' : ''}">
+          <span class="kto">${esc(x.name || '(bez imienia)')}</span>
+          <span class="tel">${tel(x.telefon)}</span>
+          <span class="spacer"></span>
+          <span class="zegar ${z.cls}">${z.txt}</span>
+        </div>`;
+      }).join('');
+    }
+
+    // ── ZRÓB TERAZ ──────────────────────────────────────────────────────────
+    function grupa(tytul, n, innerHtml) {
+      return `<div class="grupa"><div class="gh">${tytul} <span class="n">${n}</span></div><div class="lista">${innerHtml}</div></div>`;
+    }
+
+    function renderTodo(k) {
+      const bloki = [];
+      let licznik = 0;
+
+      // 1) SLA — dzwoń teraz (żywy licznik, renderowany osobno co sekundę)
+      const sla = k.sla.doZadzwonienia || [];
+      if (sla.length) {
+        licznik += sla.length;
+        bloki.push(grupa('📞 Zadzwoń — leży kasa, biegnie zegar 15 min', sla.length, '<div id="sla-lista"></div>'));
+      }
+
+      // 2) Obietnice na dziś
+      const dzis = k.obietnice.naDzis || [];
+      if (dzis.length) {
+        licznik += dzis.length;
+        bloki.push(grupa('🤝 Obiecałeś kontakt DZIŚ', dzis.length,
+          dzis.map((x) => `<div class="karta-akcja"><span class="kto">${esc(x.name || '(bez imienia)')}</span><span class="tel">${tel(x.telefon)}</span><span class="spacer"></span><span class="co">umówione na dziś — zadzwoń</span></div>`).join('')));
+      }
+
+      // 3) Rozmowy bez daty następnego kroku (uzupełnij)
+      const bezDaty = k.nextStep.bezDaty || [];
+      if (bezDaty.length) {
+        licznik += bezDaty.length;
+        bloki.push(grupa('📅 Uzupełnij datę następnego kroku', bezDaty.length,
+          bezDaty.slice(0, 20).map((x) => `<div class="karta-akcja"><span class="kto">${esc(x.name || '(bez imienia)')}</span><span class="tel">${tel(x.telefon)}</span><span class="spacer"></span><span class="co">rozmowa ${dataPL(x.data)} — brak daty</span></div>`).join('')));
+      }
+
+      // 4) Leady do dobicia (mało prób, cisza, bez terminu)
+      const dobic = k.kadencja.umieraja || [];
+      if (dobic.length) {
+        licznik += dobic.length;
+        bloki.push(grupa('🎯 Dobij próby — min. 5, zanim odpuścisz', dobic.length,
+          dobic.map((x) => {
+            const zostalo = Math.max(0, 5 - x.proby);
+            return `<div class="karta-akcja"><span class="kto">${esc(x.name || '(bez imienia)')}</span><span class="tel">${tel(x.telefon)}</span><span class="spacer"></span><span class="co">${x.proby} ${x.proby === 1 ? 'próba' : 'próby'} · zostało <b>${zostalo}</b> do minimum · cisza ${x.dniCiszy} dni</span></div>`;
+          }).join('')));
+      }
+
+      // 5) Złamane obietnice (nadrób)
+      const zlamane = k.obietnice.zlamane || [];
+      if (zlamane.length) {
+        licznik += zlamane.length;
+        bloki.push(grupa('⏰ Nadrób — termin minął, telefonu nie było', zlamane.length,
+          zlamane.slice(0, 15).map((x) => `<div class="karta-akcja"><span class="kto">${esc(x.name || '(bez imienia)')}</span><span class="tel">${tel(x.telefon)}</span><span class="spacer"></span><span class="co">umówione na ${ymdPL(x.due)}</span></div>`).join('')));
+      }
+
+      $('todo-licz').textContent = licznik;
+      $('todo').innerHTML = bloki.length ? bloki.join('') : '<div class="czysto">✅ Czysto! Nic nie pali się na teraz. Tak trzymać.</div>';
+      renderSla();
+    }
+
+    // ── Lekki postęp (kafle) ────────────────────────────────────────────────
+    function tile(cls, v, k) { return `<div class="tile ${cls}"><div class="v">${v}</div><div class="k">${k}</div></div>`; }
+
+    function renderTiles(k) {
+      const st = Object.fromEntries(k.reguly.map((r) => [r.key, r.status]));
+      const sla7 = k.sla.tydzien;
+      $('tiles').innerHTML = [
+        tile(k.sla.doZadzwonienia.length ? 'zle' : 'ok', k.sla.doZadzwonienia.length, k.sla.doZadzwonienia.length === 1 ? 'lead czeka na Twój telefon' : 'leady czekają na Twój telefon'),
+        tile(st.sla, sla7.pct15 != null ? `${sla7.pct15}<small>%</small>` : '—', 'w 15 min od wpadnięcia (7 dni)'),
+        tile(st.kadencja, k.kadencja.srednioProb != null ? k.kadencja.srednioProb : '—', 'średnio prób na nowy lead'),
+        tile(st.next_step, k.nextStep.tydzien.pct != null ? `${k.nextStep.tydzien.pct}<small>%</small>` : '—', 'rozmów z datą następnego kroku (7 dni)'),
+        tile(st.obietnice, k.obietnice.pct != null ? `${k.obietnice.pct}<small>%</small>` : '—', `dotrzymanych obietnic (${k.obietnice.dotrzymane}/${k.obietnice.n})`),
+        tile(st.cel, `${k.cel.domkniete.length}<small>/${k.cel.target}</small>`, 'sprzedaże domknięte telefonem'),
+      ].join('');
+    }
+
+    // ── 7 reguł ─────────────────────────────────────────────────────────────
+    function renderReguly(k) {
+      $('reguly').innerHTML = k.reguly.map((r) => `
+        <div class="regula ${r.status}">
+          <div class="top"><span class="nr">${r.nr}</span><span class="tytul">${esc(r.tytul)}</span><span class="pill ${r.status}">${PILL[r.status]}</span></div>
+          <div class="tresc">${esc(r.tresc)}</div>
+          <div class="metry">${metrykaReguly(r.key, k)}</div>
+          ${szczegolyReguly(r.key, k)}
+        </div>`).join('');
+    }
+
+    function metrykaReguly(key, k) {
+      switch (key) {
+        case 'sla': {
+          const w = k.sla.tydzien, t = k.sla.total;
+          if (!t.n && !k.sla.doZadzwonienia.length) return 'Jeszcze żaden nowy lead nie wpadł.';
+          return `7 dni: w 15 min <b>${w.pct15 ?? '—'}%</b> (${w.n} leadów), mediana <b>${w.mediana != null ? minH(w.mediana) : '—'}</b>${k.sla.doZadzwonienia.length ? ` · <b style="color:var(--zle)">${k.sla.doZadzwonienia.length} czeka teraz!</b>` : ''}`;
+        }
+        case 'kadencja': {
+          const r = k.kadencja.rozklad;
+          if (!k.kadencja.n) return 'Brak otwartych nowych leadów.';
+          return `Twoje otwarte leady: 0 prób: <b>${r[0]}</b> · 1-2: <b>${r['1-2']}</b> · 3-4: <b>${r['3-4']}</b> · 5+: <b>${r['5+']}</b> · umiera po cichu: <b style="color:var(${k.kadencja.umieraja.length ? '--zle' : '--ok'})">${k.kadencja.umieraja.length}</b>`;
+        }
+        case 'next_step': {
+          const w = k.nextStep.tydzien, t = k.nextStep.total;
+          if (!t.n) return 'Jeszcze nie było rozmów w teście.';
+          return `7 dni: <b>${w.ok}/${w.n}</b> rozmów z datą (<b>${w.pct ?? '—'}%</b>) · od startu: <b>${t.ok}/${t.n}</b> (<b>${t.pct ?? '—'}%</b>)`;
+        }
+        case 'godziny': {
+          const g = k.godziny;
+          if (!g.blok.wszystkie) return 'Brak prób od startu testu.';
+          return `Próby w bloku 13-17: <b>${g.blok.pct ?? 0}%</b> (${g.blok.proby}/${g.blok.wszystkie}) · sweet spot 13-15: <b>${g.blok.pctSweet ?? 0}%</b> · pierwszych kontaktów po 19: <b style="color:var(${g.pierwszePo19.length ? '--zle' : '--ok'})">${g.pierwszePo19.length}</b>` + histogram(g.hist);
+        }
+        case 'obietnice': {
+          const o = k.obietnice;
+          if (!o.n && !o.naDzis.length) return 'Żadna obietnica jeszcze nie doszła do terminu.';
+          return `Dotrzymane: <b>${o.dotrzymane}/${o.n}</b> (<b>${o.pct ?? '—'}%</b>) · złamane: <b style="color:var(${o.zlamane.length ? '--zle' : '--ok'})">${o.zlamane.length}</b> · na dziś: <b>${o.naDzis.length}</b>`;
+        }
+        case 'styl': {
+          const s = k.styl;
+          if (!s.ocenionych) return 'Brak ocenionych rozmów w tym tygodniu.';
+          const r = s.flagi.rabat_bez_zobowiazania || 0, o = s.flagi.odeslanie_do_konkurencji || 0;
+          return `Ocenionych rozmów: <b>${s.ocenionych}</b> · rabat bez zobowiązania: <b style="color:var(${r ? '--zle' : '--ok'})">${r}</b> · odesłanie do konkurencji: <b style="color:var(${o ? '--zle' : '--ok'})">${o}</b>`;
+        }
+        case 'cel': {
+          const c = k.cel;
+          return `Domknięte telefonem: <b>${c.domkniete.length}/${c.target}</b> · otwarte wyceny z Twoją rozmową w 7 dni: <b>${c.wPracy}</b>`;
+        }
+      }
+      return '';
+    }
+
+    function histogram(hist) {
+      if (!hist.length) return '';
+      const max = Math.max(...hist.map((x) => x.proby));
+      return `<div class="hist">${hist.map((x) => `
+        <div class="col ${x.h >= 13 && x.h < 15 ? 'dobra' : x.h >= 19 ? 'zla' : ''}">
+          <div class="bar" style="height:${Math.max(4, Math.round((x.proby / max) * 38))}px" title="${x.proby} prób"></div>
+          <div class="h">${x.h}</div>
+        </div>`).join('')}</div>`;
+    }
+
+    function detale(items, format) {
+      if (!items.length) return '';
+      return `<details><summary>szczegóły (${items.length})</summary><ul>${items.map(format).join('')}</ul></details>`;
+    }
+
+    function szczegolyReguly(key, k) {
+      const oz = (x) => `${esc(x.name || '(bez imienia)')} · ${tel(x.telefon)}`;
+      switch (key) {
+        case 'sla': return detale(k.sla.czekaja, (x) => `<li>${oz(x)} — czeka od ${minH(x.min)}</li>`);
+        case 'kadencja': return detale(k.kadencja.umieraja, (x) => `<li>${oz(x)} — ${x.proby} prób (${x.odebrane} odebr.), cisza ${x.dniCiszy} dni, status „${esc(x.status)}"</li>`);
+        case 'next_step': return detale(k.nextStep.bezDaty, (x) => `<li>${oz(x)} — rozmowa ${dataPL(x.data)}, ${x.sekundy}s, bez daty następnego kroku</li>`);
+        case 'godziny': return detale(k.godziny.pierwszePo19, (x) => `<li>${oz(x)} — pierwszy kontakt ${dataPL(x.data)} (po 19:00)</li>`);
+        case 'obietnice': return detale(k.obietnice.zlamane, (x) => `<li>${oz(x)} — umówione na ${ymdPL(x.due)}, telefonu nie było</li>`);
+        case 'cel': return detale(k.cel.domkniete, (x) => `<li>wycena #${x.wycenaId} · ${esc(x.name || '')} · ${x.kwota ? `${x.kwota} zł` : ''} · ${x.rozmow} rozmów przed sprzedażą</li>`);
+      }
+      return '';
+    }
+
+    // ── Ładowanie + auto-odświeżanie ────────────────────────────────────────
+    function renderAll(k) {
+      KOKPIT = k;
+      $('sub').textContent = `dzień testu ${k.dzien} z ${k.dniTestu} · nowych leadów od startu: ${k.nowychLeadow}`;
+      const pctDni = Math.min(100, Math.round((k.dzien / k.dniTestu) * 100));
+      $('dni-fill').style.width = `${pctDni}%`;
+      $('dni-lab').textContent = `dzień ${k.dzien} z ${k.dniTestu}`;
+      $('cel-lab').textContent = `cel: ${k.cel.domkniete.length}/${k.cel.target} wycen domkniętych telefonem`;
+      renderTodo(k);
+      renderTiles(k);
+      renderReguly(k);
+    }
+
+    async function loadAll() {
+      $('blad').innerHTML = '';
+      try {
+        const kokpit = await apiGet('/api/moje/kokpit');
+        renderAll(kokpit);
+        $('tresc').style.display = '';
+        $('autotick').textContent = `odświeżono ${new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })}`;
+      } catch (err) {
+        if (err.message !== 'auth') $('blad').innerHTML = `<div class="err">Nie udało się załadować: ${esc(err.message)}</div>`;
+      } finally {
+        $('loading').style.display = 'none';
+      }
+    }
+
+    $('btn-refresh').addEventListener('click', loadAll);
+    // Żywy licznik SLA tyka co sekundę; pełny kokpit odświeżamy co 45 s.
+    tickTimer = setInterval(() => { if (KOKPIT) renderSla(); }, 1000);
+    setInterval(loadAll, 45000);
+    loadAll();
+  </script>
+</body>
+</html>
