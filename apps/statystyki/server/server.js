@@ -76,6 +76,7 @@ app.get('/api/stats/leady', requireToken, machine((db) => Q.leady(db)));
 app.get('/api/stats/close-rate', requireToken, machine((db) => Q.closeRate(db)));
 app.get('/api/stats/organik', requireToken, machine((db, req) => Q.organik(db, oknoParams(req))));
 app.get('/api/stats/przeglad', requireToken, machine((db, req) => Q.przeglad(db, { weeks: int(req.query.weeks, 12) })));
+app.get('/api/stats/format-efekt', requireToken, machine((db, req) => Q.formatEfekt(db, { weeks: int(req.query.weeks, 12) })));
 app.get('/api/stats/konwersje', requireToken, machine((db) => Q.konwersje(db)));
 app.get('/api/stats/kampanie', requireToken, machine((db, req) => Q.kampanie(db, oknoParams(req))));
 app.get('/api/stats/radar', requireToken, machine((db) => Q.b2bRadar(db)));
@@ -116,6 +117,7 @@ const sesyjny = (fn) => async (req, res) => {
 };
 app.get('/api/organik', sesyjny((db, req) => Q.organik(db, oknoParams(req))));
 app.get('/api/przeglad', sesyjny((db, req) => Q.przeglad(db, { weeks: int(req.query.weeks, 12) })));
+app.get('/api/format-efekt', sesyjny((db, req) => Q.formatEfekt(db, { weeks: int(req.query.weeks, 12) })));
 app.get('/api/konwersje', sesyjny((db) => Q.konwersje(db)));
 // Firmowe pieniądze (radar B2B, faktury, marża, prognoza, kampanie→przychód):
 // ADMIN-only — sprzedaże nie-admina są prywatne, agregaty firmowe tym bardziej.

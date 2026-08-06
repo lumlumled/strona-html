@@ -206,6 +206,7 @@
   <main>
     <div class="tabs">
       <button class="tab active" data-tab="przeglad">Przegląd</button>
+      <button class="tab" data-tab="format">Format → sprzedaż</button>
       <button class="tab" data-tab="marketing">Marketing</button>
       <button class="tab" data-tab="outreach">Outreach</button>
       <button class="tab" data-tab="sprzedaz">Sprzedaż</button>
@@ -214,6 +215,11 @@
     <section id="przeglad">
       <div class="chips" id="chips-przeglad"></div>
       <div id="przeglad-body"><div class="state">Analizuję firmę…</div></div>
+    </section>
+
+    <section id="format" style="display:none">
+      <div class="chips" id="chips-format"></div>
+      <div id="format-body"><div class="state">Liczę format → sprzedaż…</div></div>
     </section>
 
     <section id="marketing" style="display:none">
@@ -323,7 +329,7 @@
     }
 
     // ── Zakładki ──
-    const sections = ['przeglad', 'marketing', 'outreach', 'sprzedaz'];
+    const sections = ['przeglad', 'format', 'marketing', 'outreach', 'sprzedaz'];
     const loaded = {};
     document.querySelectorAll('.tab').forEach((btn) => btn.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach((b) => b.classList.remove('active'));
@@ -343,6 +349,7 @@
     function ensureLoaded(t) {
       if (loaded[t]) return; loaded[t] = true;
       if (t === 'przeglad') { mountChipsPrzeglad(); loadPrzeglad(); }
+      else if (t === 'format') { mountChipsFormat(); loadFormat(); }
       else if (t === 'marketing') { mountChipsOrganik(); loadOrganik(); }
       else if (t === 'outreach') { mountChipsOutreach(); loadOutreach(); }
       else loadSprzedaz();
@@ -441,6 +448,95 @@
         <div class="section-title">Content przy szczycie sprzedaży bez leada${nt.label ? ' (tydz. od ' + esc(nt.label) + ')' : ''}</div>
         <div class="posts">${content || '<div class="muted">Brak dopasowanego contentu.</div>'}</div>`;
       renderCorrelChart(document.getElementById('correl-wrap'), pr.tygodnie || []);
+    }
+
+    // ════════════ FORMAT → SPRZEDAŻ (czy format SPRZEDAJE, czy tylko robi ZASIĘG) ════════════
+    // Rozszerza korelację z Przeglądu o wymiar formatu (marketing_video_analysis.format).
+    // Część odporna: produkcja/zasięg/eng per format. Część kruchа: Pearson(zasięg formatu
+    // ↔ sprzedaż bez leada) + lag; brak atrybucji per-rolka → pokazujemy N tyg. + pewność.
+    let FORMAT_WEEKS = 26;
+    function mountChipsFormat() {
+      const el = document.getElementById('chips-format');
+      el.innerHTML = [8, 12, 26].map((w) =>
+        `<button class="chip ${FORMAT_WEEKS === w ? 'active' : ''}" data-w="${w}">${w} tyg.</button>`).join('')
+        + '<span class="muted">korelacja na tygodniach pon–nd</span>';
+      el.querySelectorAll('.chip').forEach((b) => b.addEventListener('click', () => {
+        FORMAT_WEEKS = Number(b.dataset.w); mountChipsFormat(); loadFormat();
+      }));
+    }
+    async function loadFormat() {
+      const body = document.getElementById('format-body');
+      body.innerHTML = '<div class="state">Liczę format → sprzedaż…</div>';
+      try { renderFormat(await getJSON(`/api/format-efekt?weeks=${FORMAT_WEEKS}`)); }
+      catch (err) { body.innerHTML = `<div class="state">Nie udało się pobrać danych: ${esc(err.message)}</div>`; }
+    }
+    const korCol = (c) => c == null ? 'var(--text-muted)' : (c >= 0.3 ? 'var(--good)' : (c <= -0.3 ? 'var(--bad)' : 'var(--text-secondary)'));
+    const korTxt = (c) => c == null ? '—' : (c > 0 ? '+' : '') + c;
+    function renderFormat(fe) {
+      const nameBySlug = {}; (fe.formaty || []).forEach((f) => { nameBySlug[f.slug] = f.name; });
+      const wn = (fe.wnioski || []).map((w) => `<div class="insight">${esc(w)}</div>`).join('');
+      const hero = `<div class="card star">
+        <span class="k-label">Wyceny + sprzedaże w oknie (${fe.weeks} tyg.)</span>
+        <span class="k-value">${fmtZl(fe.pieniadze_suma)}</span>
+        <span class="k-sub">${fe.rolek} rolek · zasięg ${fmtC(fe.zasieg_total)} wyśw. · w tym sprzedaż ${fmtZl(fe.sprzedaz_suma)}</span>
+        <span class="k-note">⚠️ brak atrybucji per-rolka — korelacja to zbieżność w czasie, nie dowód</span>
+      </div>`;
+      const reelsHtml = (fe.top_reels || []).map((r) => `
+        <a href="${esc(r.url)}" target="_blank" rel="noopener" title="${esc(r.format_name)} · ${fmtC(r.views)} wyśw. · tydz. ${esc(r.tydzien)}"
+           style="display:flex;flex-direction:column;width:118px;flex:0 0 auto;text-decoration:none;color:inherit;background:var(--surface-1);border:1px solid var(--border);border-radius:12px;overflow:hidden">
+          <div style="width:100%;aspect-ratio:9/16;background:var(--surface-2);overflow:hidden">${r.cover_url ? `<img src="${esc(r.cover_url)}" loading="lazy" alt="" style="width:100%;height:100%;object-fit:cover;display:block">` : ''}</div>
+          <div style="padding:0.4rem 0.5rem">
+            <div style="font-weight:800;font-size:0.86rem;color:var(--good)">${fmtZl(r.szac_sprzedaz)}</div>
+            <div style="font-size:0.72rem;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.format_name)}</div>
+            <div class="sub" style="font-size:0.68rem">${fmtC(r.views)} wyśw. · ${esc(r.tydzien)}</div>
+          </div>
+        </a>`).join('');
+      const tr = fe.top_reel || {};
+      const topHero = tr.video_id ? `<div class="card star hero-bad">
+        <span class="k-label">Najgłośniejsza rolka — a sprzedaży do niej NIE przypiszemy</span>
+        <span class="k-value">${fmtC(tr.views)} wyśw.</span>
+        <span class="k-sub">${esc(nameBySlug[tr.format] || tr.format || '—')} · <a href="${esc(tr.url)}" target="_blank" rel="noopener">otwórz na TikToku</a></span>
+        <span class="k-note">„zasięg ≠ sprzedaż" na jednym przykładzie</span>
+      </div>` : '';
+      const maxV = Math.max(1, ...(fe.formaty || []).map((f) => f.views));
+      const rowsHtml = (fe.formaty || []).map((f) => {
+        const badge = f.werdykt === 'ciągnie sprzedaż'
+          ? '<span class="pill" style="background:var(--good-soft);color:var(--good)">🟢 ciągnie sprzedaż</span>'
+          : f.werdykt === 'przepala zasięg'
+            ? '<span class="pill crit">🔴 przepala zasięg</span>'
+            : `<span class="pill ok">${esc(f.werdykt)}</span>`;
+        const frac = Math.max(2, Math.round(f.views / maxV * 100));
+        return `<tr>
+          <td><strong>${esc(f.name)}</strong><div class="sub">${esc(f.slug)}</div></td>
+          <td class="num">${f.rolek}</td>
+          <td><div style="display:flex;align-items:center;gap:0.5rem;min-width:120px">
+            <div style="flex:1;height:8px;background:var(--grid);border-radius:999px;overflow:hidden"><div style="width:${frac}%;height:100%;background:var(--tt)"></div></div>
+            <span class="num" style="min-width:42px">${f.udzial_zasiegu_pct}%</span></div></td>
+          <td class="num">${fmtC(f.avg_views)}</td>
+          <td class="num">${f.eng_rate_pct}%</td>
+          <td class="num" style="color:${korCol(f.korelacja)};font-weight:700">${korTxt(f.korelacja)}</td>
+          <td class="num" style="color:${korCol(f.korelacja_lag1)};font-weight:700">${korTxt(f.korelacja_lag1)}</td>
+          <td class="num">${f.n_tygodni}<div class="sub">${esc(f.pewnosc)}</div></td>
+          <td>${badge}</td>
+        </tr>`;
+      }).join('');
+      document.getElementById('format-body').innerHTML = `
+        <div class="stars">${hero}${topHero}</div>
+        <div class="section-title">Wnioski</div>
+        <div class="insights">${wn || '<div class="muted">Za mało danych.</div>'}</div>
+        <div class="section-title">Rolki najbliżej sprzedaży <span class="muted">— proxy: udział zasięgu rolki w tygodniu × (wyceny+sprzedaż tego tyg. + następnego). Szacunek zbieżności, NIE atrybucja per-rolka.</span></div>
+        <div style="display:flex;gap:0.6rem;overflow-x:auto;padding-bottom:0.4rem;margin-bottom:0.4rem">${reelsHtml || '<div class="muted">Za mało danych.</div>'}</div>
+        <div class="section-title">Format → efekt <span class="muted">— po zasięgu; „korel" = zbieżność tygodniowego zasięgu formatu z wycenami+sprzedażą, „+1 tyg" = z opóźnieniem tygodnia; N = tygodni z publikacją formatu</span></div>
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr>
+            <th>Format</th><th class="num">Rolek</th><th>Udział zasięgu</th>
+            <th class="num">Śr. wyśw.</th><th class="num">Eng.</th>
+            <th class="num">Korel.</th><th class="num">+1 tyg.</th>
+            <th class="num">N / pewność</th><th>Werdykt</th>
+          </tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table></div>
+        <div class="muted" style="margin-top:0.8rem;font-size:0.78rem">Metoda: ${esc(fe.metoda)}</div>`;
     }
 
     // ════════════ MARKETING / ORGANIK ════════════

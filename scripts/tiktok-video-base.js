@@ -32,6 +32,7 @@ const APIFY_API = 'https://api.apify.com';
 const LIST_ACTOR = process.env.APIFY_TIKTOK_LIST_ACTOR || 'clockworks~tiktok-scraper';
 const FRAMES_N = 6;
 const FRAME_WIDTH = 480;
+const COVER_BUCKET = 'marketing-media'; // publiczny bucket na okladki rolek (miniatury do panelu)
 const PY = process.env.PYTHON_BIN || 'python3';
 
 const args = process.argv.slice(2);
@@ -205,23 +206,56 @@ async function analyzeVisual(frames, caption, formats) {
 }
 function hookOf(t) { if (!t) return null; const s = t.replace(/\s+/g, ' ').trim(); const first = s.split(/(?<=[.!?])\s/)[0]; return (first || s).slice(0, 200); }
 
+// Okladka: wrzuca wybrany kadr do publicznego bucketa i zwraca {cover_path, cover_url}.
+// Blad uploadu NIE przerywa wiersza (transkrypcja+wizja sa cenniejsze) — logujemy i lecimy dalej.
+let coverBucketReady = false;
+async function uploadCover(frames, videoId) {
+  const frame = frames[Math.min(1, frames.length - 1)]; // 2. kadr — reprezentatywny, rzadko czarny
+  if (!frame || !fs.existsSync(frame.path)) return { cover_path: null, cover_url: null };
+  try {
+    if (!coverBucketReady) {
+      const { error } = await db.storage.createBucket(COVER_BUCKET, { public: true });
+      if (error && !/already exists|duplicate/i.test(error.message)) throw error;
+      coverBucketReady = true;
+    }
+    const cover_path = `tiktok/${videoId}.jpg`;
+    const { error: upErr } = await db.storage.from(COVER_BUCKET)
+      .upload(cover_path, fs.readFileSync(frame.path), { contentType: 'image/jpeg', upsert: true });
+    if (upErr) throw upErr;
+    const { data } = db.storage.from(COVER_BUCKET).getPublicUrl(cover_path);
+    return { cover_path, cover_url: data?.publicUrl || null };
+  } catch (e) {
+    console.warn(`    [cover] ${videoId}: ${e.message}`);
+    return { cover_path: null, cover_url: null };
+  }
+}
+
 async function processRow(row, formats) {
   const wd = fs.mkdtempSync(path.join(os.tmpdir(), `vb_${row.video_id}_`));
   try {
     const file = await download(row.url, wd);
     const duration = await durationOf(file);
-    const [mp3, frames] = await Promise.all([extractAudio(file, wd), extractFrames(file, wd, duration)]);
+    // Rolka bez ścieżki audio (sam podkład/nagranie ekranu) -> ffmpeg wywala "Invalid argument".
+    // Degradujemy: pusta transkrypcja + sama wizja, zamiast oznaczać cały wiersz jako error.
+    const mp3P = extractAudio(file, wd).catch((e) => {
+      console.warn(`    [audio] ${row.video_id}: pomijam transkrypcję (${String(e.message).slice(0, 80)})`);
+      return null;
+    });
+    const [mp3, frames] = await Promise.all([mp3P, extractFrames(file, wd, duration)]);
     const [tr, vis] = await Promise.all([
-      llm.transcribe({ buffer: fs.readFileSync(mp3), filename: 'a.mp3', mime: 'audio/mpeg', language: 'pl' }),
+      mp3 ? llm.transcribe({ buffer: fs.readFileSync(mp3), filename: 'a.mp3', mime: 'audio/mpeg', language: 'pl' })
+          : Promise.resolve({ text: '', model: null }),
       analyzeVisual(frames, row.caption, formats),
     ]);
     const v = (vis.visual && typeof vis.visual === 'object') ? vis.visual : {};
     const known = new Set((formats || []).map((f) => f.slug));
     const formatSlug = known.has(v.format) ? v.format : null;
+    const cover = await uploadCover(frames, row.video_id);
     const { error } = await db.from('marketing_video_analysis').update({
       duration_s: Math.round(duration) || row.duration_s,
       transcript: tr.text, transcript_src: 'whisper', hook: hookOf(tr.text), model_transcribe: tr.model,
       visual: vis.visual, frames_n: frames.length, model_visual: vis.model,
+      cover_path: cover.cover_path, cover_url: cover.cover_url,
       format: formatSlug, format_conf: formatSlug ? (Number(v.format_conf) || null) : null,
       format_source: formatSlug ? 'auto' : null,
       status: 'done', error: null, updated_at: new Date().toISOString(),

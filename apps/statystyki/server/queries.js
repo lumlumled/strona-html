@@ -1183,8 +1183,145 @@ async function przeglad(db, { weeks = 12 } = {}) {
   };
 }
 
+// ── FORMAT → EFEKT: czy format SPRZEDAJE, czy tylko robi ZASIĘG ───────────────
+// Rozszerza model przeglad() o wymiar FORMATU (marketing_video_analysis.format,
+// 285 rolek). MONEY-SIDE = WYCENY + SPRZEDAŻE (typ IN WYCENA,ZAMÓWIENIE) po
+// created_at — NIE „sprzedaż bez leada" (feedback Antoniego 06.08: historycznie
+// leady nie istniały przed wyceną, więc lead_id NULL to artefakt, nie sygnał).
+// Wykluczamy tylko source='import' (historyczny zrzut, nie zdarzenie w czasie).
+// Dwie warstwy uczciwości:
+//  • ODPORNA: produkcja/zasięg/eng per format (join format ← video_id=post_id →
+//    marketing_organic_posts.views) — zawsze wiarygodne.
+//  • KRUCHA (kierunkowa): Pearson(tyg. zasięg formatu ↔ tyg. wyceny+sprzedaż) + lag
+//    1 tyg. Brak atrybucji per-rolka → sygnał kohortowy po czasie, NIE dowód.
+async function formatEfekt(db, { weeks = 12 } = {}) {
+  const W = Math.max(2, Math.min(26, Number(weeks) || 12));
+  const now = Date.now();
+  const [vaR, postsR, wycR, fmtR] = await Promise.all([
+    db.from('marketing_video_analysis').select('video_id,format,published_at,cover_url,url,hook').eq('platform', 'tiktok').eq('status', 'done'),
+    db.from('marketing_organic_posts').select('post_id,views,likes,comments,shares,saves,title,url,published_at').eq('platform', 'tiktok'),
+    db.from(WYCENY).select('created_at,typ,kwota_sprzedazy_brutto,kwota_proponowana_brutto,rabat24h_kwota,source').in('typ', ['WYCENA', 'ZAMÓWIENIE']),
+    db.from('marketing_content_formats').select('slug,name').eq('active', true).order('sort_order'),
+  ]);
+  if (vaR.error) throw vaR.error;
+  if (postsR.error) throw postsR.error;
+  if (wycR.error) throw wycR.error;
+
+  const metr = new Map(); // post_id(=video_id) → metryki rolki
+  (postsR.data || []).forEach((p) => metr.set(String(p.post_id), {
+    views: num(p.views), eng: num(p.likes) + num(p.comments) + num(p.shares) + num(p.saves),
+    title: p.title, url: p.url, published_at: p.published_at,
+  }));
+  const fmtName = new Map((fmtR.data || []).map((f) => [f.slug, f.name]));
+
+  // Tygodnie kalendarzowe pon–nd (Europe/Warsaw) — identycznie jak przeglad().
+  const dzisKey = warsawWall(now).day;
+  const [yy, mm, dd] = dzisKey.split('-').map(Number);
+  const isoDow = (new Date(Date.UTC(yy, mm - 1, dd)).getUTCDay() + 6) % 7;
+  const mondayKey = keyMinusDays(dzisKey, isoDow);
+  const weekKeys = Array.from({ length: W }, (_, i) => keyMinusDays(mondayKey, 7 * (W - 1 - i)));
+  const bounds = weekKeys.map((k) => utcAtWarsaw(k, 0));
+  bounds.push(utcAtWarsaw(keyMinusDays(mondayKey, -7), 0));
+  const idx = (ts) => { if (ts == null || ts < bounds[0] || ts >= bounds[W]) return -1; let i = 0; while (i < W - 1 && ts >= bounds[i + 1]) i++; return i; };
+
+  // Pieniądze per tydzień: WYCENY+SPRZEDAŻE (moneyWk) i sama sprzedaż (salesWk), po created_at.
+  const moneyWk = Array(W).fill(0);
+  const salesWk = Array(W).fill(0);
+  (wycR.data || []).forEach((r) => {
+    if (!r.created_at || r.source === 'import') return;
+    const i = idx(new Date(r.created_at).getTime()); if (i < 0) return;
+    const zl = revenue(r);
+    moneyWk[i] += zl;
+    if (r.typ === 'ZAMÓWIENIE') salesWk[i] += zl;
+  });
+  const moneyTotal = moneyWk.reduce((a, b) => a + b, 0);
+  const salesTotal = salesWk.reduce((a, b) => a + b, 0);
+
+  const rows = vaR.data || [];
+  const totalViews = rows.reduce((a, r) => a + (metr.get(String(r.video_id)) || {}).views || 0, 0);
+  const weekReach = Array(W).fill(0); // suma zasięgu WSZYSTKICH rolek w tygodniu (do rozłożenia pieniędzy)
+  const reelEntries = [];             // {video_id, url, cover_url, format, name, views, wk}
+  const byFmt = new Map();
+  for (const r of rows) {
+    const slug = r.format || 'inne';
+    const m = metr.get(String(r.video_id)) || {};
+    const views = num(m.views);
+    const pub = r.published_at || m.published_at;
+    let g = byFmt.get(slug);
+    if (!g) { g = { slug, name: fmtName.get(slug) || (slug === 'inne' ? 'inne / niesklasyfikowane' : slug), rolek: 0, views: 0, eng: 0, weekly: Array(W).fill(0) }; byFmt.set(slug, g); }
+    g.rolek += 1; g.views += views; g.eng += num(m.eng);
+    const i = pub ? idx(new Date(pub).getTime()) : -1;
+    if (i >= 0) {
+      g.weekly[i] += views; weekReach[i] += views;
+      reelEntries.push({ video_id: r.video_id, url: r.url || m.url, cover_url: r.cover_url, format: slug, name: g.name, views, wk: i });
+    }
+  }
+
+  const formaty = [...byFmt.values()].map((g) => {
+    const corr = pearson(g.weekly, moneyWk);
+    const corrLag = pearson(g.weekly.slice(0, -1), moneyWk.slice(1)); // zasięg t → wyceny+sprzedaż t+1
+    const nObs = g.weekly.filter((v) => v > 0).length; // tygodni z publikacją tego formatu (w oknie W)
+    const best = [corr, corrLag].filter((c) => c != null).sort((a, b) => b - a)[0];
+    const udzial = totalViews ? round(g.views / totalViews * 100) : 0;
+    const pewnosc = nObs < 3 ? 'za mało danych' : (nObs < 6 ? 'słaba (mała próba)' : 'orientacyjna');
+    // Werdykt: dużo zasięgu + brak/ujemna zbieżność = PRZEPALA; dodatnia zbieżność = CIĄGNIE.
+    let werdykt = 'neutralny';
+    if (nObs >= 3) {
+      if (best != null && best >= 0.3) werdykt = 'ciągnie sprzedaż';
+      else if (udzial >= 10 && (best == null || best < 0.1)) werdykt = 'przepala zasięg';
+    } else werdykt = 'za mało danych';
+    return {
+      slug: g.slug, name: g.name, rolek: g.rolek, views: g.views,
+      udzial_zasiegu_pct: udzial, avg_views: g.rolek ? Math.round(g.views / g.rolek) : 0,
+      eng_rate_pct: g.views ? round(g.eng / g.views * 100) : 0,
+      korelacja: corr, korelacja_lag1: corrLag, n_tygodni: nObs, pewnosc, werdykt,
+    };
+  }).sort((a, b) => b.views - a.views);
+
+  // ROLKI Z NAJWIĘKSZĄ ZBIEŻNOŚCIĄ SPRZEDAŻOWĄ (prośba Antoniego). PROXY (nie atrybucja):
+  // udział zasięgu rolki w jej tygodniu × (pieniądze w tym tygodniu + następnym/lag).
+  const topReels = reelEntries.map((e) => {
+    const wr = weekReach[e.wk] || 1;
+    const okno = (moneyWk[e.wk] || 0) + (e.wk + 1 < W ? (moneyWk[e.wk + 1] || 0) : 0);
+    return {
+      video_id: e.video_id, url: e.url, cover_url: e.cover_url,
+      format: e.format, format_name: fmtName.get(e.format) || e.format,
+      views: e.views, tydzien: keyLabel(weekKeys[e.wk]),
+      szac_sprzedaz: Math.round(e.views / wr * okno),
+    };
+  }).filter((e) => e.szac_sprzedaz > 0).sort((a, b) => b.szac_sprzedaz - a.szac_sprzedaz).slice(0, 12);
+
+  // Reality-check „zasięg ≠ sprzedaż": najgłośniejsza rolka (max views).
+  let topReel = null;
+  for (const r of rows) { const m = metr.get(String(r.video_id)) || {}; if (!topReel || num(m.views) > topReel.views) topReel = { video_id: r.video_id, views: num(m.views), title: m.title, url: r.url || m.url, format: r.format, cover_url: r.cover_url }; }
+
+  const sgn = (n2) => (n2 >= 0 ? '+' : '') + n2;
+  const wnioski = [];
+  const reachTop = formaty.find((f) => f.udzial_zasiegu_pct > 0);
+  if (reachTop) wnioski.push(`Najwięcej zasięgu robi „${reachTop.name}" (${reachTop.udzial_zasiegu_pct}% wyświetleń, ${reachTop.rolek} rolek) — zbieżność z wycenami+sprzedażą: ${reachTop.korelacja == null ? 'brak danych' : sgn(reachTop.korelacja)} (${reachTop.pewnosc}).`);
+  const puller = formaty.filter((f) => f.werdykt === 'ciągnie sprzedaż').sort((a, b) => (b.korelacja || 0) - (a.korelacja || 0))[0];
+  if (puller) wnioski.push(`Najlepiej ZBIEGA się ze sprzedażą: „${puller.name}" (korelacja ${sgn(puller.korelacja)}${puller.korelacja_lag1 != null ? `, z opóźnieniem tyg. ${sgn(puller.korelacja_lag1)}` : ''}, ${puller.n_tygodni} tyg. — ${puller.pewnosc}).`);
+  const burner = formaty.find((f) => f.werdykt === 'przepala zasięg');
+  if (burner) wnioski.push(`Uwaga „zasięg≠sprzedaż": „${burner.name}" bierze ${burner.udzial_zasiegu_pct}% zasięgu, a nie zbiega się ze sprzedażą — kandydat do ograniczenia.`);
+  wnioski.push(`Wyceny+sprzedaże w oknie ${W} tyg.: ${Math.round(moneyTotal).toLocaleString('pl-PL')} zł (w tym sprzedaż ${Math.round(salesTotal).toLocaleString('pl-PL')} zł). ⚠️ Brak atrybucji per-rolka — to zbieżność w czasie, nie dowód; patrz „N tyg. / pewność".`);
+
+  return {
+    metoda: `format ← video_id=post_id → views; korelacja tygodniowa (pon–nd Warsaw) zasięgu formatu ↔ WYCENY+SPRZEDAŻE (typ IN WYCENA,ZAMÓWIENIE po created_at, bez source=import); okno ${W} tyg. BEZ atrybucji per-rolka. Ranking rolek = proxy: udział zasięgu w tygodniu × pieniądze (tydzień+następny).`,
+    weeks: W,
+    tydzien_labels: weekKeys.map((k) => keyLabel(k)),
+    pieniadze_tyg: moneyWk.map((v) => Math.round(v)),
+    pieniadze_suma: Math.round(moneyTotal),
+    sprzedaz_suma: Math.round(salesTotal),
+    rolek: rows.length, zasieg_total: totalViews,
+    formaty,
+    top_reels: topReels,
+    top_reel: topReel,
+    wnioski,
+  };
+}
+
 module.exports = {
-  sprzedaz, pipeline, outreach, leady, closeRate, snapshot, organik, przeglad,
+  sprzedaz, pipeline, outreach, leady, closeRate, snapshot, organik, przeglad, formatEfekt,
   konwersje, kampanie, b2bRadar, faktury, marzaRealna, tiktokLive, aiOps, forward,
   // do testów jednostkowych (zegar biznesowy, okna, parser hooków)
   _internal: { bizMinutes, utcAtWarsaw, warsawWall, resolveWindow, parseHook, median, phone9 },
