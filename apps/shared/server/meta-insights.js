@@ -222,12 +222,24 @@ async function upsertPosts(db, rows) {
   return n;
 }
 async function upsertDaily(db, platform, byDate, mapFn) {
-  const rows = [];
   const now = new Date().toISOString();
+  const dates = Object.keys(byDate);
+  if (!dates.length) return 0;
+  // MERGE, nie replace: wczytaj istniejące metrics i dołóż świeże klucze. Inaczej
+  // nadpisalibyśmy dane spoza API — krytycznie FB views/reach z historycznego CSV
+  // (v21 ich nie oddaje). Bez tego cotygodniowy pull kasowałby zasięg FB.
+  const existing = new Map();
+  for (let i = 0; i < dates.length; i += 400) {
+    const chunk = dates.slice(i, i + 400);
+    const { data, error } = await db.from('marketing_organic_daily').select('date,metrics').eq('platform', platform).in('date', chunk);
+    if (error) throw new Error(`read daily ${platform}: ${error.message}`);
+    for (const r of (data || [])) existing.set(r.date, r.metrics || {});
+  }
+  const rows = [];
   for (const [date, raw] of Object.entries(byDate)) {
-    const metrics = cleanMetrics(mapFn(raw));
-    if (!Object.keys(metrics).length) continue;
-    rows.push({ platform, date, metrics, source: 'meta_api', fetched_at: now, updated_at: now });
+    const fresh = cleanMetrics(mapFn(raw));
+    if (!Object.keys(fresh).length) continue;
+    rows.push({ platform, date, metrics: { ...(existing.get(date) || {}), ...fresh }, source: 'meta_api', fetched_at: now, updated_at: now });
   }
   let n = 0;
   for (let i = 0; i < rows.length; i += 200) {
