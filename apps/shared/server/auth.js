@@ -41,6 +41,7 @@ const PANELS = [
   { key: 'wiadomosci', label: 'Wiadomości', desc: 'Komunikator: Messenger, IG, telefon i notatki w jednym wątku klienta', status: 'live' },
   { key: 'wiedza', label: 'Baza Wiedzy', desc: 'Mózg biznesu: zapytaj o wszystko, zatwierdzaj nową wiedzę, uzupełniaj luki', status: 'live' },
   { key: 'statystyki', label: 'Statystyki', desc: 'Kokpit sprzedaży i pipeline', status: 'live' },
+  { key: 'kreacje', label: 'Kreacje', desc: 'Content Intelligence: split platform (TikTok/IG/FB), timeline treść↔sprzedaż, katalog rolek, format→sprzedaż', status: 'live' },
   { key: 'doradca', label: 'Doradca', desc: 'AI-doradca Fable: pyta o firmę, kopie w dane na żywo, uczy się z rozmów', status: 'live', adminOnly: true },
   { key: 'kampanie', label: 'Kampanie', desc: 'Kampanie SMS/mail: AI personalizuje wiadomości do starych wycen, Ty akceptujesz próbkę', status: 'live' },
   { key: 'feedbacki', label: 'Feedbacki', desc: 'Kalendarz terminów kontaktu: Tydzień/Miesiąc/Dzień, natężenie feedbacków, karta klienta w szufladzie', status: 'live' },

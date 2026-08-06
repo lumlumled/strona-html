@@ -1320,8 +1320,97 @@ async function formatEfekt(db, { weeks = 12 } = {}) {
   };
 }
 
+// ── KREACJE (osobny panel /kreacje dla SMM): SPLIT platform + TIMELINE treść↔sprzedaż
+//    + KATALOG rolek + format→sprzedaż. Reużywa formatEfekt() (TikTok format/korelacja);
+//    dokłada zasięg Instagram (per-post) i Facebook (daily agregat), timeline tygodniowy
+//    3 platform nałożony na wyceny+sprzedaże, split platformowy i pełny katalog rolek.
+//    UWAGA: format/okładki ma na razie TYLKO TikTok — IG/FB w Fazie 2/3 (patrz inwentarz).
+async function kreacje(db, { weeks = 26 } = {}) {
+  const W = Math.max(2, Math.min(26, Number(weeks) || 12));
+  const fe = await formatEfekt(db, { weeks: W });
+  const now = Date.now();
+  const [vaR, postsR, dailyR, wycR] = await Promise.all([
+    db.from('marketing_video_analysis').select('video_id,format,published_at,cover_url,url').eq('platform', 'tiktok').eq('status', 'done'),
+    db.from('marketing_organic_posts').select('platform,post_id,views,likes,comments,shares,saves,title,url,published_at').in('platform', ['tiktok', 'instagram']),
+    db.from('marketing_organic_daily').select('platform,date,metrics'),
+    db.from(WYCENY).select('created_at,typ,kwota_sprzedazy_brutto,kwota_proponowana_brutto,rabat24h_kwota,source').in('typ', ['WYCENA', 'ZAMÓWIENIE']),
+  ]);
+  if (vaR.error) throw vaR.error;
+  if (postsR.error) throw postsR.error;
+
+  // Tygodnie kalendarzowe pon–nd (Europe/Warsaw) — jak przeglad()/formatEfekt().
+  const dzisKey = warsawWall(now).day;
+  const [yy, mm, dd] = dzisKey.split('-').map(Number);
+  const isoDow = (new Date(Date.UTC(yy, mm - 1, dd)).getUTCDay() + 6) % 7;
+  const mondayKey = keyMinusDays(dzisKey, isoDow);
+  const weekKeys = Array.from({ length: W }, (_, i) => keyMinusDays(mondayKey, 7 * (W - 1 - i)));
+  const bounds = weekKeys.map((k) => utcAtWarsaw(k, 0));
+  bounds.push(utcAtWarsaw(keyMinusDays(mondayKey, -7), 0));
+  const idx = (ts) => { if (ts == null || ts < bounds[0] || ts >= bounds[W]) return -1; let i = 0; while (i < W - 1 && ts >= bounds[i + 1]) i++; return i; };
+
+  const posts = postsR.data || [];
+  const daily = dailyR.data || [];
+  // TIMELINE: tygodniowy zasięg per platforma (TikTok+IG z per-postów po published_at; FB z daily) + pieniądze.
+  const reachTT = Array(W).fill(0), reachIG = Array(W).fill(0), reachFB = Array(W).fill(0);
+  posts.forEach((p) => { const i = p.published_at ? idx(new Date(p.published_at).getTime()) : -1; if (i < 0) return; if (p.platform === 'tiktok') reachTT[i] += num(p.views); else if (p.platform === 'instagram') reachIG[i] += num(p.views); });
+  daily.forEach((r) => { if (r.platform !== 'facebook') return; const i = r.date ? idx(new Date(r.date).getTime()) : -1; if (i >= 0) reachFB[i] += num(r.metrics && r.metrics.views); });
+  const moneyWk = Array(W).fill(0), salesWk = Array(W).fill(0);
+  (wycR.data || []).forEach((r) => { if (!r.created_at || r.source === 'import') return; const i = idx(new Date(r.created_at).getTime()); if (i < 0) return; const zl = revenue(r); moneyWk[i] += zl; if (r.typ === 'ZAMÓWIENIE') salesWk[i] += zl; });
+
+  // SPLIT platformowy (w oknie W tyg.).
+  const inWin = (p) => p.published_at && idx(new Date(p.published_at).getTime()) >= 0;
+  const totTT = reachTT.reduce((a, b) => a + b, 0), totIG = reachIG.reduce((a, b) => a + b, 0), totFB = reachFB.reduce((a, b) => a + b, 0);
+  const nTT = posts.filter((p) => p.platform === 'tiktok' && inWin(p)).length;
+  const nIG = posts.filter((p) => p.platform === 'instagram' && inWin(p)).length;
+  const totalReach = (totTT + totIG + totFB) || 1;
+  const split = [
+    { platform: 'tiktok', label: 'TikTok', reach: Math.round(totTT), posty: nTT, ma_format: true, udzial_pct: round(totTT / totalReach * 100) },
+    { platform: 'instagram', label: 'Instagram', reach: Math.round(totIG), posty: nIG, ma_format: false, udzial_pct: round(totIG / totalReach * 100) },
+    { platform: 'facebook', label: 'Facebook', reach: Math.round(totFB), posty: null, ma_format: false, udzial_pct: round(totFB / totalReach * 100) },
+  ];
+
+  // KATALOG: wszystkie rolki TikTok z formatem/okładką + zbieżność sprzedażowa (proxy jak formatEfekt).
+  const ttMetr = new Map();
+  posts.filter((p) => p.platform === 'tiktok').forEach((p) => ttMetr.set(String(p.post_id), { views: num(p.views), eng: num(p.likes) + num(p.comments) + num(p.shares) + num(p.saves), published_at: p.published_at, url: p.url }));
+  const fmtName = new Map((fe.formaty || []).map((f) => [f.slug, f.name]));
+  const katalog = (vaR.data || []).map((r) => {
+    const m = ttMetr.get(String(r.video_id)) || {};
+    const pub = r.published_at || m.published_at;
+    const wk = pub ? idx(new Date(pub).getTime()) : -1;
+    const wr = wk >= 0 ? (reachTT[wk] || 1) : 1;
+    const okno = wk >= 0 ? ((moneyWk[wk] || 0) + (wk + 1 < W ? (moneyWk[wk + 1] || 0) : 0)) : 0;
+    const views = num(m.views);
+    return {
+      video_id: r.video_id, platform: 'tiktok', url: r.url || m.url, cover_url: r.cover_url,
+      format: r.format || 'inne', format_name: fmtName.get(r.format) || (r.format || 'inne'),
+      views, eng_rate_pct: views ? round(num(m.eng) / views * 100) : 0,
+      tydzien: wk >= 0 ? keyLabel(weekKeys[wk]) : null,
+      szac_sprzedaz: wk >= 0 ? Math.round(views / wr * okno) : 0,
+    };
+  }).sort((a, b) => b.szac_sprzedaz - a.szac_sprzedaz);
+
+  return {
+    weeks: W,
+    okno_od: weekKeys[0], okno_do: keyMinusDays(mondayKey, -6),
+    split,
+    timeline: {
+      labels: weekKeys.map((k) => keyLabel(k)),
+      reach: { tiktok: reachTT.map((v) => Math.round(v)), instagram: reachIG.map((v) => Math.round(v)), facebook: reachFB.map((v) => Math.round(v)) },
+      wyceny_zl: moneyWk.map((v) => Math.round(v)),
+      sprzedaz_zl: salesWk.map((v) => Math.round(v)),
+    },
+    formaty: fe.formaty,
+    katalog,
+    top_reel: fe.top_reel,
+    pieniadze_suma: fe.pieniadze_suma,
+    sprzedaz_suma: fe.sprzedaz_suma,
+    wnioski: fe.wnioski,
+    inwentarz: { tiktok_rolek_okno: nTT, instagram_rolek_okno: nIG, facebook: 'tylko dzienny zasięg (brak per-rolka)', format_dla: 'tylko TikTok (IG/FB w Fazie 2/3)' },
+  };
+}
+
 module.exports = {
-  sprzedaz, pipeline, outreach, leady, closeRate, snapshot, organik, przeglad, formatEfekt,
+  sprzedaz, pipeline, outreach, leady, closeRate, snapshot, organik, przeglad, formatEfekt, kreacje,
   konwersje, kampanie, b2bRadar, faktury, marzaRealna, tiktokLive, aiOps, forward,
   // do testów jednostkowych (zegar biznesowy, okna, parser hooków)
   _internal: { bizMinutes, utcAtWarsaw, warsawWall, resolveWindow, parseHook, median, phone9 },

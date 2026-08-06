@@ -5,8 +5,13 @@
 // "wkrótce") nadal renderuje hub — tu wpada tylko ruch /statystyki/api/*.
 const express = require('express');
 const statystykiApp = require('../apps/statystyki/server/server.js');
+// Panel Kreacje (Content Intelligence dla SMM) DZIELI tę funkcję — limit 12
+// funkcji na Vercel Hobby. Reużywa queries.js Statystyk. Osobny mount /kreacje
+// = w pełni odrębny panel (własna bramka panelKey:'kreacje', własne API_BASE).
+const kreacjeApp = require('../apps/kreacje/server/server.js');
 
 const wrapper = express();
 wrapper.use('/statystyki', statystykiApp);
+wrapper.use('/kreacje', kreacjeApp);
 
 module.exports = wrapper;

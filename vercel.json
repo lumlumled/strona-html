@@ -38,7 +38,7 @@
       "maxDuration": 180
     },
     "api/statystyki.js": {
-      "includeFiles": "{apps/statystyki/**,apps/shared/**,apps/hub/assets/**,docs/fable-doradca-lumlum.md}",
+      "includeFiles": "{apps/statystyki/**,apps/kreacje/**,apps/shared/**,apps/hub/assets/**,docs/fable-doradca-lumlum.md}",
       "maxDuration": 60
     },
     "api/doradca.js": {
@@ -64,6 +64,7 @@
     { "source": "/wiadomosci", "destination": "/wiadomosci/", "permanent": false },
     { "source": "/wiedza", "destination": "/wiedza/", "permanent": false },
     { "source": "/statystyki", "destination": "/statystyki/", "permanent": false },
+    { "source": "/kreacje", "destination": "/kreacje/", "permanent": false },
     { "source": "/doradca", "destination": "/doradca/", "permanent": false },
     { "source": "/kampanie", "destination": "/kampanie/", "permanent": false },
     { "source": "/feedbacki", "destination": "/feedbacki/", "permanent": false },
@@ -94,6 +95,8 @@
     { "source": "/wiadomosci", "destination": "/api/index" },
     { "source": "/statystyki/", "destination": "/api/statystyki" },
     { "source": "/statystyki/:path*", "destination": "/api/statystyki" },
+    { "source": "/kreacje/", "destination": "/api/statystyki" },
+    { "source": "/kreacje/:path*", "destination": "/api/statystyki" },
     { "source": "/doradca/", "destination": "/api/doradca" },
     { "source": "/doradca/:path*", "destination": "/api/doradca" },
     { "source": "/kampanie/", "destination": "/api/kampanie" },
