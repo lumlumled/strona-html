@@ -8,9 +8,10 @@ const LOG_TABLE = 'Log zmian';
 const LEADY_TABLE = 'Leady B2C';
 const SCORES_TABLE = 'test_call_scores';
 
-// Start testu: pierwszy dzień umowy. Nowe leady liczone od tej daty —
-// wcześniejsze świadomie poza panelem ("nie patrzmy wstecznie").
-const TEST_START = process.env.TEST_START_DATE || '2026-08-05T00:00:00Z';
+// Start testu: pierwszy dzień umowy (2026-08-06 00:00 czasu Warszawy — dzień
+// rozmowy Antoniego z Lorenzem). Nowe leady liczone od tej daty — wcześniejsze
+// świadomie poza panelem ("nie patrzmy wstecznie").
+const TEST_START = process.env.TEST_START_DATE || '2026-08-05T22:00:00Z';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 // gpt-5-mini jak w call-analysis/watchdog; wymaga reasoning_effort, inaczej
@@ -80,10 +81,14 @@ function registerTestPanelEndpoints(app, { getClient }) {
   app.get('/api/test/kokpit', async (req, res) => {
     try {
       const supabase = getClient();
+      // Flagi stylu (reguła 6) tylko z rozmów OD STARTU testu — karta ocen może
+      // zawierać też starsze rozmowy (materiał treningowy na odsłuch), ale one
+      // nie obciążają wyniku umowy.
       const weekAgo = new Date(Date.now() - 7 * 864e5).toISOString();
+      const odKiedy = weekAgo > TEST_START ? weekAgo : TEST_START;
       const [dane, scoresRes] = await Promise.all([
         fetchDane(supabase),
-        supabase.from(SCORES_TABLE).select('log_id,scores,flagi,pominieta').gte('data_rozmowy', weekAgo),
+        supabase.from(SCORES_TABLE).select('log_id,scores,flagi,pominieta').gte('data_rozmowy', odKiedy),
       ]);
       if (scoresRes.error) throw new Error(scoresRes.error.message);
       const kokpit = computeKokpit({ ...dane, scoresWeek: (scoresRes.data || []).filter((s) => !s.pominieta), start: TEST_START });
