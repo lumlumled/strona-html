@@ -4,8 +4,11 @@ const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const { getClient } = require('./supabase');
-const { createAuth, clientPayload, panelLinks } = require('../../shared/server/auth');
+const { createAuth, clientPayload, panelLinks, isAdmin } = require('../../shared/server/auth');
 const { registerMojePanelEndpoints } = require('../../shared/server/moje-panel-endpoints');
+const { registerLeadyEndpoints } = require('../../shared/server/leady-endpoints');
+const { registerWycenyEndpoints } = require('../../shared/server/wyceny-endpoints');
+const { registerKontaktEndpoints } = require('../../shared/server/kontakt-endpoints');
 const { servePushWorker, registerPushEndpoints } = require('../../shared/server/push');
 
 const app = express();
@@ -37,6 +40,20 @@ auth.register(app);
 registerPushEndpoints(app, { getClient });
 
 registerMojePanelEndpoints(app, { getClient });
+
+// Szuflada z pełną kartą leada reużywa wspólną LeadKarta (jak Feedbacki), więc
+// /moje musi wystawić DOKŁADNIE te same endpointy co CRM (leady, wyceny,
+// kontakt). Karta widoczna dla kogoś z podglądem „Leady B2C" — Lorenzo ma edit.
+const requireLeadyView = auth.requireSheet('leady-b2c', 'view');
+const requireLeadyEdit = auth.requireSheet('leady-b2c', 'edit');
+registerWycenyEndpoints(app, {
+  getClient,
+  requireView: auth.requireSheet('wyceny', 'view'),
+  requireEdit: auth.requireSheet('wyceny', 'edit'),
+  isAdmin,
+});
+registerLeadyEndpoints(app, { getClient, requireView: requireLeadyView, requireEdit: requireLeadyEdit });
+registerKontaktEndpoints(app, { getClient, requireView: requireLeadyView, requireEdit: requireLeadyEdit });
 
 const APP_HTML_TEMPLATE = fs.readFileSync(path.join(__dirname, '..', 'app.html'), 'utf8');
 
