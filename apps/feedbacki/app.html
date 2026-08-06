@@ -265,11 +265,19 @@
     .drawer.open { transform: translateX(0); }
     .drawer-head { display: flex; align-items: center; gap: .6rem; padding: .9rem 1rem;
       border-bottom: 1px solid var(--border); }
+    .drawer-head-txt { min-width: 0; }
     .drawer-title { font-weight: 700; font-size: 1rem; }
     .drawer-sub { font-size: .76rem; color: var(--text-muted); }
+    /* Wyraźny „wstecz" (głównie pod mobilkę) - łatwy cel dotyku po lewej. */
+    .drawer-back { display: inline-flex; align-items: center; gap: .3rem; flex: none;
+      border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+      border-radius: 999px; font: inherit; font-size: .84rem; font-weight: 700;
+      padding: .45rem .8rem; line-height: 1; cursor: pointer; }
+    .drawer-back:active { background: var(--surface-2); }
     .drawer-close { margin-left: auto; width: 34px; height: 34px; border-radius: 50%;
       border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
-      font-size: 1.2rem; line-height: 1; }
+      font-size: 1.2rem; line-height: 1; flex: none; cursor: pointer; }
+    @media (max-width: 640px) { .drawer-close { display: none; } }
     .drawer-body { flex: 1 1 auto; overflow-y: auto; padding: .8rem 1rem; }
     .drawer-foot { padding: .8rem 1rem; border-top: 1px solid var(--border); }
     .btn-done {
@@ -319,11 +327,12 @@
   <div class="scrim" id="scrim"></div>
   <aside class="drawer" id="drawer" aria-hidden="true">
     <div class="drawer-head">
-      <div>
+      <button class="drawer-back" id="drawer-back" title="Wróć" aria-label="Wróć">← Wróć</button>
+      <div class="drawer-head-txt">
         <div class="drawer-title" id="drawer-title">—</div>
         <div class="drawer-sub" id="drawer-sub"></div>
       </div>
-      <button class="drawer-close" id="drawer-close" title="Zamknij">×</button>
+      <button class="drawer-close" id="drawer-close" title="Zamknij" aria-label="Zamknij">×</button>
     </div>
     <div class="drawer-body" id="drawer-body"></div>
     <div class="drawer-foot" id="drawer-foot" hidden>
@@ -721,12 +730,23 @@
     const drawerBody = document.getElementById('drawer-body');
     const drawerFoot = document.getElementById('drawer-foot');
 
-    function closeDrawer() {
+    let drawerOpen = false;
+    function domCloseDrawer() {
       drawer.classList.remove('open'); scrim.classList.remove('open');
-      drawer.setAttribute('aria-hidden', 'true'); current = null;
+      drawer.setAttribute('aria-hidden', 'true'); current = null; drawerOpen = false;
     }
+    // Zamknięcie z UI (× / „Wróć" / scrim / Esc): cofa wpis historii dołożony
+    // przy otwarciu, więc sprzętowy „wstecz" na telefonie zamyka kartę zamiast
+    // wyrzucać z kalendarza.
+    function closeDrawer() {
+      if (!drawerOpen) return;
+      if (history.state && history.state.fbDrawer) history.back();
+      else domCloseDrawer();
+    }
+    window.addEventListener('popstate', () => { if (drawerOpen) domCloseDrawer(); });
     scrim.addEventListener('click', closeDrawer);
     document.getElementById('drawer-close').addEventListener('click', closeDrawer);
+    document.getElementById('drawer-back').addEventListener('click', closeDrawer);
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
 
     async function openDrawer(c) {
@@ -739,6 +759,8 @@
       drawerFoot.hidden = false;
       drawerBody.innerHTML = '<p class="drawer-note">Wczytywanie karty…</p>';
       drawer.classList.add('open'); scrim.classList.add('open'); drawer.setAttribute('aria-hidden', 'false');
+      if (!drawerOpen && !(history.state && history.state.fbDrawer)) history.pushState({ fbDrawer: true }, '');
+      drawerOpen = true;
       drawerBody.scrollTop = 0;
 
       // Wiadomość (obietnica z komunikatora) — brak leada; link do wątku.
