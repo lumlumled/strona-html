@@ -1223,12 +1223,13 @@ async function przeglad(db, { weeks = 12 } = {}) {
 //  • ANTY-ZŁUDZENIOWA: placebo (zasięg t ↔ pieniądze t-1 — treść nie może
 //    powodować przeszłej sprzedaży; placebo ≈ korelacja ⇒ trend, nie efekt)
 //    + test tasowania (w ilu % losowych permutacji |r| wychodzi ≥ obserwowanego).
-async function formatEfekt(db, { weeks = 12 } = {}) {
+async function formatEfekt(db, { weeks = 12, platforms = ['tiktok'] } = {}) {
   const W = Math.max(2, Math.min(26, Number(weeks) || 12));
+  const plats = Array.isArray(platforms) && platforms.length ? platforms : ['tiktok'];
   const now = Date.now();
   const [vaR, postsR, wycR, fmtR] = await Promise.all([
-    db.from('marketing_video_analysis').select('video_id,format,published_at,cover_url,url,hook').eq('platform', 'tiktok').eq('status', 'done'),
-    db.from('marketing_organic_posts').select('post_id,views,likes,comments,shares,saves,title,url,published_at').eq('platform', 'tiktok'),
+    db.from('marketing_video_analysis').select('platform,video_id,format,published_at,cover_url,url,hook').in('platform', plats).eq('status', 'done'),
+    db.from('marketing_organic_posts').select('platform,post_id,views,likes,comments,shares,saves,title,url,published_at').in('platform', plats),
     db.from(WYCENY).select('created_at,typ,kwota_sprzedazy_brutto,kwota_proponowana_brutto,rabat24h_kwota,source').in('typ', ['WYCENA', 'ZAMÓWIENIE']),
     db.from('marketing_content_formats').select('slug,name').eq('active', true).order('sort_order'),
   ]);
@@ -1236,8 +1237,8 @@ async function formatEfekt(db, { weeks = 12 } = {}) {
   if (postsR.error) throw postsR.error;
   if (wycR.error) throw wycR.error;
 
-  const metr = new Map(); // post_id(=video_id) → metryki rolki
-  (postsR.data || []).forEach((p) => metr.set(String(p.post_id), {
+  const metr = new Map(); // `${platform}:${post_id}` → metryki rolki (TT i IG mają osobne przestrzenie id)
+  (postsR.data || []).forEach((p) => metr.set(`${p.platform}:${p.post_id}`, {
     views: num(p.views), eng: num(p.likes) + num(p.comments) + num(p.shares) + num(p.saves),
     title: p.title, url: p.url, published_at: p.published_at,
   }));
@@ -1268,23 +1269,26 @@ async function formatEfekt(db, { weeks = 12 } = {}) {
   const salesTotal = salesWk.reduce((a, b) => a + b, 0);
 
   const rows = vaR.data || [];
-  const totalViews = rows.reduce((a, r) => a + (metr.get(String(r.video_id)) || {}).views || 0, 0);
-  const weekReach = Array(W).fill(0); // suma zasięgu WSZYSTKICH rolek w tygodniu (do rozłożenia pieniędzy)
-  const reelEntries = [];             // {video_id, url, cover_url, format, name, views, wk}
+  const mkey = (r) => `${r.platform}:${r.video_id}`;
+  let totalViews = 0;
+  const weekReach = Array(W).fill(0); // suma zasięgu WSZYSTKICH rolek (wszystkie żądane platformy) w tygodniu
+  const reelEntries = [];             // {platform, video_id, url, cover_url, format, name, views, wk}
   const byFmt = new Map();
   for (const r of rows) {
-    const slug = r.format || 'inne';
-    const m = metr.get(String(r.video_id)) || {};
-    const views = num(m.views);
+    const m = metr.get(mkey(r)) || {};
     const pub = r.published_at || m.published_at;
-    let g = byFmt.get(slug);
-    if (!g) { g = { slug, name: fmtName.get(slug) || (slug === 'inne' ? 'inne / niesklasyfikowane' : slug), rolek: 0, views: 0, eng: 0, weekly: Array(W).fill(0) }; byFmt.set(slug, g); }
-    g.rolek += 1; g.views += views; g.eng += num(m.eng);
     const i = pub ? idx(new Date(pub).getTime()) : -1;
-    if (i >= 0) {
-      g.weekly[i] += views; weekReach[i] += views;
-      reelEntries.push({ video_id: r.video_id, url: r.url || m.url, cover_url: r.cover_url, format: slug, name: g.name, views, wk: i });
-    }
+    if (i < 0) continue; // TYLKO okno W tyg. — totals formatu spójne z korelacją i etykietą „okno"
+    // (inaczej wirale spoza okna, np. wrześniowa rolka IG 3,1 mln, zawyżają udział/avg).
+    const slug = r.format || 'inne';
+    const views = num(m.views);
+    let g = byFmt.get(slug);
+    if (!g) { g = { slug, name: fmtName.get(slug) || (slug === 'inne' ? 'inne / niesklasyfikowane' : slug), rolek: 0, views: 0, eng: 0, weekly: Array(W).fill(0), byPlat: {} }; byFmt.set(slug, g); }
+    g.rolek += 1; g.views += views; g.eng += num(m.eng);
+    g.byPlat[r.platform] = (g.byPlat[r.platform] || 0) + views;
+    g.weekly[i] += views; weekReach[i] += views;
+    totalViews += views;
+    reelEntries.push({ platform: r.platform, video_id: r.video_id, url: r.url || m.url, cover_url: r.cover_url, format: slug, name: g.name, views, wk: i });
   }
 
   // Proxy zł per format (w oknie): udział zasięgu rolki w tygodniu × pieniądze
@@ -1333,6 +1337,7 @@ async function formatEfekt(db, { weeks = 12 } = {}) {
       views_okno: proxy ? Math.round(proxy.views) : 0,
       zl_per_1k: proxy && proxy.views > 0 ? round(proxy.szac / proxy.views * 1000) : null,
       weekly: g.weekly.map((v) => Math.round(v)),
+      reach_by_platform: g.byPlat, // {tiktok: X, instagram: Y} — split zasięgu formatu per platforma
     };
   }).sort((a, b) => b.views - a.views);
 
@@ -1342,16 +1347,20 @@ async function formatEfekt(db, { weeks = 12 } = {}) {
     const wr = weekReach[e.wk] || 1;
     const okno = (moneyWk[e.wk] || 0) + (e.wk + 1 < W ? (moneyWk[e.wk + 1] || 0) : 0);
     return {
-      video_id: e.video_id, url: e.url, cover_url: e.cover_url,
+      platform: e.platform, video_id: e.video_id, url: e.url, cover_url: e.cover_url,
       format: e.format, format_name: fmtName.get(e.format) || e.format,
       views: e.views, tydzien: keyLabel(weekKeys[e.wk]),
       szac_sprzedaz: Math.round(e.views / wr * okno),
     };
   }).filter((e) => e.szac_sprzedaz > 0).sort((a, b) => b.szac_sprzedaz - a.szac_sprzedaz).slice(0, 12);
 
-  // Reality-check „zasięg ≠ sprzedaż": najgłośniejsza rolka (max views).
+  // Reality-check „zasięg ≠ sprzedaż": najgłośniejsza rolka w oknie (z reelEntries).
   let topReel = null;
-  for (const r of rows) { const m = metr.get(String(r.video_id)) || {}; if (!topReel || num(m.views) > topReel.views) topReel = { video_id: r.video_id, views: num(m.views), title: m.title, url: r.url || m.url, format: r.format, cover_url: r.cover_url }; }
+  for (const e of reelEntries) {
+    if (topReel && e.views <= topReel.views) continue;
+    const m = metr.get(`${e.platform}:${e.video_id}`) || {};
+    topReel = { platform: e.platform, video_id: e.video_id, views: e.views, title: m.title, url: e.url, format: e.format, cover_url: e.cover_url };
+  }
 
   const sgn = (n2) => (n2 >= 0 ? '+' : '') + n2;
   const wnioski = [];
@@ -1366,7 +1375,8 @@ async function formatEfekt(db, { weeks = 12 } = {}) {
   wnioski.push(`Wyceny+sprzedaże w oknie ${W} tyg.: ${Math.round(moneyTotal).toLocaleString('pl-PL')} zł (w tym sprzedaż ${Math.round(salesTotal).toLocaleString('pl-PL')} zł; pełna seria z importem — daty prawdziwe). ⚠️ Brak atrybucji per-rolka — to zbieżność w czasie, nie dowód; patrz „N tyg. / pewność".`);
 
   return {
-    metoda: `format ← video_id=post_id → views; korelacja tygodniowa (pon–nd Warsaw) zasięgu formatu ↔ WYCENY+SPRZEDAŻE (typ IN WYCENA,ZAMÓWIENIE po created_at, Z importem — prawdziwe daty historyczne); okno ${W} tyg. BEZ atrybucji per-rolka. Kontrole: placebo (zasięg t ↔ pieniądze t-1) + test tasowania (200 permutacji, stały seed). zł/1000 wyśw. i ranking rolek = proxy: udział zasięgu w tygodniu × pieniądze (tydzień+następny).`,
+    metoda: `format ← video_id=post_id → views (${plats.join('+')}); korelacja tygodniowa (pon–nd Warsaw) zasięgu formatu ↔ WYCENY+SPRZEDAŻE (typ IN WYCENA,ZAMÓWIENIE po created_at, Z importem — prawdziwe daty historyczne); okno ${W} tyg. BEZ atrybucji per-rolka. Kontrole: placebo (zasięg t ↔ pieniądze t-1) + test tasowania (200 permutacji, stały seed). zł/1000 wyśw. i ranking rolek = proxy: udział zasięgu w tygodniu × pieniądze (tydzień+następny).`,
+    platforms: plats,
     weeks: W,
     tydzien_labels: weekKeys.map((k) => keyLabel(k)),
     pieniadze_tyg: moneyWk.map((v) => Math.round(v)),
@@ -1387,10 +1397,11 @@ async function formatEfekt(db, { weeks = 12 } = {}) {
 //    UWAGA: format/okładki ma na razie TYLKO TikTok — IG/FB w Fazie 2/3 (patrz inwentarz).
 async function kreacje(db, { weeks = 26 } = {}) {
   const W = Math.max(2, Math.min(26, Number(weeks) || 12));
-  const fe = await formatEfekt(db, { weeks: W });
+  // Format→sprzedaż liczymy z TikTok+IG (Faza 2 dała IG formaty) — więcej danych.
+  const fe = await formatEfekt(db, { weeks: W, platforms: ['tiktok', 'instagram'] });
   const now = Date.now();
   const [vaR, postsR, dailyR, wycR] = await Promise.all([
-    db.from('marketing_video_analysis').select('video_id,format,published_at,cover_url,url,hook,caption,duration_s,summary:visual->>summary').eq('platform', 'tiktok').eq('status', 'done'),
+    db.from('marketing_video_analysis').select('platform,video_id,format,format_source,published_at,cover_url,url,hook,caption,duration_s,summary:visual->>summary').in('platform', ['tiktok', 'instagram']).eq('status', 'done'),
     db.from('marketing_organic_posts').select('platform,post_id,views,likes,comments,shares,saves,title,url,published_at').in('platform', ['tiktok', 'instagram']),
     db.from('marketing_organic_daily').select('platform,date,metrics'),
     db.from(WYCENY).select('created_at,typ,kwota_sprzedazy_brutto,kwota_proponowana_brutto,rabat24h_kwota,source').in('typ', ['WYCENA', 'ZAMÓWIENIE']),
@@ -1426,28 +1437,34 @@ async function kreacje(db, { weeks = 26 } = {}) {
   const totalReach = (totTT + totIG + totFB) || 1;
   const split = [
     { platform: 'tiktok', label: 'TikTok', reach: Math.round(totTT), posty: nTT, ma_format: true, udzial_pct: round(totTT / totalReach * 100) },
-    { platform: 'instagram', label: 'Instagram', reach: Math.round(totIG), posty: nIG, ma_format: false, udzial_pct: round(totIG / totalReach * 100) },
+    { platform: 'instagram', label: 'Instagram', reach: Math.round(totIG), posty: nIG, ma_format: true, udzial_pct: round(totIG / totalReach * 100) },
     { platform: 'facebook', label: 'Facebook', reach: Math.round(totFB), posty: null, ma_format: false, udzial_pct: round(totFB / totalReach * 100) },
   ];
 
-  // KATALOG: wszystkie rolki TikTok z formatem/okładką + zbieżność sprzedażowa (proxy jak formatEfekt).
-  const ttMetr = new Map();
-  posts.filter((p) => p.platform === 'tiktok').forEach((p) => ttMetr.set(String(p.post_id), { views: num(p.views), eng: num(p.likes) + num(p.comments) + num(p.shares) + num(p.saves), published_at: p.published_at, url: p.url }));
+  // KATALOG: wszystkie rolki TikTok+IG z formatem/okładką + zbieżność sprzedażowa (proxy jak formatEfekt).
+  // Metryki per platforma (TT i IG mają osobne przestrzenie id) + zasięg tygodnia liczony
+  // w OBRĘBIE platformy rolki (IG rolka = udział w zasięgu IG w jej tygodniu), żeby nie
+  // mieszać zasięgów cross-postów między platformami.
+  const metrByKey = new Map();
+  posts.forEach((p) => metrByKey.set(`${p.platform}:${p.post_id}`, { views: num(p.views), eng: num(p.likes) + num(p.comments) + num(p.shares) + num(p.saves), published_at: p.published_at, url: p.url }));
+  const reachOfPlat = (plat, wk) => (plat === 'instagram' ? reachIG[wk] : reachTT[wk]) || 1;
   const fmtName = new Map((fe.formaty || []).map((f) => [f.slug, f.name]));
   const katalog = (vaR.data || []).map((r) => {
-    const m = ttMetr.get(String(r.video_id)) || {};
+    const plat = r.platform;
+    const m = metrByKey.get(`${plat}:${r.video_id}`) || {};
     const pub = r.published_at || m.published_at;
     const wk = pub ? idx(new Date(pub).getTime()) : -1;
-    const wr = wk >= 0 ? (reachTT[wk] || 1) : 1;
+    const wr = wk >= 0 ? reachOfPlat(plat, wk) : 1;
     const okno = wk >= 0 ? ((moneyWk[wk] || 0) + (wk + 1 < W ? (moneyWk[wk + 1] || 0) : 0)) : 0;
     const views = num(m.views);
     return {
-      video_id: r.video_id, platform: 'tiktok', url: r.url || m.url, cover_url: r.cover_url,
+      video_id: r.video_id, platform: plat, url: r.url || m.url, cover_url: r.cover_url,
       format: r.format || 'inne', format_name: fmtName.get(r.format) || (r.format || 'inne'),
+      format_source: r.format_source || null,
       views, eng_rate_pct: views ? round(num(m.eng) / views * 100) : 0,
-      tydzien: wk >= 0 ? keyLabel(weekKeys[wk]) : null,
+      tydzien: wk >= 0 ? keyLabel(weekKeys[wk]) : null, wk_idx: wk >= 0 ? wk : null,
       szac_sprzedaz: wk >= 0 ? Math.round(views / wr * okno) : 0,
-      // Karta rolki (drawer w panelu — zamiast odsyłania od razu na TikToka):
+      // Karta rolki (drawer w panelu — zamiast odsyłania od razu do platformy):
       data: pub ? warsawDay(pub) : null, duration_s: r.duration_s || null,
       hook: r.hook || null, summary: r.summary || null, caption: r.caption || null,
       udzial_tyg_pct: wk >= 0 && views ? round(views / wr * 100) : null,
@@ -1497,7 +1514,7 @@ async function kreacje(db, { weeks = 26 } = {}) {
     metoda: fe.metoda,
     dane_do,
     wydarzenia,
-    inwentarz: { tiktok_rolek_okno: nTT, instagram_rolek_okno: nIG, facebook: 'tylko dzienny zasięg (brak per-rolka)', format_dla: 'tylko TikTok (IG/FB w Fazie 2/3)' },
+    inwentarz: { tiktok_rolek_okno: nTT, instagram_rolek_okno: nIG, facebook: 'tylko dzienny zasięg (brak per-rolka)', format_dla: 'TikTok + Instagram (FB w Fazie 3)' },
   };
 }
 

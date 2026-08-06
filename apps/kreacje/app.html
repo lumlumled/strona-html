@@ -70,6 +70,17 @@
   .reel .money { font-weight: 800; font-size: 0.9rem; color: var(--good); }
   .reel .fmt { font-size: 0.72rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .reel .vw { font-size: 0.68rem; color: var(--text-muted); }
+  .reel .thumb { position: relative; }
+  .plat-badge { position: absolute; top: 4px; left: 4px; font-size: 0.6rem; font-weight: 700; color: #fff; padding: 0.08rem 0.4rem; border-radius: 999px; letter-spacing: 0.02em; text-shadow: 0 1px 2px rgba(0,0,0,0.3); }
+  .no-cover { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 0.65rem; color: var(--text-muted); }
+  .hooks { display: flex; flex-direction: column; gap: 0.4rem; }
+  .hook-row { display: flex; align-items: center; gap: 0.7rem; background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 0.5rem 0.7rem; cursor: pointer; text-align: left; font: inherit; color: inherit; width: 100%; }
+  .hook-row:hover { border-color: var(--accent); }
+  .hook-row .hk-thumb { width: 34px; height: 48px; flex: 0 0 auto; border-radius: 6px; object-fit: cover; background: var(--surface-2); }
+  .hook-row .hk-text { flex: 1; min-width: 0; }
+  .hook-row .hk-quote { font-size: 0.86rem; font-weight: 600; }
+  .hook-row .hk-meta { font-size: 0.72rem; color: var(--text-muted); }
+  .hook-row .hk-money { font-weight: 800; color: var(--good); font-size: 0.85rem; white-space: nowrap; }
   .tbl-wrap { overflow-x: auto; background: var(--surface-1); border: 1px solid var(--border); border-radius: 16px; }
   table.tbl { width: 100%; border-collapse: collapse; font-size: 0.84rem; min-width: 680px; }
   .tbl th { text-align: left; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); padding: 0.6rem 0.8rem 0.35rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
@@ -157,6 +168,7 @@
     let WEEKS = 26;
     let DATA = null;
     let KAT_FMT = '';            // filtr formatu katalogu
+    let KAT_PLAT = '';           // filtr platformy katalogu ('' | 'tiktok' | 'instagram')
     let KAT_SORT = 'sprzedaz';   // 'sprzedaz' | 'views'
     let SEL_FMT = '';            // format wybrany na mapie (drill-down)
     let SC_REACH = 'tt';         // scatter: 'tt' (TikTok, świeży) | 'all' (wszystkie platformy)
@@ -209,6 +221,13 @@
     const werdyktCol = (f) => f.werdykt === 'ciągnie sprzedaż' ? 'var(--good)'
       : f.werdykt === 'przepala zasięg' ? 'var(--bad)'
       : f.werdykt === 'niepewny (trend?)' ? 'var(--warn)' : 'var(--text-muted)';
+    // Split zasięgu formatu per platforma (z reach_by_platform) — kolorowany po platformie.
+    function platBreakdown(f) {
+      const bp = f.reach_by_platform || {};
+      const parts = ['tiktok', 'instagram', 'facebook'].filter((p) => bp[p] > 0)
+        .map((p) => `<span style="color:${PLAT[p].c}">${PLAT[p].n} ${fmtC(bp[p])}</span>`);
+      return parts.length ? 'zasięg: ' + parts.join(' · ') : 'zasięg: —';
+    }
 
     function renderMapa() {
       const all = DATA.formaty || [];
@@ -262,6 +281,7 @@
         g.addEventListener('click', () => { SEL_FMT = f.slug; renderFmtDetail(); document.getElementById('fmt-detail').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
         g.addEventListener('mousemove', (e) => showTip(e, `<b>${esc(f.name)}</b><br>`
           + `${f.rolek} rolek · śr. ${fmtC(f.avg_views)} wyśw.<br>`
+          + `${platBreakdown(f)}<br>`
           + `<b>${fmtInt(f.zl_per_1k)} zł</b> zbiega się z 1000 wyśw. (szac.)<br>`
           + `korelacja ${f.korelacja ?? '—'} / +1 tydz. ${f.korelacja_lag1 ?? '—'} / placebo ${f.korelacja_placebo ?? '—'}<br>`
           + `${f.przypadek_pct != null ? `przypadkiem: ~${f.przypadek_pct} na 100 tasowań · ` : ''}${esc(f.pewnosc)}`));
@@ -299,6 +319,7 @@
           <div class="stat"><b>${f.przypadek_pct != null ? '~' + f.przypadek_pct + '/100' : '—'}</b><span>tyle tasowań daje taki wynik</span></div>
           <div class="stat"><b>${f.n_tygodni}</b><span>tyg. z publikacją (${esc(f.pewnosc)})</span></div>
         </div>
+        <div class="muted" style="font-size:0.8rem;margin:-0.2rem 0 0.5rem">${platBreakdown(f)} <span style="opacity:0.7">(zasięg formatu w oknie, per platforma)</span></div>
         <div class="chart-wrap" style="padding:0.5rem">
           <svg viewBox="0 0 ${W2} ${H}" width="100%" preserveAspectRatio="none" style="display:block;height:150px">
             ${bars}<polyline points="${line}" fill="none" stroke="var(--money)" stroke-width="2" opacity="0.9"></polyline>${labels}
@@ -314,8 +335,9 @@
 
     // ── KATALOG rolek (karty otwierają drawer, NIE TikToka) ──
     function reelCard(r) {
-      return `<div class="reel" role="button" tabindex="0" data-vid="${esc(r.video_id)}">
-        <div class="thumb">${r.cover_url ? `<img src="${esc(r.cover_url)}" loading="lazy" alt="">` : ''}</div>
+      const p = PLAT[r.platform] || { n: r.platform, c: 'var(--accent)' };
+      return `<div class="reel" role="button" tabindex="0" data-plat="${esc(r.platform)}" data-vid="${esc(r.video_id)}">
+        <div class="thumb">${r.cover_url ? `<img src="${esc(r.cover_url)}" loading="lazy" alt="">` : '<div class="no-cover">bez okładki</div>'}<span class="plat-badge" style="background:${p.c}">${esc(p.n)}</span></div>
         <div class="meta">
           <div class="money">~${fmtZl(r.szac_sprzedaz)} <span class="muted" style="font-weight:400;font-size:0.65rem">szac.</span></div>
           <div class="fmt">${esc(r.format_name)}</div>
@@ -323,63 +345,110 @@
         </div>
       </div>`;
     }
+    const reelKey = (plat, vid) => `${plat}:${vid}`;
     function bindReelCards(scope) {
       (scope || document).querySelectorAll('.reel[data-vid]').forEach((el) => {
-        const open = () => openRolka(el.dataset.vid);
+        const open = () => openRolka(el.dataset.plat, el.dataset.vid);
         el.addEventListener('click', open);
         el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
       });
     }
+    function platCounts() {
+      const c = { tiktok: 0, instagram: 0 };
+      (DATA.katalog || []).forEach((r) => { if (c[r.platform] != null) c[r.platform]++; });
+      return c;
+    }
     function renderKatalog() {
       const formaty = DATA.formaty || [];
-      const filterChips = [`<button class="chip ${KAT_FMT === '' ? 'active' : ''}" data-f="">Wszystkie</button>`]
+      const pc = platCounts();
+      const platChips = [`<button class="chip ${KAT_PLAT === '' ? 'active' : ''}" data-p="">Wszystkie platformy</button>`]
+        .concat(['tiktok', 'instagram'].filter((p) => pc[p] > 0).map((p) => `<button class="chip ${KAT_PLAT === p ? 'active' : ''}" data-p="${p}">${PLAT[p].n} (${pc[p]})</button>`)).join('');
+      const filterChips = [`<button class="chip ${KAT_FMT === '' ? 'active' : ''}" data-f="">Wszystkie formaty</button>`]
         .concat(formaty.filter((f) => f.rolek > 0).map((f) => `<button class="chip ${KAT_FMT === f.slug ? 'active' : ''}" data-f="${esc(f.slug)}">${esc(f.name)} (${f.rolek})</button>`)).join('');
       const sortChips = `<button class="chip ${KAT_SORT === 'sprzedaz' ? 'active' : ''}" data-s="sprzedaz">wg zbieżności</button>`
         + `<button class="chip ${KAT_SORT === 'views' ? 'active' : ''}" data-s="views">wg zasięgu</button>`;
-      let rolki = (DATA.katalog || []).filter((r) => !KAT_FMT || r.format === KAT_FMT);
+      let rolki = (DATA.katalog || []).filter((r) => (!KAT_FMT || r.format === KAT_FMT) && (!KAT_PLAT || r.platform === KAT_PLAT));
       rolki = rolki.slice().sort((a, b) => KAT_SORT === 'views' ? b.views - a.views : b.szac_sprzedaz - a.szac_sprzedaz).slice(0, 60);
-      return `<div class="chips" style="margin:0 0 0.6rem">${filterChips}</div>
-        <div class="chips" style="margin:0 0 0.8rem"><span class="muted" style="font-size:0.78rem">sortuj:</span>${sortChips}<span class="muted" style="font-size:0.76rem">${rolki.length} z ${(DATA.katalog || []).length} rolek (TikTok)</span></div>
+      return `<div class="chips" style="margin:0 0 0.5rem">${platChips}</div>
+        <div class="chips" style="margin:0 0 0.6rem">${filterChips}</div>
+        <div class="chips" style="margin:0 0 0.8rem"><span class="muted" style="font-size:0.78rem">sortuj:</span>${sortChips}<span class="muted" style="font-size:0.76rem">${rolki.length} z ${(DATA.katalog || []).length} rolek (TikTok+IG)</span></div>
         <div class="reels">${rolki.map(reelCard).join('') || '<div class="muted">Brak rolek dla tego filtra.</div>'}</div>`;
     }
     function bindKatalog() {
       const kat = document.getElementById('kat');
+      kat.querySelectorAll('.chip[data-p]').forEach((b) => b.addEventListener('click', () => { KAT_PLAT = b.dataset.p; kat.innerHTML = renderKatalog(); bindKatalog(); }));
       kat.querySelectorAll('.chip[data-f]').forEach((b) => b.addEventListener('click', () => { KAT_FMT = b.dataset.f; kat.innerHTML = renderKatalog(); bindKatalog(); }));
       kat.querySelectorAll('.chip[data-s]').forEach((b) => b.addEventListener('click', () => { KAT_SORT = b.dataset.s; kat.innerHTML = renderKatalog(); bindKatalog(); }));
       bindReelCards(kat);
     }
 
+    // ── HOOKI, które zbiegają się ze sprzedażą (1. zdanie transkrypcji) ──
+    // IG kopiuje hook bliźniaka TikTok, więc deduplikujemy po treści hooka i
+    // pokazujemy najmocniejszy nośnik. FB retencji per-rolka brak (Faza 3), więc
+    // wymiar hooka stoi na transkrypcji TikToka.
+    function renderHooks() {
+      const seen = new Map();
+      (DATA.katalog || []).forEach((r) => {
+        if (!r.hook || !(r.szac_sprzedaz > 0)) return;
+        const key = r.hook.trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 80);
+        const prev = seen.get(key);
+        if (!prev || r.szac_sprzedaz > prev.szac_sprzedaz) seen.set(key, r);
+      });
+      const rows = [...seen.values()].sort((a, b) => b.szac_sprzedaz - a.szac_sprzedaz).slice(0, 15);
+      if (!rows.length) return '<div class="muted">Brak hooków z transkrypcji w oknie.</div>';
+      return `<div class="hooks">${rows.map((r) => `
+        <div class="hook-row" role="button" tabindex="0" data-plat="${esc(r.platform)}" data-vid="${esc(r.video_id)}">
+          ${r.cover_url ? `<img class="hk-thumb" src="${esc(r.cover_url)}" loading="lazy" alt="">` : '<div class="hk-thumb"></div>'}
+          <div class="hk-text"><div class="hk-quote">„${esc(r.hook)}"</div><div class="hk-meta">${esc(r.format_name)} · ${(PLAT[r.platform] || {}).n || r.platform} · ${fmtC(r.views)} wyśw. · tydz. ${esc(r.tydzien || '')}</div></div>
+          <div class="hk-money">~${fmtZl(r.szac_sprzedaz)}</div>
+        </div>`).join('')}</div>
+        <div class="muted" style="font-size:0.74rem;margin-top:0.4rem">Ranking po zbieżności sprzedażowej (proxy, nie atrybucja). Deduplikacja po treści hooka (IG dziedziczy hook z bliźniaka TikTok).</div>`;
+    }
+    function bindHooks() {
+      const host = document.getElementById('hooks');
+      if (!host) return;
+      host.querySelectorAll('.hook-row[data-vid]').forEach((el) => {
+        const open = () => openRolka(el.dataset.plat, el.dataset.vid);
+        el.addEventListener('click', open);
+        el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+      });
+    }
+
     // ── KARTA ROLKI (drawer) ──
     let dwOpen = false;
-    function openRolka(videoId) {
-      const r = (DATA.katalog || []).find((x) => String(x.video_id) === String(videoId));
+    function openRolka(plat, videoId) {
+      const r = (DATA.katalog || []).find((x) => reelKey(x.platform, x.video_id) === reelKey(plat, videoId))
+        || (DATA.katalog || []).find((x) => String(x.video_id) === String(videoId));
       if (!r) return;
+      const pm = PLAT[r.platform] || { n: r.platform };
       const dw = document.getElementById('dw');
       const dur = r.duration_s ? `${r.duration_s}s` : null;
-      dw.innerHTML = `<div class="dw-head"><h3>Karta rolki</h3><button class="x-btn" id="dw-x" title="Zamknij">✕</button></div>
+      const twinNote = r.format_source && /^twin:/.test(r.format_source) ? ' <span class="muted" style="font-size:0.68rem">(format z bliźniaka TikTok)</span>'
+        : (r.format_source === 'caption-llm' ? ' <span class="muted" style="font-size:0.68rem">(format zgadnięty z opisu)</span>' : '');
+      dw.innerHTML = `<div class="dw-head"><h3>Karta rolki <span class="pill ok" style="background:${(PLAT[r.platform]||{}).c || 'var(--accent)'};color:#fff">${esc(pm.n)}</span></h3><button class="x-btn" id="dw-x" title="Zamknij">✕</button></div>
         <div class="dw-body">
           ${r.cover_url ? `<img class="dw-cover" src="${esc(r.cover_url)}" alt="">` : ''}
           <div class="dw-row" style="margin-top:0.8rem">
-            <span class="pill ok">${esc(r.format_name)}</span>
+            <span class="pill ok">${esc(r.format_name)}</span>${twinNote}
             ${r.data ? `<span class="pill ok">📅 ${esc(r.data)}</span>` : ''}
             ${dur ? `<span class="pill ok">⏱ ${esc(dur)}</span>` : ''}
           </div>
           <div class="dw-row">
             <div class="stat"><b>${fmtC(r.views)}</b><span>wyświetleń</span></div>
             <div class="stat"><b>${r.eng_rate_pct != null ? r.eng_rate_pct + '%' : '—'}</b><span>engagement</span></div>
-            <div class="stat"><b>${r.udzial_tyg_pct != null ? r.udzial_tyg_pct + '%' : '—'}</b><span>zasięgu TT w tyg. ${esc(r.tydzien || '')}</span></div>
+            <div class="stat"><b>${r.udzial_tyg_pct != null ? r.udzial_tyg_pct + '%' : '—'}</b><span>zasięgu ${esc(pm.n)} w tyg. ${esc(r.tydzien || '')}</span></div>
           </div>
           ${r.hook ? `<div class="dw-sec">Hook (pierwsze sekundy)</div><blockquote>„${esc(r.hook)}"</blockquote>` : ''}
           ${r.summary ? `<div class="dw-sec">Co się dzieje na filmie</div><div style="font-size:0.86rem">${esc(r.summary)}</div>` : ''}
-          ${r.caption ? `<div class="dw-sec">Opis z TikToka</div><div class="muted" style="font-size:0.8rem">${esc(r.caption)}</div>` : ''}
+          ${r.caption ? `<div class="dw-sec">Opis</div><div class="muted" style="font-size:0.8rem">${esc(r.caption)}</div>` : ''}
           <div class="dw-money">
             ${r.okno_zl != null
               ? `W tygodniu publikacji + następnym wpadło <b>${fmtZl(r.okno_zl)}</b> wycen+sprzedaży.
-                 Ta rolka = <b>${r.udzial_tyg_pct != null ? r.udzial_tyg_pct + '%' : '—'}</b> zasięgu TikToka w swoim tygodniu
+                 Ta rolka = <b>${r.udzial_tyg_pct != null ? r.udzial_tyg_pct + '%' : '—'}</b> zasięgu ${esc(pm.n)} w swoim tygodniu
                  → zbieżność <b>~${fmtZl(r.szac_sprzedaz)}</b> <span class="muted">(szacunek proxy, NIE atrybucja — patrz „Jak to liczymy")</span>.`
               : '<span class="muted">Rolka spoza okna analizy — brak danych o zbieżności.</span>'}
           </div>
-          ${r.url ? `<a class="dw-link" href="${esc(r.url)}" target="_blank" rel="noopener">Otwórz na TikToku ↗</a>` : ''}
+          ${r.url ? `<a class="dw-link" href="${esc(r.url)}" target="_blank" rel="noopener">Otwórz na ${esc(pm.n)} ↗</a>` : ''}
         </div>`;
       document.getElementById('dw-x').addEventListener('click', () => closeRolka(false));
       dw.classList.add('open');
@@ -516,9 +585,16 @@
       const labels = tl.labels.map((l, i) => (i % everyN === 0 || i === n - 1)
         ? `<text x="${(bx(i) + bw / 2).toFixed(1)}" y="${H - 8}" text-anchor="middle">${esc(l)}</text>` : '').join('');
       const hovers = tl.labels.map((l, i) => `<rect x="${(padL + xStep * i).toFixed(1)}" y="${padT}" width="${xStep.toFixed(1)}" height="${plotH}" fill="transparent" data-i="${i}"></rect>`).join('');
+      // Znaczniki: najmocniejsza rolka tygodnia per platforma (klik → karta rolki).
+      const markers = topWeekMarkers();
+      const marks = markers.map((m) => {
+        const cx = bx(m.wk_idx) + bw / 2;
+        const cy = padT + 7 + (m.platform === 'instagram' ? 10 : 0);
+        return `<circle class="tl-mark" data-plat="${esc(m.platform)}" data-vid="${esc(m.video_id)}" cx="${cx.toFixed(1)}" cy="${cy}" r="4.6" fill="${m.platform === 'instagram' ? 'var(--ig)' : 'var(--tt)'}" stroke="var(--surface-1)" stroke-width="1.6" style="cursor:pointer"></circle>`;
+      }).join('');
       return `<div class="chart-wrap">
         <svg viewBox="0 0 ${W2} ${H}" width="100%" preserveAspectRatio="none" id="tl-svg" style="display:block;height:300px">
-          ${staleZone}${zones}${bars}${lines}${labels}${hovers}
+          ${staleZone}${zones}${bars}${lines}${labels}${hovers}${marks}
         </svg>
         <div class="legend">
           <span><i class="swatch" style="background:var(--money);opacity:0.85"></i>sprzedaż (zł)</span>
@@ -526,13 +602,31 @@
           <span><i class="swatch line" style="background:var(--tt)"></i>zasięg TikTok</span>
           <span><i class="swatch line" style="background:var(--ig)"></i>zasięg Instagram</span>
           <span><i class="swatch line" style="background:var(--fb)"></i>zasięg Facebook</span>
+          <span><i class="swatch dot" style="background:var(--tt)"></i>● najmocniejsza rolka tyg. (klik = karta)</span>
           <span class="muted">⚠️ = tydzień z wydarzeniem · szary pas = niepełne dane FB/IG</span>
         </div>
       </div>`;
     }
+    // Najmocniejsza rolka (po zbieżności szac.) każdego tygodnia per platforma — na znaczniki timeline.
+    function topWeekMarkers() {
+      const byWk = {};
+      (DATA.katalog || []).forEach((r) => {
+        if (r.wk_idx == null || !(r.szac_sprzedaz > 0)) return;
+        const k = r.wk_idx + ':' + r.platform;
+        if (!byWk[k] || r.szac_sprzedaz > byWk[k].szac_sprzedaz) byWk[k] = r;
+      });
+      return Object.values(byWk).sort((a, b) => b.szac_sprzedaz - a.szac_sprzedaz).slice(0, 22);
+    }
     function bindTimelineHover(tl) {
       const svg = document.getElementById('tl-svg');
       if (!svg) return;
+      svg.querySelectorAll('.tl-mark').forEach((c) => {
+        const plat = c.dataset.plat, vid = c.dataset.vid;
+        const r = (DATA.katalog || []).find((x) => String(x.platform) === plat && String(x.video_id) === vid);
+        c.addEventListener('click', (e) => { e.stopPropagation(); openRolka(plat, vid); });
+        c.addEventListener('mousemove', (e) => { e.stopPropagation(); if (r) showTip(e, `<b>${(PLAT[plat] || {}).n || plat}</b> · tydz. ${esc(r.tydzien || '')}<br>${esc(r.format_name)} · ${fmtC(r.views)} wyśw.<br>zbieżność ~${fmtZl(r.szac_sprzedaz)} <span class="muted">(klik = karta)</span>`); });
+        c.addEventListener('mouseleave', hideTip);
+      });
       svg.querySelectorAll('rect[data-i]').forEach((r) => {
         r.addEventListener('mousemove', (e) => {
           const i = Number(r.dataset.i);
@@ -588,8 +682,10 @@
         <div class="section-title">Wnioski</div>
         <div class="insights">${wn || '<div class="muted">Za mało danych.</div>'}</div>
         <div id="fmt-detail"></div>
-        <div class="section-title">Katalog rolek <span class="muted">— klik w miniaturkę otwiera kartę rolki (statystyki + link do TikToka)</span></div>
+        <div class="section-title">Katalog rolek <span class="muted">— TikTok + Instagram; klik w miniaturkę otwiera kartę rolki</span></div>
         <div id="kat">${renderKatalog()}</div>
+        <div class="section-title">Hooki, które zbiegają się ze sprzedażą <span class="muted">— pierwsze zdanie z transkrypcji, ranking po zbieżności</span></div>
+        <div id="hooks">${renderHooks()}</div>
         <div class="section-title">Czy zasięg w ogóle robi pieniądze? <span class="muted">— każda kropka = tydzień</span></div>
         <div id="sc">${renderScatter()}</div>
         <div class="section-title">Timeline: zasięg treści ↔ pieniądze <span class="muted">— najedź na tydzień</span></div>
@@ -610,10 +706,11 @@
           </ul>
           <div class="muted" style="margin-top:0.5rem;font-size:0.72rem">${esc(d.metoda || '')}</div>
         </div>
-        <div class="muted" style="margin-top:1rem;font-size:0.76rem">Faza 1 (TikTok: ${(d.inwentarz || {}).tiktok_rolek_okno ?? '—'} rolek w oknie). IG dostaje formaty przez scalenie po creative_id (Faza 2), FB po re-uploadzie eksportu (Faza 3).</div>`;
+        <div class="muted" style="margin-top:1rem;font-size:0.76rem">TikTok ${(d.inwentarz || {}).tiktok_rolek_okno ?? '—'} + Instagram ${(d.inwentarz || {}).instagram_rolek_okno ?? '—'} rolek w oknie (IG format+okładka z bliźniaka TikTok — Faza 2). Facebook: żywe metryki per-post + świeży zasięg przez Meta Graph API (Faza 3).</div>`;
       bindMapa();
       renderFmtDetail();
       bindKatalog();
+      bindHooks();
       bindScatter();
       bindTimelineHover(d.timeline);
     }
