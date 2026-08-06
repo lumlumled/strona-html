@@ -81,6 +81,11 @@
 
     section { margin-bottom: 1.6rem; }
     h2 { font-size: .95rem; font-weight: 700; margin-bottom: .55rem; display: flex; align-items: center; gap: .45rem; }
+    h2.toggler { cursor: pointer; user-select: none; }
+    h2.toggler .chev { margin-left: auto; color: var(--text-muted); font-size: .85rem; transition: transform .18s; }
+    section.zwiniete h2.toggler { margin-bottom: 0; }
+    section.zwiniete h2.toggler .chev { transform: rotate(-90deg); }
+    section.zwiniete .zwijane { display: none; }
     h2 .licz { font-size: .72rem; font-weight: 700; color: var(--accent-contrast); background: var(--accent); border-radius: 999px; padding: .05rem .5rem; }
     .pusto { color: var(--text-muted); font-size: .85rem; padding: .4rem 0; }
 
@@ -205,9 +210,9 @@
         <div id="todo"></div>
       </section>
 
-      <section>
-        <h2>💰 Wyceny do domknięcia <span class="licz" id="wyc-licz">0</span></h2>
-        <div id="wyceny"></div>
+      <section id="sec-wyceny">
+        <h2 class="toggler" id="wyc-head">💰 Wyceny do domknięcia <span class="licz" id="wyc-licz">0</span><span class="chev">▾</span></h2>
+        <div id="wyceny" class="zwijane"></div>
       </section>
 
       <section>
@@ -579,6 +584,19 @@
       const el = e.target.closest('[data-tel]');
       if (!el) return;
       openLead(el.getAttribute('data-tel'), el.getAttribute('data-name') || '');
+    });
+
+    // Zwijane sekcje (strzałka w nagłówku). Stan pamiętany per sekcja, więc
+    // schowana zostaje schowana też po auto-odświeżeniu (re-render tylko treści).
+    document.querySelectorAll('h2.toggler').forEach((h) => {
+      const sec = h.closest('section');
+      if (!sec || !sec.id) return;
+      const key = `mojeZwin:${sec.id}`;
+      if (localStorage.getItem(key) === '1') sec.classList.add('zwiniete');
+      h.addEventListener('click', () => {
+        const z = sec.classList.toggle('zwiniete');
+        localStorage.setItem(key, z ? '1' : '0');
+      });
     });
 
     $('btn-refresh').addEventListener('click', loadAll);
