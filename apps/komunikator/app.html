@@ -1634,7 +1634,16 @@
       refreshWaitingBadge();  // licznik „Czekają na Ciebie"
       setInterval(() => { refreshAutomatBadges(); refreshWaitingBadge(); }, 60000); // liczniki co minutę
     }
-    setInterval(() => loadThreads({ silent: true }), 30000); // odśwież listę co 30 s (cicho - bez migania paneli)
+    // Auto-odświeżanie: nowe wiadomości z FB/Messengera mają pojawiać się SAME,
+    // bez ręcznego odświeżania. Serverless (Vercel) nie utrzyma połączenia push,
+    // więc odpytujemy często, a przede wszystkim - NATYCHMIAST po powrocie do karty.
+    const POLL_MS = 10000; // co 10 s, gdy karta jest na wierzchu
+    setInterval(() => { if (!document.hidden) loadThreads({ silent: true }); }, POLL_MS);
+    // Wracasz do zakładki przeglądarki (zwykle właśnie po nową wiadomość)
+    // → odśwież od razu, nie czekaj na kolejny tik odpytywania.
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) loadThreads({ silent: true });
+    });
   </script>
 </body>
 </html>

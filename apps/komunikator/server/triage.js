@@ -34,6 +34,24 @@ function isStub(text) {
   return STUB_NO_REPLY.has(String(text || '').trim().toLowerCase());
 }
 
+// Sygnały, że wiadomość niesie KONKRET do sprawy (nie jest grzecznościowym
+// zamknięciem): pytanie, liczby, wymiary/ilości, prośby, zapowiedź „zaraz
+// zmierzę/sprawdzę/prześlę". Używane jako bezpiecznik triażu — nawet gdy LLM
+// błędnie oceni „nie wymaga odpowiedzi", taka wiadomość NIE zdejmuje wątku z
+// „Do odpisania". Dopasowanie przez includes (bez \b — polskie znaki psują
+// granice słowa; patrz: nigdy \b po „Ń").
+const SUBSTANCE_HINTS = [
+  'metr', 'mb', ' cm', ' mm', 'wymiar', 'długoś', 'szerokoś', 'wysokoś', 'ile',
+  'sztuk', ' szt', 'kolor', 'barw', 'profil', 'taśm', 'sterownik', 'pilot',
+  'zasilacz', 'rgb', 'zmierz', 'sprawdz', 'policz', 'prześl', 'wyśl', 'zdjęc',
+  'foto', 'zamów', 'wysył', 'dostaw', 'cen', 'termin', 'adres', 'faktur',
+];
+function hasSubstance(text) {
+  const t = String(text || '').toLowerCase();
+  if (t.includes('?') || /\d/.test(t)) return true;
+  return SUBSTANCE_HINTS.some((k) => t.includes(k));
+}
+
 async function mutedSender(db, senderType, senderValue) {
   if (!senderType || !senderValue) return null;
   const value = String(senderValue).toLowerCase();
@@ -69,10 +87,13 @@ function buildSystem(kind, examples) {
         ...examples.map((e) => `- "${e}"`)]
       : []),
     '',
-    'Dodatkowo oceń "wymaga_odpowiedzi": czy TA wiadomość woła o odpowiedź handlowca?',
-    '- false: grzecznościowe zamknięcie/potwierdzenie bez pytania i bez nowej informacji ("ok, dziękuję",',
-    '  "super, pozdrawiam", "no to działam", "no to teraz tylko kucie i szukanie", "jasne", sama emotka/lajk),',
-    '  kliknięcie startu rozmowy bez treści.',
+    'Dodatkowo oceń "wymaga_odpowiedzi": czy TA wiadomość ma trzymać wątek na liście „Do odpisania"?',
+    '- W TRWAJĄCEJ rozmowie sprzedażowej / wycenie (klient kompletuje swój projekt) to ZAWSZE true,',
+    '  dopóki wycena nie jest domknięta — także gdy klient podaje szczegóły (wymiary, ilości, kolor, zdjęcie)',
+    '  ALBO zapowiada, że zaraz coś zmierzy / sprawdzi / prześle i wróci ("muszę to zmierzyć", "sprawdzę i dam znać",',
+    '  "na razie nie wiem, doślę"). Piłka jest po naszej stronie — wątek ma zostać widoczny, żeby nie zgubić leada.',
+    '- false TYLKO dla jednoznacznego ZAKOŃCZENIA rozmowy, bez ciągu dalszego i bez nowej informacji',
+    '  ("ok, dziękuję", "super, pozdrawiam", "jasne", sama emotka/lajk) albo kliknięcia startu bez treści.',
     '- true: pytanie, prośba, nowa informacja do sprawy (wymiary, zdjęcie, adres, termin, decyzja o zakupie),',
     '  reklamacja/problem, cokolwiek, na co klient realnie czeka.',
     '- W razie wątpliwości: true (lepiej pokazać kartę niż zgubić klienta).',
@@ -142,7 +163,7 @@ async function classifyMessage(db, { kind, channel, text, senderName, senderType
 // Zapis wyniku: wiadomość dostaje triage, wątek przejmuje kategorię ostatniej
 // przychodzącej — chyba że Antoni ustawił kategorię ręcznie (meta.triage_locked),
 // wtedy jego decyzja wygrywa na zawsze.
-async function applyTriage(db, thread, messageId, result) {
+async function applyTriage(db, thread, messageId, result, text = '') {
   await db.from('kom_messages').update({
     triage: result.triage,
     // reason per wiadomość w meta — kolumna jest tylko na wątku.
@@ -162,7 +183,13 @@ async function applyTriage(db, thread, messageId, result) {
   // ("ok, dziękuję"), kliknięcie startu czy pusta wiadomość NIE wołają
   // o odpowiedź — wątek schodzi na 'waiting' (wróci przy realnej wiadomości).
   // Warunek na status w zapytaniu, nie na obiekcie — thread bywa nieświeży.
-  if (result.needsReply === false) {
+  // BEZPIECZNIK: nie chowamy wątku, gdy wiadomość niesie konkret (pytanie,
+  // liczby, wymiary/ilości, „muszę zmierzyć/sprawdzić/prześlę") albo pokazuje
+  // intencję wyceny — nawet jeśli LLM błędnie oceni „bez odpowiedzi". Odsiew
+  // zostaje tylko dla czystych grzeczności. (Aktywne rozmowy sprzedażowe
+  // znikały z „Do odpisania" — np. klient w trakcie mierzenia projektu.)
+  const konkret = hasSubstance(text) || result.wycenaIntent === true;
+  if (result.needsReply === false && !konkret) {
     await db.from('kom_threads')
       .update({ status: 'waiting' })
       .eq('id', thread.id).eq('status', 'attention');
@@ -191,7 +218,7 @@ function withTimeout(promise, ms) {
 async function classifyInWebhook(db, thread, messageId, input, budgetMs = 2500) {
   try {
     const result = await withTimeout(classifyMessage(db, input), budgetMs);
-    await applyTriage(db, thread, messageId, result);
+    await applyTriage(db, thread, messageId, result, input.text);
     // Świeża wiadomość real-time — dzwonimy tylko, gdy realnie jest na co
     // odpowiadać (grzecznościowe "ok, dziękuję" nie budzi telefonu).
     if (result.triage === 'inbox' && result.needsReply !== false) {
@@ -258,7 +285,7 @@ async function sweep(db, limit = 20) {
       if (newer && newer.length) {
         await db.from('kom_messages').update({ triage: result.triage }).eq('id', msg.id);
       } else {
-        await applyTriage(db, thread, msg.id, result);
+        await applyTriage(db, thread, msg.id, result, msg.body);
         // Push tylko dla świeżych zapytań w 'inbox' — sweep dokłada też starą
         // historię (webhook nie zdążył sklasyfikować / import), której nie
         // chcemy nagle wypushować.
