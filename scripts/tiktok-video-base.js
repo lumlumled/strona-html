@@ -254,9 +254,14 @@ async function main() {
     return;
   }
 
-  if (!process.env.APIFY_TOKEN) throw new Error('brak APIFY_TOKEN w apps/komunikator/server/.env');
-  const items = await enumerateProfile();
-  await upsertEnumerated(items);
+  if (NO_ENUMERATE) {
+    const { count } = await db.from('marketing_video_analysis').select('video_id', { count: 'exact', head: true }).eq('platform', 'tiktok');
+    console.log(`[apify] pominieto re-listing (--no-enumerate). W bazie: ${count} rolek.`);
+  } else {
+    if (!process.env.APIFY_TOKEN) throw new Error('brak APIFY_TOKEN w apps/komunikator/server/.env');
+    const items = await enumerateProfile();
+    await upsertEnumerated(items);
+  }
 
   if (ENUMERATE_ONLY) {
     const { count } = await db.from('marketing_video_analysis').select('video_id', { count: 'exact', head: true }).eq('platform', 'tiktok');
