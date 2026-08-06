@@ -72,6 +72,13 @@
     .progress .fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width .4s; }
     .progress .lab { display: flex; justify-content: space-between; font-size: .75rem; color: var(--text-muted); margin-top: .3rem; }
 
+    /* ── Nagłówek „gdzie jesteś" (obraz w 2 s) ── */
+    .naglowek { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 1.3rem; }
+    .naglowek .chip { font-size: .82rem; font-weight: 700; padding: .32rem .65rem; border-radius: 999px; background: var(--surface-1); border: 1px solid var(--border); color: var(--text-secondary); white-space: nowrap; }
+    .naglowek .chip.ok { background: var(--ok-soft); color: var(--ok); border-color: var(--ok); }
+    .naglowek .chip.uwaga { background: var(--uwaga-soft); color: var(--uwaga); border-color: var(--uwaga); }
+    .naglowek .chip.zle { background: var(--zle-soft); color: var(--zle); border-color: var(--zle); }
+
     section { margin-bottom: 1.6rem; }
     h2 { font-size: .95rem; font-weight: 700; margin-bottom: .55rem; display: flex; align-items: center; gap: .45rem; }
     h2 .licz { font-size: .72rem; font-weight: 700; color: var(--accent-contrast); background: var(--accent); border-radius: 999px; padding: .05rem .5rem; }
@@ -186,6 +193,13 @@
     <div class="loading" id="loading">Ładuję Twój dzień…</div>
 
     <div id="tresc" style="display:none">
+      <div class="naglowek" id="naglowek"></div>
+
+      <section>
+        <h2>📅 Aktywność dziś</h2>
+        <div class="tiles" id="dzis"></div>
+      </section>
+
       <section>
         <h2>🔥 Zrób teraz <span class="licz" id="todo-licz">0</span></h2>
         <div id="todo"></div>
@@ -280,6 +294,41 @@
           <span class="zegar ${z.cls}">${z.txt}</span>
         </div>`;
       }).join('');
+    }
+
+    // ── Nagłówek „gdzie jesteś" + Aktywność dziś ────────────────────────────
+    function liczTodo(k) {
+      return (k.sla.doZadzwonienia?.length || 0) + (k.obietnice.naDzis?.length || 0)
+        + (k.nextStep.bezDaty?.length || 0) + (k.kadencja.umieraja?.length || 0)
+        + (k.obietnice.zlamane?.length || 0);
+    }
+
+    function renderNaglowek(k) {
+      const st = k.reguly.map((r) => r.status);
+      const zielone = st.filter((s) => s === 'ok').length;
+      const uwaga = st.filter((s) => s === 'uwaga').length;
+      const zle = st.filter((s) => s === 'zle').length;
+      const todo = liczTodo(k);
+      const d = k.dzisiaj || { telefony: 0, rozmowy: 0 };
+      const w = k.wyceny || { n: 0, sumaKwota: 0 };
+      const chips = [
+        `<span class="chip ok">🟢 ${zielone} ok</span>`,
+        uwaga ? `<span class="chip uwaga">🟡 ${uwaga} uwaga</span>` : '',
+        zle ? `<span class="chip zle">🔴 ${zle} źle</span>` : '',
+        `<span class="chip ${todo ? 'zle' : 'ok'}">🔥 ${todo} do zrobienia</span>`,
+        `<span class="chip">📞 dziś ${d.telefony} tel · ${d.rozmowy} rozm</span>`,
+        `<span class="chip">💰 ${w.n} wycen${w.sumaKwota ? ` · ${zl(w.sumaKwota)}` : ''}</span>`,
+      ].filter(Boolean).join('');
+      $('naglowek').innerHTML = chips;
+    }
+
+    function renderDzis(k) {
+      const d = k.dzisiaj || { telefony: 0, rozmowy: 0, umowienia: 0 };
+      $('dzis').innerHTML = [
+        tile(d.telefony ? 'ok' : 'brak', d.telefony, 'telefonów dziś'),
+        tile(d.rozmowy ? 'ok' : 'brak', d.rozmowy, 'odbytych rozmów dziś'),
+        tile(d.umowienia ? 'ok' : 'brak', d.umowienia, 'umówionych kontaktów dziś'),
+      ].join('');
     }
 
     // ── ZRÓB TERAZ ──────────────────────────────────────────────────────────
@@ -467,6 +516,8 @@
       $('dni-fill').style.width = `${pctDni}%`;
       $('dni-lab').textContent = `dzień ${k.dzien} z ${k.dniTestu}`;
       $('cel-lab').textContent = `cel: ${k.cel.domkniete.length}/${k.cel.target} wycen domkniętych telefonem`;
+      renderNaglowek(k);
+      renderDzis(k);
       renderTodo(k);
       renderWyceny(k);
       renderTiles(k);

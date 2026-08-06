@@ -188,6 +188,20 @@ test('Wyceny do domkniecia: tylko otwarte wyceny handlowca, suma + sort', () => 
   assert.equal(k.wyceny.lista[1].dotkniete, false);
 });
 
+test('Aktywnosc dzis: telefony/rozmowy/umowienia z dzisiejszego dnia Lorenza', () => {
+  const calls = [
+    call({ phone: '511111111', at: '2026-08-10T09:00:00Z' }),                              // dziś, rozmowa (120s)
+    call({ phone: '511111111', at: '2026-08-10T10:00:00Z', disp: 'no_answer', sek: 0 }),   // dziś, telefon nieodebrany
+    call({ phone: '522222222', at: '2026-08-10T08:00:00Z', feedbackPo: '12.08.2026' }),    // dziś, rozmowa + umówienie
+    call({ phone: '533333333', at: '2026-08-09T09:00:00Z' }),                              // wczoraj — nie liczy
+    call({ phone: '544444444', at: '2026-08-10T09:00:00Z', kto: 'Antoni' }),               // dziś, ale Antoni
+  ];
+  const k = computeKokpit({ leads: [], calls, wycenyPaid: [], wycenyOpen: [], scoresWeek: [], now: NOW, start: START });
+  assert.equal(k.dzisiaj.telefony, 3);
+  assert.equal(k.dzisiaj.rozmowy, 2);
+  assert.equal(k.dzisiaj.umowienia, 1);
+});
+
 test('pickOdsluch: 1 wzorcowa + problemowe z roznymi dominujacymi wadami', () => {
   const mk = (log_id, scores) => ({ log_id, scores, flagi: {}, pominieta: false });
   const wynik = pickOdsluch([

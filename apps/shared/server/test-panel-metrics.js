@@ -306,6 +306,22 @@ function computeKokpit({ leads, calls, wycenyPaid, wycenyOpen, scoresWeek, now =
   wyceny.lista.sort((a, b) =>
     (Number(b.dotkniete) - Number(a.dotkniete)) || ((b.dniCiszy ?? 0) - (a.dniCiszy ?? 0)) || ((b.kwota ?? 0) - (a.kwota ?? 0)));
 
+  // ── Aktywność DZIŚ (rozliczenie dzień po dniu) ──────────────────────────────
+  // Telefony = wszystkie wychodzące Lorenza z dzisiejszego dnia Warszawy;
+  // rozmowy = odebrane ≥20 s; umówienia = rozmowy zakończone datą następnego
+  // kroku (data_feedbacku_po ustawione dziś).
+  const dzisiaj = { telefony: 0, rozmowy: 0, umowienia: 0, odebrane: 0 };
+  for (const c of callsSorted) {
+    if (c.handlowiec !== HANDLOWIEC || c.kierunek !== 'wychodzące') continue;
+    if (warsaw(c.data_zmiany).ymd !== todayYmd) continue;
+    dzisiaj.telefony += 1;
+    if (c.disposition === 'answered') {
+      dzisiaj.odebrane += 1;
+      if ((c.czas_trwania_s || 0) >= 20) dzisiaj.rozmowy += 1;
+    }
+    if (c.data_feedbacku_po) dzisiaj.umowienia += 1;
+  }
+
   // ── Umierające leady (zbiorcza lista ostrzeżeń na górę panelu) ────────────
   const umierajace = [
     ...sla.czekaja.map((x) => ({ waga: 3, typ: 'PALI SIĘ', opis: `nowy lead bez ŻADNEJ próby od ${x.min >= 60 ? `${Math.round(x.min / 60)} h` : `${x.min} min`}`, ...x })),
@@ -359,7 +375,7 @@ function computeKokpit({ leads, calls, wycenyPaid, wycenyOpen, scoresWeek, now =
     start, dzien, dniTestu: 30, todayYmd,
     nowychLeadow: noweLeady.length,
     reguly: REGULY.map((r) => ({ ...r, status: statusReguly(r.key) })),
-    sla, kadencja, nextStep, godziny, obietnice, styl, cel, wyceny, umierajace,
+    sla, kadencja, nextStep, godziny, obietnice, styl, cel, wyceny, dzisiaj, umierajace,
   };
 }
 
