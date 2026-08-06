@@ -13,6 +13,7 @@ const cors = require('cors');
 const { getClient } = require('./supabase');
 const { createAuth, clientPayload, panelLinks, isAdmin } = require('../../shared/server/auth');
 const Q = require('./queries');
+const meta = require('../../shared/server/meta-insights'); // Faza 3: Meta Graph API (FB+IG insights)
 
 const app = express();
 app.use(cors());
@@ -84,6 +85,23 @@ app.get('/api/stats/forward', requireToken, machine((db) => Q.forward(db)));
 app.get('/api/stats/faktury', requireToken, machine((db) => Q.faktury(db)));
 app.get('/api/stats/marza', requireToken, machine((db) => Q.marzaRealna(db)));
 app.get('/api/stats/ai-ops', requireToken, machine((db) => Q.aiOps(db)));
+
+// ── Cron: cotygodniowy pull Meta Graph API (FB Page + IG Business) ────────────
+// Faza 3 atrybucji. Rejestrowany PRZED auth.gate (jak /api/stats/*), bo pg_cron
+// woła net.http_get z ?secret=CRON_SECRET (wzorzec pozostałych workerów). Robi
+// TYLKO przyrost (ostatnie ~14 dni) → mieści się w maxDuration 60s. Self-skip,
+// gdy brak META_GRAPH_TOKEN w env (idempotentnie, bez błędu). Backfill = CLI.
+app.get('/api/cron/meta-insights', async (req, res) => {
+  const expected = process.env.CRON_SECRET;
+  const secret = req.query.secret || (req.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  if (!expected || secret !== expected) return res.status(401).json({ error: 'unauthorized' });
+  if (!meta.getToken()) return res.json({ ok: true, skipped: true, reason: 'brak META_GRAPH_TOKEN' });
+  try {
+    const days = Number(req.query.days) || 14;
+    const out = await meta.runWeekly(getClient(), { days, log: (m) => console.log('[meta-cron]', m) });
+    res.json({ ok: true, out });
+  } catch (err) { console.error('meta-cron error:', err.message); res.status(502).json({ ok: false, error: err.message }); }
+});
 
 // ── Bramka sesji huba (ciasteczko Path=/) ────────────────────────────────────
 const auth = createAuth({ getClient, panelKey: 'statystyki', loginTitle: 'Statystyki' });
