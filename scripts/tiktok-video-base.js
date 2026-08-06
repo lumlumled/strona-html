@@ -38,8 +38,10 @@ const args = process.argv.slice(2);
 const flag = (n) => args.includes(n);
 const opt = (n, d) => { const i = args.indexOf(n); return i >= 0 && args[i + 1] ? args[i + 1] : d; };
 const ENUMERATE_ONLY = flag('--enumerate-only');
+const NO_ENUMERATE = flag('--no-enumerate'); // pomija re-listing przez Apify; przetwarza juz-zapisane wiersze (gdy saldo Apify wyczerpane)
 const REPROCESS = flag('--reprocess');
 const LIMIT = Number(opt('--limit', '0')) || 0;
+const CLASSIFY_URL = opt('--classify-url', '');
 
 let FFMPEG = 'ffmpeg';
 function resolveFfmpeg() {
@@ -159,6 +161,15 @@ async function extractFrames(file, wd, dur) {
   return frames;
 }
 
+async function loadFormats() {
+  const { data, error } = await db.from('marketing_content_formats').select('slug,name,description,cues').eq('active', true).order('sort_order');
+  if (error) { console.warn(`[formaty] nie wczytano: ${error.message}`); return []; }
+  return data || [];
+}
+function formatsBlock(formats) {
+  return formats.map((f, i) => `${i + 1}. ${f.slug} — ${f.name}: ${f.description}${f.cues ? ` [sygnaly: ${f.cues}]` : ''}`).join('\n');
+}
+
 const VISUAL_SYSTEM = `Jestes analitykiem kreacji video dla marki LumLum (cyfrowe oswietlenie LED, rolki TikTok/Reels po polsku).
 Dostajesz KLATKI z jednej rolki (po kolei w czasie) + opis. Opisz CO SIE NA NIEJ DZIEJE tak, zeby dalo sie ja przypisac do formatu tresci.
 Zwroc WYLACZNIE czysty JSON (bez markdown) w schemacie:
@@ -176,20 +187,25 @@ Zwroc WYLACZNIE czysty JSON (bez markdown) w schemacie:
   "shot_type": "gadajaca glowa|produkt w rekach|wnetrze/efekt|nagranie ekranu|mix",
   "on_screen_text": ["napisy widoczne na klatkach, doslownie"],
   "beats": ["kolejne sceny/ujecia po kolei, krotko"],
-  "format_guess": "krotka propozycja nazwy formatu na podstawie tego co widac"
+  "format_guess": "krotka propozycja nazwy formatu na podstawie tego co widac",
+  "format": "slug formatu z listy ktora dostaniesz nizej, albo 'inne'",
+  "format_conf": 0.0
 }`;
 
-async function analyzeVisual(frames, caption) {
+async function analyzeVisual(frames, caption, formats) {
   const content = frames.map((f) => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: fs.readFileSync(f.path).toString('base64') } }));
   content.push({ type: 'text', text: `Klatki po kolei (t=${frames.map((f) => f.t).join('s, ')}s).\nOPIS ROLKI: ${caption || '(brak)'}\nZwroc sam JSON wg schematu.` });
-  const { text, model } = await llm.complete({ task: 'media', system: VISUAL_SYSTEM, messages: [{ role: 'user', content }], maxTokens: 1500 });
+  const system = VISUAL_SYSTEM + (formats && formats.length
+    ? `\n\nLISTA FORMATOW (przypisz rolke do DOKLADNIE JEDNEGO — pole "format" = slug, "format_conf" = 0-1; jesli zaden nie pasuje: "format":"inne"):\n${formatsBlock(formats)}`
+    : '');
+  const { text, model } = await llm.complete({ task: 'media', system, messages: [{ role: 'user', content }], maxTokens: 1600 });
   let json;
   try { const m = text.match(/\{[\s\S]*\}/); json = JSON.parse(m ? m[0] : text); } catch (e) { json = { _parse_error: e.message, _raw: text.slice(0, 500) }; }
   return { visual: json, model };
 }
 function hookOf(t) { if (!t) return null; const s = t.replace(/\s+/g, ' ').trim(); const first = s.split(/(?<=[.!?])\s/)[0]; return (first || s).slice(0, 200); }
 
-async function processRow(row) {
+async function processRow(row, formats) {
   const wd = fs.mkdtempSync(path.join(os.tmpdir(), `vb_${row.video_id}_`));
   try {
     const file = await download(row.url, wd);
@@ -197,12 +213,17 @@ async function processRow(row) {
     const [mp3, frames] = await Promise.all([extractAudio(file, wd), extractFrames(file, wd, duration)]);
     const [tr, vis] = await Promise.all([
       llm.transcribe({ buffer: fs.readFileSync(mp3), filename: 'a.mp3', mime: 'audio/mpeg', language: 'pl' }),
-      analyzeVisual(frames, row.caption),
+      analyzeVisual(frames, row.caption, formats),
     ]);
+    const v = (vis.visual && typeof vis.visual === 'object') ? vis.visual : {};
+    const known = new Set((formats || []).map((f) => f.slug));
+    const formatSlug = known.has(v.format) ? v.format : null;
     const { error } = await db.from('marketing_video_analysis').update({
       duration_s: Math.round(duration) || row.duration_s,
       transcript: tr.text, transcript_src: 'whisper', hook: hookOf(tr.text), model_transcribe: tr.model,
       visual: vis.visual, frames_n: frames.length, model_visual: vis.model,
+      format: formatSlug, format_conf: formatSlug ? (Number(v.format_conf) || null) : null,
+      format_source: formatSlug ? 'auto' : null,
       status: 'done', error: null, updated_at: new Date().toISOString(),
     }).eq('platform', 'tiktok').eq('video_id', row.video_id);
     if (error) throw new Error(`update: ${error.message}`);
@@ -216,10 +237,24 @@ async function processRow(row) {
 }
 
 async function main() {
-  if (!process.env.APIFY_TOKEN) throw new Error('brak APIFY_TOKEN w apps/komunikator/server/.env');
   FFMPEG = resolveFfmpeg();
   console.log(`ffmpeg: ${FFMPEG}`);
 
+  // Debug: klasyfikacja 1 URL bez Apify i bez zapisu (walidacja promptu/taksonomii).
+  if (CLASSIFY_URL) {
+    const formats = await loadFormats();
+    console.log(`[formaty] ${formats.length} formatow.`);
+    const wd = fs.mkdtempSync(path.join(os.tmpdir(), 'vb_classify_'));
+    try {
+      const file = await download(CLASSIFY_URL, wd);
+      const frames = await extractFrames(file, wd, await durationOf(file));
+      const vis = await analyzeVisual(frames, '', formats);
+      console.log(JSON.stringify(vis.visual, null, 2));
+    } finally { try { fs.rmSync(wd, { recursive: true, force: true }); } catch (_) {} }
+    return;
+  }
+
+  if (!process.env.APIFY_TOKEN) throw new Error('brak APIFY_TOKEN w apps/komunikator/server/.env');
   const items = await enumerateProfile();
   await upsertEnumerated(items);
 
@@ -228,6 +263,9 @@ async function main() {
     console.log(`\n=== ENUMERACJA DONE. Rolek w bazie: ${count}. Uruchom bez --enumerate-only aby przetworzyć (~$0.2/rolka). ===`);
     return;
   }
+
+  const formats = await loadFormats();
+  console.log(`[formaty] wczytano ${formats.length} formatow do klasyfikacji.`);
 
   let q = db.from('marketing_video_analysis').select('video_id,url,caption,duration_s,status')
     .eq('platform', 'tiktok').not('url', 'is', null).order('published_at', { ascending: false });
@@ -240,7 +278,7 @@ async function main() {
   let ok = 0, fail = 0;
   for (let i = 0; i < rows.length; i++) {
     process.stdout.write(`  [${i + 1}/${rows.length}] ${rows[i].video_id} … `);
-    const r = await processRow(rows[i]);
+    const r = await processRow(rows[i], formats);
     console.log(r.ok ? 'OK' : `FAIL: ${r.error}`);
     if (r.ok) ok += 1; else fail += 1;
     await sleep(800);
