@@ -184,16 +184,16 @@ async function fetchDailyRange(objId, metrics, token, sinceMs, untilMs, log = ()
 
 // Mapowania dziennych → klucze zgodne z istniejącym CSV (panel czyta metrics.views/reach).
 // ⚠️ v21: Meta CAŁKOWICIE wycofała page_impressions/page_impressions_unique (dzienny
-//    zasięg/wyświetlenia FB). API oddaje TYLKO: zaangażowanie, wejścia na stronę, obserwacje.
-//    Dziennego ZASIĘGU FB z API nie da się odświeżyć — to ograniczenie platformy (jak
-//    crossposty per-post). Świadomie NIE ustawiamy views/reach dla FB, żeby nie udawać
-//    danych (panel wtedy zostawia zasięg FB na ostatnim dniu z CSV, 13.07). Zweryfikowane
-//    sondą na żywym tokenie: FB_VALID = post_engagements/views_total/daily_follows_unique.
+//    zasięg/wyświetlenia FB). Metryki TREŚCIOWE FB — views (Wyświetlenia), reach (Widzowie),
+//    interactions (Interakcje), link_clicks — pochodzą z ręcznego eksportu CSV
+//    (scripts/fb-daily-from-csv.js). API zwraca TYLKO to, czego CSV nie ma: nowe obserwacje
+//    i wejścia na stronę. Świadomie NIE zwracamy tu views/reach/interactions/link_clicks —
+//    dzięki temu cotygodniowy MERGE nie nadpisze autorytatywnych danych z CSV.
+//    Zweryfikowane sondą na żywym tokenie (FB_VALID: page_views_total/page_daily_follows_unique).
 function mapFbDaily(raw) {
   return {
-    interactions: raw.page_post_engagements,
-    visits: raw.page_views_total,
     new_followers: raw.page_daily_follows_unique,
+    visits: raw.page_views_total,
   };
 }
 // IG: reach + follower_count działają jako SERIA DZIENNA (period=day). views/profile_views
@@ -205,7 +205,7 @@ function mapIgDaily(raw) {
     new_followers: raw.follower_count,
   };
 }
-const FB_DAILY_METRICS = ['page_post_engagements', 'page_views_total', 'page_daily_follows_unique'];
+const FB_DAILY_METRICS = ['page_views_total', 'page_daily_follows_unique'];
 const IG_DAILY_METRICS = ['reach', 'follower_count'];
 
 function cleanMetrics(o) { const r = {}; for (const [k, v] of Object.entries(o)) if (v != null) r[k] = v; return r; }
