@@ -33,8 +33,9 @@ const { cenaFinalna, rabat24hKwota } = require('./wyceny-cena');
 // dosyłamy do optymalizacji reklam po Facebook Leads ID. Patrz meta-capi.js.
 const metaCapi = require('./meta-capi');
 
-// Kierunek odwrotny: wycena "Stracone" → lead "Stracony" (patrz PUT niżej).
-const { stracLeadaPoWycenie } = require('./wyceny-sync');
+// Kierunek odwrotny: wycena "Stracone" → lead "Stracony", a wycena ręcznie
+// oznaczona jako Fulfilled/Closed → lead "Sprzedane" (patrz PUT niżej).
+const { stracLeadaPoWycenie, sprzedajLeadaPoWycenie } = require('./wyceny-sync');
 
 // Publiczny link formularza dla klienta (podmieniany na formularz-test w testach).
 // Czysty ?id= bez tokenu — decyzja Antoniego: link ma być krótki. Endpoint GET
@@ -849,7 +850,42 @@ function registerWycenyEndpoints(app, { getClient, requireView, requireEdit, isA
           }
         }
       }
-      res.json({ data: decorate(data[0]), ...(leadStracony ? { lead_stracony: leadStracony } : {}) });
+      // Symetria sprzedaży: ręczne przestawienie wyceny na Fulfilled/Closed
+      // (zrealizowane) odbija się na leadzie jako "Sprzedane" — do 2026-08-07
+      // płatność i realizacja nie dotykały "Deal stage" i lead wisiał w starym
+      // statusie (lead 438). Automatyczne płatności robią to samo w pipeline
+      // (obok metaCapi.notifyPurchase).
+      let leadSprzedany;
+      let wycenyZamknietePoSprzedazy;
+      if (patch.status === 'Fulfilled' || patch.status === 'Closed') {
+        const wynik = await sprzedajLeadaPoWycenie(supabase, data[0], {
+          handlowiec: req.user && req.user.name,
+          opis: `Wycena #${id} oznaczona jako zrealizowana`,
+        });
+        if (wynik) {
+          leadSprzedany = wynik.leadId || undefined;
+          // Reguła "to albo to": pozostałe otwarte wyceny klienta domknięte
+          // jako 'Stracone' (kupił inną konfigurację) — patrz wyceny-sync.js.
+          if (wynik.wycenyZamkniete && wynik.wycenyZamkniete.length) {
+            wycenyZamknietePoSprzedazy = wynik.wycenyZamkniete;
+          }
+          if (onStracony && wynik.telefon) {
+            // Ten sam hook hosta co przy stracie — synchronizuje status case'a
+            // w migawce planu dnia (nazwa historyczna, przyjmuje dowolny status).
+            try {
+              await onStracony(supabase, { telefon: wynik.telefon, status: 'Sprzedane' });
+            } catch (err) {
+              console.error('Sync planu dnia po sprzedaży z wyceny:', err.message);
+            }
+          }
+        }
+      }
+      res.json({
+        data: decorate(data[0]),
+        ...(leadStracony ? { lead_stracony: leadStracony } : {}),
+        ...(leadSprzedany ? { lead_sprzedany: leadSprzedany } : {}),
+        ...(wycenyZamknietePoSprzedazy ? { wyceny_zamkniete: wycenyZamknietePoSprzedazy } : {}),
+      });
     } catch (err) {
       handleError(res, err, 502);
     }

@@ -46,7 +46,10 @@ function warsawDateTimeStr(date) {
 // i w logu, żeby dało się go zauważyć.
 // `powod` (opcjonalny) wędruje na wycenę razem ze statusem — bez niego wycena
 // wyglądała jak domknięta "z automatu", bez śladu dlaczego (patrz stracony.js).
-async function zamknijWycenyStraconego(supabase, { leadId, telefon, powod } = {}) {
+// `pomijajId` (opcjonalny) wyklucza jedną wycenę z domykania — używane przy
+// sprzedaży, żeby świeżo opłacana wycena nigdy nie zamknęła sama siebie,
+// niezależnie od tego, czy jej status w bazie zdążył już zejść z 'Open'.
+async function zamknijWycenyStraconego(supabase, { leadId, telefon, powod, pomijajId } = {}) {
   const d9 = nine(telefon);
   const idNum = Number(leadId);
   const maLead = Number.isFinite(idNum) && idNum > 0;
@@ -65,7 +68,7 @@ async function zamknijWycenyStraconego(supabase, { leadId, telefon, powod } = {}
       .eq('status', 'Open')
       .or(filtry.join(','));
     if (error) throw error;
-    const ids = (data || []).map((w) => w.id);
+    const ids = (data || []).map((w) => w.id).filter((id) => id !== pomijajId);
     if (!ids.length) return { ids: [], error: null };
 
     const { error: updErr } = await supabase
@@ -160,4 +163,87 @@ async function stracLeadaPoWycenie(supabase, wycena, { powod, handlowiec, whenTe
   }
 }
 
-module.exports = { zamknijWycenyStraconego, stracLeadaPoWycenie };
+// ── Kierunek sprzedaży: wycena opłacona/zrealizowana → lead "Sprzedane" ──────
+// Brakująca połówka symetrii (lead 438 Adam Van Bendler, 2026-08-07):
+// zamówienie #1996 opłacone i wysłane, a lead dalej "Wycena wysłana" —
+// płatność szła eventem do Meta CAPI, ale "Deal stage" nikt nie ruszał.
+// Wołane z punktów paid=true pipeline (obok metaCapi.notifyPurchase) oraz
+// z ręcznej zmiany statusu wyceny na Fulfilled/Closed (PUT /api/wyceny/:id).
+//
+// 'Stracony' NIE blokuje: płatność to twardy fakt — klient, który wcześniej
+// odpadł, a potem zapłacił, jest sprzedany (statusPrzed zostaje w Log zmian).
+// Blokuje tylko już ustawione 'Sprzedane'. Zapis przez RPC app_lead_sprzedany
+// (migracja 022) — jedna transakcja, bypass triggera logu, czyszczenie
+// feedbacku/akcji jak przy stracie. Nie rzuca — realizacja zamówienia
+// (faktura, przesyłka, mail) nie może się wywrócić o sam status leada.
+async function sprzedajLeadaPoWycenie(supabase, wycena, { kwota, handlowiec, opis: opisText, whenText } = {}) {
+  if (!wycena) return null;
+  const d9 = nine(wycena.telefon_digits || wycena.telefon_e164);
+
+  // Reguła "to albo to" (decyzja Antoniego 2026-08-07, wyceny 1995/1996):
+  // warianty tej samej instalacji powstają w podobnym czasie i klient kupuje
+  // jeden z nich — pozostałe otwarte wyceny tego klienta idą na 'Stracone'
+  // z powodem wskazującym zakup, żeby nie wisiały w Backlogu jako tematy do
+  // dzwonienia. Robione PRZED dotknięciem leada: działa też dla sierot bez
+  // leada i przy drugiej sprzedaży (lead już 'Sprzedane').
+  const { ids: wycenyZamkniete } = await zamknijWycenyStraconego(supabase, {
+    leadId: wycena.lead_id,
+    telefon: d9,
+    powod: `Klient kupił inną konfigurację u nas (zamówienie #${wycena.id})`,
+    pomijajId: wycena.id,
+  });
+
+  try {
+    const idNum = Number(wycena.lead_id);
+    let lead = null;
+    if (Number.isFinite(idNum) && idNum > 0) {
+      const { data, error } = await supabase
+        .from('Leady B2C').select('*').eq('ID Leada', idNum).limit(1);
+      if (error) throw error;
+      lead = data[0] || null;
+    }
+    if (!lead && d9) {
+      // Leady B2C trzyma numer z prefiksem 48 jako liczbę (patrz findLeadByPhone).
+      const { data, error } = await supabase
+        .from('Leady B2C').select('*').eq('Phone number', Number(`48${d9}`)).limit(1);
+      if (error) throw error;
+      lead = data[0] || null;
+    }
+    // Bez leada / lead już sprzedany — nic do przestawiania, ale domknięte
+    // bliźniacze wyceny raportujemy wołającemu (PUT pokazuje je w odpowiedzi).
+    if (!lead) return wycenyZamkniete.length ? { leadId: null, wycenyZamkniete } : null;
+
+    const statusPrzed = lead['Deal stage'] || null;
+    if (statusPrzed === 'Sprzedane') return wycenyZamkniete.length ? { leadId: null, wycenyZamkniete } : null;
+
+    const kw = Number(kwota ?? wycena.kwota_sprzedazy_brutto ?? wycena.kwota_proponowana_brutto);
+    const opis = `[Sprzedane] ${opisText || `Zamówienie #${wycena.id} opłacone`}${Number.isFinite(kw) && kw > 0 ? ` (${kw} zł)` : ''}`;
+    const historiaEntry = `${whenText || warsawDateTimeStr(new Date())} - ${opis}`;
+    const { error: rpcErr } = await supabase.rpc('app_lead_sprzedany', {
+      p_id_leada: Number(lead['ID Leada']),
+      p_historia: lead['Historia rozmów'] ? `${historiaEntry}\n${lead['Historia rozmów']}` : historiaEntry,
+    });
+    if (rpcErr) throw rpcErr;
+
+    // ⚠️ Nowe źródło 'wycena_sprzedana' musi siedzieć w NIE_TELEFON_ZRODLA
+    // i NIE_ROZMOWA_ZRODLA (wszystkie kopie) — to nie jest telefon.
+    const { error: logErr } = await supabase.from('Log zmian').insert({
+      zrodlo: 'wycena_sprzedana',
+      telefon: d9 ? `48${d9}` : null,
+      status_przed: statusPrzed,
+      status_po: 'Sprzedane',
+      opis,
+      handlowiec: handlowiec || null,
+      dopasowano_tabela: 'Leady B2C',
+      dopasowano_id: String(lead['ID'] ?? ''),
+    });
+    if (logErr) console.error('Nie zapisano sprzedaży leada do Log zmian:', logErr.message);
+
+    return { leadId: Number(lead['ID Leada']), statusPrzed, telefon: d9 ? `48${d9}` : null, wycenyZamkniete };
+  } catch (err) {
+    console.error('Nie udało się oznaczyć leada jako sprzedanego po wycenie:', err.message);
+    return wycenyZamkniete.length ? { leadId: null, wycenyZamkniete } : null;
+  }
+}
+
+module.exports = { zamknijWycenyStraconego, stracLeadaPoWycenie, sprzedajLeadaPoWycenie };

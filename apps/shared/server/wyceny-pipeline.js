@@ -26,6 +26,9 @@ const { cenaFinalna } = require('./wyceny-cena');
 // Meta Conversions API (Conversion Leads): zapłata leada = etap "Sprzedane"
 // dosyłany do optymalizacji reklam po Facebook Leads ID. Patrz meta-capi.js.
 const metaCapi = require('./meta-capi');
+// Zapłata domyka też leada w CRM ("Deal stage" = 'Sprzedane') — do 2026-08-07
+// sprzedaż istniała tylko jako event reklamowy, lead wisiał w starym statusie.
+const { sprzedajLeadaPoWycenie } = require('./wyceny-sync');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -630,6 +633,7 @@ async function onInvoicePaid(db, uuid) {
       await pushWeekend(db, wycena);
     }
     await metaCapi.notifyPurchase(db, wycena, kwotaFinalna); // Meta CAPI "Sprzedane"
+    await sprzedajLeadaPoWycenie(db, wycena, { kwota: kwotaFinalna }); // CRM: lead → 'Sprzedane'
     return { ok: true };
   } catch (err) {
     await zapiszBlad(db, wycenaId, 'onInvoicePaid', err);
@@ -673,6 +677,7 @@ async function markPaidAndShip(db, wycenaId) {
       await pushWeekend(db, wycena);
     }
     await metaCapi.notifyPurchase(db, wycena, kwotaFinalna); // Meta CAPI "Sprzedane"
+    await sprzedajLeadaPoWycenie(db, wycena, { kwota: kwotaFinalna }); // CRM: lead → 'Sprzedane'
     return { ok: true, path: 'manual-paid' };
   } catch (err) {
     await zapiszBlad(db, wycenaId, 'markPaidAndShip', err);
@@ -778,6 +783,7 @@ async function realizujSklep(db, wycenaId, { pobranie } = {}) {
     await notifyFulfillment(db, wycena);
     await pushWeekend(db, wycena);
     await metaCapi.notifyPurchase(db, wycena, kwotaFinalna); // Meta CAPI "Sprzedane"
+    await sprzedajLeadaPoWycenie(db, wycena, { kwota: kwotaFinalna }); // CRM: lead → 'Sprzedane'
     return { ok: true, path: 'sklep-oplacone' };
   } catch (err) {
     await zapiszBlad(db, wycenaId, 'realizujSklep', err);
@@ -825,6 +831,7 @@ async function onDelivered(db, shipment) {
         worker_last_error: null,
       });
       await metaCapi.notifyPurchase(db, wycena, cenaFinalna(wycena)); // Meta CAPI "Sprzedane" (COD doręczone)
+      await sprzedajLeadaPoWycenie(db, wycena, { kwota: cenaFinalna(wycena), opis: `Zamówienie #${wycena.id} doręczone i opłacone (pobranie)` }); // CRM: lead → 'Sprzedane'
     } catch (err) {
       await zapiszBlad(db, wycena.id, 'onDelivered', err);
       await releaseLock(db, wycena.id, token);

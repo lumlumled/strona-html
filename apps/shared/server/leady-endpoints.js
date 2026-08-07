@@ -63,7 +63,7 @@ const EDITABLE_LEAD_FIELDS = [
 // 'manual_stracony' też tu jest: ręczne domknięcie tematu to decyzja, nie
 // połączenie — bez tego samo kliknięcie "Stracony" doliczałoby leadowi telefon
 // i fałszywie oznaczało go jako "skontaktowany dziś".
-const NIE_TELEFON_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'manual_stracony', 'wycena_stracona', 'sms_stracony', 'facebook_lead_webhook']);
+const NIE_TELEFON_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'manual_stracony', 'wycena_stracona', 'wycena_sprzedana', 'sms_stracony', 'facebook_lead_webhook']);
 
 function normalizePhoneDigits(v) {
   return String(v || '').replace(/\D/g, '');

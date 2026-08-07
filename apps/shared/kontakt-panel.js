@@ -14,7 +14,7 @@ window.KontaktPanel = (() => {
   // renderują się jak notatka (etykieta zamiast czasu połączenia). Kopia
   // zbioru z apps/shared/server/leady-endpoints.js (NIE_TELEFON_ZRODLA) bez
   // 'facebook_lead_webhook', który ma własną etykietę "nowy lead".
-  const NIE_ROZMOWA_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'manual_stracony', 'wycena_stracona', 'sms_stracony']);
+  const NIE_ROZMOWA_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'manual_stracony', 'wycena_stracona', 'wycena_sprzedana', 'sms_stracony']);
 
   const CHANNEL_LABELS = {
     email: '✉️ mail',
