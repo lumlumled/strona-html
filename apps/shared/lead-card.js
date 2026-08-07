@@ -27,7 +27,7 @@ window.LeadKarta = (() => {
   // renderują się jak notatka (etykieta zamiast czasu połączenia). Kopia
   // zbioru z apps/shared/server/leady-endpoints.js (NIE_TELEFON_ZRODLA) bez
   // 'facebook_lead_webhook', który ma własną etykietę "nowy lead".
-  const NIE_ROZMOWA_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'manual_stracony', 'wycena_stracona', 'sms_stracony']);
+  const NIE_ROZMOWA_ZRODLA = new Set(['notatka_handlowca', 'manual_akcja', 'manual_crm', 'manual_stracony', 'wycena_stracona', 'wycena_sprzedana', 'sms_stracony']);
 
   // ── Daty / formatowanie (1:1 z CRM) ───────────────────────────────────────
 
@@ -269,6 +269,10 @@ window.LeadKarta = (() => {
     { col: 'Produkty z wyceny', label: 'Produkty złapane z rozmowy', textarea: true, wide: true, collapsible: true, hide: (l) => l._ma_wycene },
     { col: 'Link do formularza', label: 'Link do formularza', wide: true, link: true, hide: (l) => l._ma_wycene },
     { col: 'Źródło', label: 'Źródło', readonly: true },
+    // Deklaracja klienta z rozmowy ("zobaczyłem Was na Facebooku…") + ew.
+    // dopasowany film — wypełniane przez AI (zrodlo-poznania.js), stąd
+    // readonly; puste nie renderuje się wcale, jak każde pole bez keepWhenEmpty.
+    { col: 'Skąd nas zna', label: 'Skąd nas zna', readonly: true, wide: true },
     { col: 'ad_name', label: 'Reklama', readonly: true },
     { col: 'Facebook Leads ID', label: 'Facebook Leads ID', readonly: true },
   ];

@@ -14,6 +14,9 @@
 // Umowy, helpery dat) — bez cyklicznego require i testowalny na atrapie.
 
 const { analyzeCall, statusRank, NO_ANSWER_ALLOWED_FROM, parseKwotaZlotych, isPlDateDue, czyZaopiekowaneDzis, przyszlosciowyRecall } = require('../../shared/server/call-analysis');
+// "Skąd klient nas zna" — zapis deklaracji źródła z rozmowy + dopasowanie
+// opisanego filmu do bazy rolek (patrz apps/shared/server/zrodlo-poznania.js).
+const { zapiszZrodloPoznania, normalizeZrodlo } = require('../../shared/server/zrodlo-poznania');
 const { normalizeTemperatura } = require('./scoring');
 const { zamknijWycenyStraconego } = require('../../shared/server/wyceny-sync');
 const { powodZRozmowy } = require('../../shared/server/stracony');
@@ -268,7 +271,7 @@ function registerRozmowyEndpoints(app, deps) {
           }
         }
 
-        const { error: insertErr } = await supabase.from(LOG_ZMIAN_TABLE).insert({
+        const { data: logRow, error: insertErr } = await supabase.from(LOG_ZMIAN_TABLE).insert({
           zrodlo: 'rozmowa_reczna',
           telefon: digits,
           status_przed: statusBefore,
@@ -285,7 +288,7 @@ function registerRozmowyEndpoints(app, deps) {
           disposition: 'answered',
           dopasowano_tabela: LEADY_B2C_TABLE,
           dopasowano_id: String(lead['ID'] ?? ''),
-        });
+        }).select('id').single();
         if (insertErr) throw new Error(`Zapis do Log zmian: ${insertErr.message}`);
 
         const cenaZaproponowana = parseKwotaZlotych(analysis?.cena_zaproponowana);
@@ -347,6 +350,19 @@ function registerRozmowyEndpoints(app, deps) {
           });
         }
 
+        // "Skąd klient nas zna" — jak w webhooku Zadarmy; moduł łyka własne
+        // błędy, atrybucja nie może wywrócić zapisu rozmowy.
+        if (analysis?.zrodlo_poznania) {
+          await zapiszZrodloPoznania(supabase, {
+            telefon: digits,
+            det: normalizeZrodlo(analysis),
+            via: 'reczna',
+            logZmianId: logRow?.id || null,
+            leadPhone: lead['Phone number'],
+            leadyTable: LEADY_B2C_TABLE,
+          });
+        }
+
         return res.json({
           dopasowanie: 'lead',
           nazwa: lead['Name'] || null,
@@ -361,7 +377,7 @@ function registerRozmowyEndpoints(app, deps) {
       // ── Ścieżka 2: istniejący kontakt organic ──
       if (kontakt) {
         const wynik = await applyRozmowaDoKontaktu(supabase, kontakt, { analysis, transcript: tresc, handlowiec, whenText });
-        const { error: logErr } = await supabase.from(LOG_ZMIAN_TABLE).insert({
+        const { data: logRow, error: logErr } = await supabase.from(LOG_ZMIAN_TABLE).insert({
           zrodlo: 'rozmowa_reczna',
           telefon: digits,
           status_przed: kontakt.status,
@@ -374,8 +390,18 @@ function registerRozmowyEndpoints(app, deps) {
           disposition: 'answered',
           dopasowano_tabela: KONTAKTY_ORGANIC_TABLE,
           dopasowano_id: String(kontakt.id),
-        });
+        }).select('id').single();
         if (logErr) console.error('Błąd zapisu Log zmian (kontakt organic):', logErr.message);
+        // "Skąd klient nas zna" — denormalizacja idzie na kontakty_organic.skad_nas_zna.
+        if (analysis?.zrodlo_poznania) {
+          await zapiszZrodloPoznania(supabase, {
+            telefon: digits,
+            det: normalizeZrodlo(analysis),
+            via: 'reczna',
+            logZmianId: logRow?.id || null,
+            kontaktOrganicId: kontakt.id,
+          });
+        }
         // Produkty ustalone w rozmowie → propozycja szkicu wyceny na /rozmowa,
         // chyba że kontakt już ma podpiętą wycenę (nie mnożymy szkiców).
         const pozycje = parseProduktyToItems(analysis?.produkty);
@@ -408,7 +434,7 @@ function registerRozmowyEndpoints(app, deps) {
         .single();
       if (createErr) throw new Error(`Nie utworzono kontaktu: ${createErr.message}`);
       const wynik = await applyRozmowaDoKontaktu(supabase, created, { analysis, transcript: tresc, handlowiec, whenText });
-      const { error: logErr } = await supabase.from(LOG_ZMIAN_TABLE).insert({
+      const { data: logRowNowy, error: logErr } = await supabase.from(LOG_ZMIAN_TABLE).insert({
         zrodlo: 'rozmowa_reczna',
         telefon: digits,
         status_po: wynik.statusAfter,
@@ -420,8 +446,18 @@ function registerRozmowyEndpoints(app, deps) {
         disposition: 'answered',
         dopasowano_tabela: KONTAKTY_ORGANIC_TABLE,
         dopasowano_id: String(created.id),
-      });
+      }).select('id').single();
       if (logErr) console.error('Błąd zapisu Log zmian (nowy kontakt):', logErr.message);
+      // "Skąd klient nas zna" — nowy kontakt organic też dostaje atrybucję.
+      if (analysis?.zrodlo_poznania) {
+        await zapiszZrodloPoznania(supabase, {
+          telefon: digits,
+          det: normalizeZrodlo(analysis),
+          via: 'reczna',
+          logZmianId: logRowNowy?.id || null,
+          kontaktOrganicId: created.id,
+        });
+      }
       // Produkty z rozmowy → propozycja szkicu, o ile numer nie ma już wyceny.
       const pozycje = parseProduktyToItems(analysis?.produkty);
       res.json({

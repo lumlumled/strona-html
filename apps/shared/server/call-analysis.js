@@ -19,6 +19,9 @@ const UMOWA_MODEL = process.env.OPENAI_UMOWA_MODEL || 'gpt-5-mini';
 // listę kodów w prompcie i zwraca powod_straty_kod, żeby auto-domknięcie z SMS-a
 // (i rozmowy) wybierało dokładnie ten sam kafelek co ręczne domknięcie.
 const { POWODY_STRATY } = require('./stracony');
+// Reguły "skąd klient nas zna" (zrodlo_poznania/film_opis) — wspólne z
+// backfillem po starych transkrypcjach, patrz zrodlo-poznania.js.
+const { ZRODLO_PROMPT_RULES, ZRODLO_OUTPUT_FIELDS, ZRODLO_FALLBACK } = require('./zrodlo-poznania');
 
 function buildCallAnalysisPrompt(dzisiaj, kierunek, poprzedniOpis, poprzedniaAkcja) {
   const kierunekOpis = kierunek === 'wychodzące'
@@ -272,6 +275,8 @@ Przykłady: "to będzie około 1500 zł", "wycena wychodzi 2200", "cena to 3400 
 Format: "2300 zł"
 Brak → null.
 
+${ZRODLO_PROMPT_RULES}
+
 ===== POCZTA GŁOSOWA =====
 "poczta_glosowa": true, gdy nagranie NIE jest rozmową dwóch osób, tylko automatem.
 Sygnały (wystarczy jeden):
@@ -300,7 +305,8 @@ Prawdziwa, choćby krótka wymiana zdań z klientem → false.
   "zamkniete_dzis": true lub false,
   "najblizsza_akcja": "max 5-6 słów lub null",
   "najblizsza_akcja_termin": "DD.MM.YYYY HH:mm lub DD.MM.YYYY lub null",
-  "poczta_glosowa": true lub false
+  "poczta_glosowa": true lub false,
+${ZRODLO_OUTPUT_FIELDS}
 }
 
 ZASADY POLA produkty:
@@ -338,7 +344,7 @@ async function analyzeCall(transcript, { kierunek, dzisiaj, poprzedniOpis, poprz
   // false znaczy "AI stwierdziła, że coś zostało na dziś"; padnięta analiza
   // nie może udawać takiego stwierdzenia. Boolean(...) w Log zmian daje z tego
   // false jak dotąd, więc kolumna boolean nie zobaczy różnicy.
-  const fallback = { status: null, powod_straty: null, powod_straty_kod: null, data_feedbacku: null, godzina_feedbacku: null, opis: transcript ? transcript.slice(0, 200) : null, skrocony_opis: null, produkty: '', cena_zaproponowana: null, jakosc_leada: null, uzasadnienie_jakosci: '', zamkniete_dzis: null, najblizsza_akcja: null, najblizsza_akcja_termin: null, poczta_glosowa: false };
+  const fallback = { status: null, powod_straty: null, powod_straty_kod: null, data_feedbacku: null, godzina_feedbacku: null, opis: transcript ? transcript.slice(0, 200) : null, skrocony_opis: null, produkty: '', cena_zaproponowana: null, jakosc_leada: null, uzasadnienie_jakosci: '', zamkniete_dzis: null, najblizsza_akcja: null, najblizsza_akcja_termin: null, poczta_glosowa: false, ...ZRODLO_FALLBACK };
   if (!OPENAI_API_KEY || !transcript) return fallback;
   try {
     const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {

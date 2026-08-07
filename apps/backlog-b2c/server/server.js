@@ -6,6 +6,9 @@ const cors = require('cors');
 const { getClient } = require('./supabase');
 const { registerLeadyEndpoints, NIE_TELEFON_ZRODLA } = require('../../shared/server/leady-endpoints');
 const { analyzeCall, statusRank, NO_ANSWER_ALLOWED_FROM, parseKwotaZlotych, isPlDateDue, addPlDays, czyZaopiekowaneDzis, przyszlosciowyRecall } = require('../../shared/server/call-analysis');
+// "Skąd klient nas zna" — zapis deklaracji źródła z rozmowy + dopasowanie
+// opisanego filmu do bazy rolek (patrz apps/shared/server/zrodlo-poznania.js).
+const { zapiszZrodloPoznania, normalizeZrodlo } = require('../../shared/server/zrodlo-poznania');
 const { zamknijWycenyStraconego } = require('../../shared/server/wyceny-sync');
 const { powodZRozmowy, formatPowod } = require('../../shared/server/stracony');
 const rozmowy = require('./rozmowy');
@@ -1158,6 +1161,23 @@ app.post('/api/webhooks/zadarma', express.json(), async (req, res) => {
       dopasowano_id: lead ? String(lead['ID'] ?? '') : wycena ? wycena['ID'] : kontaktOrganic ? String(kontaktOrganic.id) : createdLead ? String(createdLead['Phone number'] ?? '') : null,
     }).select('id').single();
     if (insertErr) console.error('Błąd zapisu Log zmian:', insertErr.message);
+
+    // "Skąd klient nas zna" — gdy w rozmowie padła deklaracja źródła
+    // (zrodlo_poznania z analizy): zapis zdarzenia do lead_zrodla_poznania,
+    // dopasowanie opisanego filmu do bazy rolek (kandydaci z pewnością) i
+    // denormalizacja "Skąd nas zna" na kartę. Moduł łyka własne błędy —
+    // atrybucja nigdy nie może wywrócić webhooka.
+    if (answered && analysis?.zrodlo_poznania) {
+      await zapiszZrodloPoznania(supabase, {
+        telefon: customerDigits,
+        det: normalizeZrodlo(analysis),
+        via: 'zadarma',
+        logZmianId: logRow?.id || null,
+        leadPhone: (lead || createdLead) ? (lead || createdLead)['Phone number'] : null,
+        kontaktOrganicId: kontaktOrganic ? kontaktOrganic.id : null,
+        leadyTable: LEADY_B2C_TABLE,
+      });
+    }
 
     if (lead) {
       const patch = {
