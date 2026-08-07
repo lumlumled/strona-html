@@ -186,6 +186,12 @@ app.get('/api/dane', async (req, res) => {
       ? num(wycena.kwota_sprzedazy_brutto)
       : (rabat24hAktywny(wycena) ? Math.round((kwota - num(wycena.rabat24h_kwota)) * 100) / 100 : kwota);
 
+    // Zamknięty (SUBMITTED) formularz: ZERO danych osobowych w odpowiedzi —
+    // link z samym ID jest publiczny, więc podgląd wypełnionych danych
+    // umożliwiałby enumerację ID i podglądanie cudzych zamówień. Liquid
+    // dostaje tylko szczegóły zamówienia (produkty, kwoty) + form_status.
+    const zamkniety = (wycena.form_status || 'NEW') !== 'NEW';
+
     res.json({
       id: `#${wycena.id}`,
       form_status: wycena.form_status || 'NEW',
@@ -195,7 +201,7 @@ app.get('/api/dane', async (req, res) => {
       discount_amount: discount,
       rabat24h_kwota: rabatAktywny ? num(wycena.rabat24h_kwota) : 0,
       rabat24h_wazny_do: rabatAktywny ? warsawDDMMYYYYHHmm(wycena.rabat24h_wazny_do) : '',
-      prefill: {
+      prefill: zamkniety ? {} : {
         first_name: wycena.first_name || '',
         last_name: wycena.last_name || '',
         email: wycena.email || '',
@@ -206,17 +212,6 @@ app.get('/api/dane', async (req, res) => {
         ship_postcode: wycena.ship_postcode || '',
         ship_city: wycena.ship_city || '',
         ship_country: wycena.ship_country || '',
-        // Wybory z formularza + dane faktury — puste przed złożeniem; liquid
-        // używa ich w widoku ZAMKNIĘTEGO formularza (podgląd bez edycji).
-        delivery_method: wycena.delivery_method || '',
-        payment_method: wycena.payment_method || '',
-        punkt_odbioru: wycena.punkt_odbioru || '',
-        invoice_enabled: Boolean(String(wycena.invoice_company_nip || '').trim()
-          || (wycena.invoice_dane || {}).invoice_enabled),
-        invoice_company_nip: wycena.invoice_company_nip || '',
-        invoice_company_name: wycena.invoice_company_name || '',
-        invoice: Object.fromEntries(Object.entries(wycena.invoice_dane || {})
-          .filter(([k]) => k.startsWith('invoice_'))),
       },
     });
   } catch (err) {
