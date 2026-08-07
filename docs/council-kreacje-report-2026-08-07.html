@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rada AI — panel /kreacje v2</title>
+<style>
+  :root { --bg:#fff; --fg:#111; --muted:#777; --line:#e5e2dc; --card:#faf9f7; --good:#16794a; --bad:#b3261e; --warn:#a8560a; --accent:#5b45d6; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#101010; --fg:#f2f0ea; --muted:#9a978f; --line:#2c2b28; --card:#191816; --good:#5cd39a; --bad:#ff7a70; --warn:#e8a75c; --accent:#a58cff; } }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; line-height:1.55; font-size:15.5px }
+  main { max-width:860px; margin:0 auto; padding:2.2rem 1.2rem 4rem }
+  h1 { font-size:1.5rem; margin:0 0 .2rem } h2 { font-size:1.12rem; margin:2rem 0 .6rem; border-bottom:1px solid var(--line); padding-bottom:.3rem }
+  h3 { font-size:.98rem; margin:1.1rem 0 .35rem }
+  .sub { color:var(--muted); font-size:.86rem; margin-bottom:1.4rem }
+  .q { background:var(--card); border:1px solid var(--line); border-left:4px solid var(--accent); border-radius:12px; padding: .9rem 1.1rem; font-size:.92rem }
+  .verdict { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:1.1rem 1.3rem; margin-top:.8rem }
+  .verdict h3 { color:var(--accent); text-transform:uppercase; letter-spacing:.04em; font-size:.8rem; margin-top:1.3rem } .verdict h3:first-child { margin-top:0 }
+  ul { padding-left:1.2rem; margin:.4rem 0 } li { margin:.3rem 0 }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:.6rem; margin:.8rem 0 }
+  .adv { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:.6rem .8rem; font-size:.8rem }
+  .adv b { display:block; font-size:.86rem; margin-bottom:.2rem }
+  .tag { display:inline-block; font-size:.68rem; font-weight:700; border-radius:999px; padding:.06rem .5rem; margin:.12rem .15rem 0 0 }
+  .t-good { background:color-mix(in srgb,var(--good) 16%,transparent); color:var(--good) } .t-bad { background:color-mix(in srgb,var(--bad) 14%,transparent); color:var(--bad) } .t-warn { background:color-mix(in srgb,var(--warn) 16%,transparent); color:var(--warn) }
+  details { border:1px solid var(--line); border-radius:10px; margin:.5rem 0; background:var(--card) }
+  summary { cursor:pointer; padding:.6rem .9rem; font-weight:600; font-size:.92rem } details > div { padding:0 1rem .9rem; font-size:.9rem; white-space:pre-wrap }
+  footer { margin-top:2.5rem; color:var(--muted); font-size:.78rem; border-top:1px solid var(--line); padding-top:.8rem }
+  .hl { background:color-mix(in srgb,var(--accent) 12%,transparent); border-radius:6px; padding:0 .25rem }
+</style>
+</head>
+<body>
+<main>
+  <h1>🏛️ Rada AI — panel /kreacje v2</h1>
+  <div class="sub">5 doradców · runda recenzji wzajemnych · synteza Przewodniczącego · 2026-08-07</div>
+
+  <div class="q"><b>Pytanie:</b> jak zaprojektować docelową architekturę panelu /kreacje (korelacja treść→sprzedaż, planowanie contentu pod przychód, TikTok+IG+FB), z nowymi wymaganiami: presety 4/8 tyg. + własny zakres dat i eksplorator „które rolki zrobiły jaki zasięg w przedziale" — przy ograniczeniu, że wyświetlenia to lifetime, FB nie ma per-post, a pieniądze są tygodniowe bez atrybucji. Założenie: wszystkie fazy danych (IG formaty, Meta Graph API z retencją, cron) będą zrealizowane.</div>
+
+  <h2>Werdykt Przewodniczącego</h2>
+  <div class="verdict">
+    <h3>Gdzie rada się zgadza</h3>
+    <ul>
+      <li><b>Semantyka zakresu dat rozstrzygnięta jednogłośnie:</b> filtr po <span class="hl">dacie publikacji</span>, wyświetlenia zostają lifetime, panel mówi to wprost („rolki opublikowane w oknie; wyświetlenia = całe życie rolki"). Zero interpolacji.</li>
+      <li><b>Bohaterem panelu jest decyzja, nie archiwum:</b> „SMM w 3 minuty wie, co nagrać" = test końcowy każdej sekcji.</li>
+      <li><b>Efekt latarni jest realny:</b> pieniądze robi FB (+0,50 lag1), a dane per-rolka są na TT/IG — panel nie może przez to optymalizować niewłaściwego kanału.</li>
+      <li><b>Guard n&lt;8 tygodni zostaje:</b> krótkie okno = ostrzeżenie i brak werdyktów formatów (4 tygodnie = 4 punkty = horoskop).</li>
+      <li><b>Zero fabrykowanych liczb:</b> żadnej interpolacji views, żadnego szacowanego zasięgu per-rolka FB, żadnej atrybucji w przebraniu.</li>
+      <li><b>Peer review 4/5:</b> najsilniejszy Ekspansjonista (crosspost-mapping + delta-views); największa ślepa plamka Kontrarianin (zakazy projektowane pod ograniczenie danych, które właśnie wygasa).</li>
+    </ul>
+    <h3>Gdzie rada się spiera (i jak rozstrzygnięto)</h3>
+    <ul>
+      <li><b>Custom zakres — p-hacking czy trywialny filtr?</b> Rozstrzygnięcie: custom okno służy <span class="hl">eksploracji</span> (listy, sumy, zdarzenia), <span class="hl">werdykty tylko z presetów</span>. Prawdziwe lekarstwo na p-hacking = eksperymenty prospektywne, nie blokady w UI.</li>
+      <li><b>Retencja IG — leading indicator czy wishful thinking?</b> Najpierw surowo na karcie rolki → backtest retencja→pieniądze (min. 20 rolek, przez placebo+tasowanie) → dopiero potem do werdyktów formatów.</li>
+      <li><b>Co na górze strony?</b> Kolejność budowy ≠ kolejność na stronie: eksplorator budowany pierwszy (zamówiony, tani), ale hero zostaje werdykt „co nagrać w tym tygodniu".</li>
+      <li><b>FB — pusta półka, agregat czy quasi-per-post?</b> Widok crosspostowy: metadane TikToka/IG (format, hook, okładka) to metadane kreacji FB; w tle dzienny agregat strony. Liczb zasięgu per-post dla FB — nigdy.</li>
+      <li><b>Auto-brief:</b> tak, ale jako szkic z presetów zatwierdzany przez człowieka, z zapisem do dziennika decyzji.</li>
+    </ul>
+    <h3>Ślepe punkty złapane dopiero w recenzjach</h3>
+    <ul>
+      <li><b>Higiena strony PIENIĘDZY</b> (3 recenzje niezależnie): awaria telefonu 30.07–3.08 i migracja 12–13.07 muszą być flagami W SERII (wykluczane z korelacji), nie dekoracją na osi. Preset 4 tyg. obejmujący sierpień liczy dziś werdykty na 5 głuchych dniach głównego kanału przychodu.</li>
+      <li><b>Starzenie się lifetime views TikToka:</b> to snapshot z dnia scrape'u — potrzebny stempel „stan z dnia X" i kadencja re-scrape'u.</li>
+      <li><b>Dziennik decyzji:</b> werdykt → co nakręcono → co się stało; bez tego panel nigdy nie udowodni, że działa.</li>
+      <li><b>Eksperymenty prospektywne:</b> „format tygodnia" jako zaplanowany test — jedyna metodologicznie czysta odpowiedź na p-hacking.</li>
+      <li><b>Most organic→paid:</b> Meta CAPI już działa — zwycięskie kreacje to gotowi kandydaci do płatnej amplifikacji.</li>
+      <li><b>Wersjonowanie metodologii:</b> werdykty liczone na lifetime (v1) nieporównywalne z liczonymi na oknach z snapshotów (v2) — stempel wersji na werdykcie.</li>
+    </ul>
+    <h3>Rekomendacja (architektura)</h3>
+    <ul>
+      <li><b>Czas:</b> presety 4/8/12/26 tyg. + custom od–do; filtr po dacie publikacji; stały baner semantyki; tryb „przyrost w oknie" (delta) tylko tam, gdzie są realne snapshoty (kom_tiktok_stats, po API także IG) z jawnym przełącznikiem; okno &lt;8 tyg. = ostrzeżenie + werdykty wygaszone.</li>
+      <li><b>Eksplorator rolek:</b> istniejący katalog + filtr dat + sort (views / delta / po API saved, retencja) + suma okna; zakładki per platforma; zakładka FB = widok crosspostowy + pasek dziennego zasięgu strony; kolumna „stan z dnia" przy views.</li>
+      <li><b>FB:</b> stały kafel „najsilniejsza korelacja z utargiem (+0,50 lag 1 tydz.); brak per-rolka — patrz na tydzień strony".</li>
+      <li><b>Retencja/saved/watch time IG:</b> etap 1 surowy wiersz na karcie; etap 2 backtest; etap 3 (jeśli przeżyje) leading indicator w werdykcie formatu.</li>
+      <li><b>Hierarchia:</b> (1) werdykt formatów „co nagrać w tym tygodniu" (docelowo + szkic briefu), (2) eksplorator z zakresem dat, (3) timeline ze zdarzeniami i flagami skażonych tygodni, (4) mapa kwadrantowa i reszta. W tym samym wydaniu: przemianowanie „zł/1000 wyśw." na „szac. udział w tygodniowym utargu", tooltipy placebo/tasowania, mini-słowniczek.</li>
+      <li><b>Higiena danych (fundament):</b> tabela skażonych tygodni jako DANE (korelacje z pominięciem), świeżość per źródło (scrape TT / cron IG / cron FB / pieniądze), stempel wersji metodologii.</li>
+      <li><b>NIE budować:</b> interpolacji i estymacji views; zasięgu per-rolka FB; composite scores; porównywarki okien; per-day timeline dla 25 rolek; auto-briefu bez człowieka; retencji w werdyktach przed backtestem; czwartego testu uczciwości.</li>
+    </ul>
+    <h3>Pierwsza rzecz do zrobienia</h3>
+    <ul>
+      <li><b>Zaflagować skażone tygodnie w serii pieniędzy i przeliczyć korelacje z ich pominięciem — przed jakimkolwiek nowym feature'em.</b> Jeśli werdykty przeżyją czyszczenie, panel zyskuje wiarygodność na resztę roadmapy; jeśli nie — uniknięto budowy eksploratora na piasku. Równolegle (5 minut): token Meta Graph API — dzienne serie nie backfillują się, każdy tydzień zwłoki to dane stracone na zawsze.</li>
+    </ul>
+  </div>
+
+  <h2>Kto gdzie stał</h2>
+  <div class="grid">
+    <div class="adv"><b>Kontrarianin</b><span class="tag t-bad">custom = p-hacking</span><span class="tag t-bad">FB tylko agregat</span><span class="tag t-warn">guard n&lt;8 ✓</span>przeżył tylko guard i ostrzeżenie o suwaku — reszta zakazów unieważniona przez nadchodzące dane</div>
+    <div class="adv"><b>Pierwsze Zasady</b><span class="tag t-good">decyzja=format</span><span class="tag t-good">semantyka publikacji</span>rozbroił konflikt lifetime/okno; retencja do werdyktu FORMATU (crossposty)</div>
+    <div class="adv"><b>Ekspansjonista</b><span class="tag t-good">★ najsilniejszy (4/5)</span><span class="tag t-good">crosspost-mapping</span><span class="tag t-good">delta-views</span><span class="tag t-warn">brief bez guardraili</span>panel ma briefować, nie tylko mierzyć</div>
+    <div class="adv"><b>Outsider</b><span class="tag t-warn">etykiety kłamią</span><span class="tag t-good">słowniczek</span>„zł/1000" brzmi jak atrybucja; baner semantyki na stałe; hero = „co nagrać"</div>
+    <div class="adv"><b>Egzekutor</b><span class="tag t-good">plan wdrożenia</span><span class="tag t-good">reuse katalogu</span>zakres dat = pół dnia; eksplorator = jedna sesja; token Meta = jedyna blokada</div>
+  </div>
+
+  <h2>Pełne wypowiedzi</h2>
+  <details><summary>Kontrarianin</summary><div>Fatalna wada jest w samym środku zamówienia: właściciel chce przedziałów dat na metryce, która przedziałów nie ma. Odpowiedź istnieje tylko dla ~25 rolek ze snapshotami od 11.07; dla 500+ każda odpowiedź będzie kłamstwem ubranym w UI — z aurą rygoru (placebo obok sfałszowanej osi!). Jedyna uczciwa wersja: „rolki OPUBLIKOWANE w przedziale, views = całe życie" z twardym banerem; prawdziwy „zasięg w oknie" wyłącznie tam, gdzie snapshoty.
+
+Druga rzecz: pieniądze robi FB (+0,50, największy zasięg), a eksplorator budujecie dla TT/IG, bo tam są dane — optymalizujecie latarnię, nie zgubione klucze.
+
+Trzecia: custom zakres przy 26 tyg. danych, ~10 formatach i sprzedaży zdominowanej przez telefon to fabryka p-hackingu. Presety są ograniczeniem CELOWYM. Skoro custom musi być: ostrzeżenie przy n&lt;8 tyg. i bez werdyktów formatów w takim oknie.
+
+NIE budować: retencji w werdyktach (dopóki nie udowodnicie korelacji ze sprzedażą), rankingów sugerujących atrybucję, niczego dla FB poza agregatem. „Jak najwięcej danych o rolkach" to recepta na dashboard, który się ogląda zamiast nagrywać.</div></details>
+  <details><summary>Myśliciel od Pierwszych Zasad</summary><div>Jaką decyzję ten panel ma podejmować? „Co produkować w przyszłym tygodniu" — decyzja na poziomie FORMATU, nie rolki i nie przedziału. Wszystko, co jej nie karmi, to dekoracja.
+
+Konflikt lifetime vs okno = pseudoproblem po zmianie semantyki: „które rolki OPUBLIKOWANO w przedziale i ile łącznie zarobiły życia". Custom zakres to prawie na pewno potrzeba „co się działo wokół zdarzenia X" — czyli nakładka zdarzeń, nie nowa maszyneria okien. FB: pusta półka z wyjaśnieniem cenniejsza niż proxy-fikcja.
+
+Największa nieuczciwość panelu: kanał z największym zasięgiem i najsilniejszą korelacją (FB) niewidzialny per-post, a panel precyzyjnie mierzy TikToka, który może być ogonem. Retencja IG = proxy jakości kreacji NA FB (crossposty to te same kreacje) — wpleść w werdykt FORMATU, nie w kartę rolki.
+
+Hero = werdykt formatów + timeline; eksplorator drugorzędny. NIE: snapshoty wstecz, interpolacja views, atrybucja w przebraniu.</div></details>
+  <details><summary>Ekspansjonista</summary><div>Od 11.07 są dzienne snapshoty — każda NOWA rolka ma prawdziwą krzywą życia. Nie łatać archiwum: eksplorator na delta-views dla nowych, stare jako „archiwum lifetime". Za 12 tygodni zbiór danych, jakiego nie ma 99% firm w segmencie.
+
+Facebook jest niedowartościowany: crossposty ⇒ metadane TikToka (format, hook, transkrypcja) SĄ metadanymi rolek FB. Widok „co poszło na FB w przedziale" z kart TT + dzienny agregat jako tło = quasi-per-post za darmo.
+
+Retencja/watch time IG to leading indicator: znane po 48h, pieniądze z lagiem tygodnia — wpleciona w werdykt formatu daje prognozę „spodziewaj się pieniędzy za tydzień". Panel z lusterka wstecznego staje się przednią szybą.
+
+Docelowy skok: panel MIERZY, a powinien BRIEFOWAĆ — przycisk „wygeneruj brief na przyszły tydzień" (top 3 formaty + hooki z najlepszych rolek). Hero: werdykt → brief; reszta to dowody.</div></details>
+  <details><summary>Outsider</summary><div>Nowy SMM pierwszego dnia gubi się w trzech miejscach.
+
+1. „zł/1000 wyśw." to kłamstwo etykiety — brzmi jak twarde RPM. Nazwać „szacunkowy udział w tygodniowym utargu" + jedno zdanie po ludzku przy osi. „Placebo", „tasowania" bez tooltipów = szum.
+
+2. Custom zakres bez stałego ostrzeżenia = pułapka: wybiorę „1–31 maja" i pomyślę, że widzę wyświetlenia Z MAJA — a dostanę rolki opublikowane w maju z wyświetleniami całego życia. Wypisać na stałe nad wynikami.
+
+3. Efekt latarni: FB nie istnieje w oczach nowego użytkownika. Jawny kafel „FB: brak per-rolka — patrz na tydzień strony". Hero powinien odpowiadać „co mam nakręcić w tym tygodniu i dlaczego".
+
+Retencję pokazywać surowo (krzywa, sekundy) — już są trzy metafory do nauczenia. NIE: więcej testów uczciwości, composite scores, porównywarka okien. Najtańszy feature o największym wpływie: słowniczek i etykiety.</div></details>
+  <details><summary>Egzekutor</summary><div>Poniedziałek rano: 1) Zakres dat = filtr po dacie publikacji (pół dnia; baner semantyki; presety = istniejący parametr weeks). 2) Eksplorator = istniejący katalog + filtr dat + sort + suma (jedna sesja); FB = pasek „zasięg strony w oknie" z daily. 3) Token Meta = jedyna zewnętrzna blokada — napisać właścicielowi dziś; po backfillu JEDEN wiersz retencji na kartę, żadnych nowych werdyktów przed danymi z 20 rolek.
+
+Hierarchia: eksplorator wysoko (właściciel o niego prosił). NIE: interpolacja dzienna, szacowany zasięg FB per-rolka, nowe wykresy, per-day timeline dla 25 rolek.
+
+Test końcowy: SMM otwiera panel w poniedziałek i w 3 minuty wie, co nagrać.</div></details>
+
+  <h2>Najważniejsze z recenzji wzajemnych</h2>
+  <details><summary>Skrót 5 recenzji (kto wygrał, co przegapiono)</summary><div>Najsilniejszy: Ekspansjonista (4/5 głosów) — crosspost-mapping i delta-views rozwiązują, a nie opisują, dwa główne problemy; 1 głos na Pierwsze Zasady (decyzja=format). Największa ślepa plamka: Kontrarianin — zakazy projektowane pod suszę danych, która właśnie się kończy (z jego linii przeżywa guard n&lt;8 i ostrzeżenie przed suwakiem dat).
+
+Co przegapili WSZYSCY doradcy (wyszło dopiero w recenzjach): higiena serii pieniędzy (skażone tygodnie flagowane w danych, nie na osi), starzenie się lifetime views TT (stempel „stan z dnia"), dziennik decyzji (walidacja panelu), eksperymenty prospektywne jako lekarstwo na p-hacking, most organic→paid (Meta CAPI już działa), wersjonowanie metodologii v1/v2, backtest retencja→pieniądze przed użyciem w briefie.</div></details>
+
+  <footer>Rada AI (metodologia LLM Council wg Karpathy'ego) · pytanie: architektura panelu /kreacje v2 · 2026-08-07 · pełny transkrypt: docs/council-kreacje-transcript-2026-08-07.md</footer>
+</main>
+</body>
+</html>

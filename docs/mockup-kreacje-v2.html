@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MAKIETA — Kreacje v2</title>
+<style>
+  :root {
+    --surface-1:#fff; --surface-2:#fafaf9; --page:#f5f5f4; --fg:#111; --sec:#52514e; --muted:#8a8984;
+    --border:rgba(17,17,17,.12); --grid:rgba(17,17,17,.08); --accent:#111; --accent-soft:#ececea;
+    --good:#16794a; --warn:#a8560a; --bad:#b3261e; --good-soft:rgba(22,121,74,.12); --bad-soft:rgba(179,38,30,.1); --warn-soft:rgba(168,86,10,.12);
+    --fb:#1877F2; --ig:#D81B60; --tt:#0091A0; --money:#7a5cff;
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --surface-1:#161616; --surface-2:#1c1c1b; --page:#0a0a0a; --fg:#fff; --sec:#c3c2b7; --muted:#8a8984;
+    --border:rgba(255,255,255,.14); --grid:rgba(255,255,255,.1); --accent:#fff; --accent-soft:#262626;
+    --good:#5cd39a; --warn:#e8a75c; --bad:#ff7a70; --good-soft:rgba(92,211,154,.14); --bad-soft:rgba(255,122,112,.14); --warn-soft:rgba(232,167,92,.14);
+    --fb:#4b9bff; --ig:#ff5c94; --tt:#2bc4d4; --money:#a58cff; } }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--page); color:var(--fg); font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; font-size:15px; line-height:1.5 }
+  main { max-width:1100px; margin:0 auto; padding:1rem 1rem 4rem }
+  h1 { font-size:1.3rem; margin:.3rem 0 0 } .sub { color:var(--muted); font-size:.84rem; margin-bottom:.9rem }
+  .mock { display:inline-block; background:var(--warn-soft); color:var(--warn); font-weight:700; font-size:.7rem; padding:.1rem .6rem; border-radius:999px; vertical-align:middle }
+  .sect { font-size:.95rem; font-weight:700; margin:1.6rem 0 .5rem } .sect small { color:var(--muted); font-weight:400 }
+  .chips { display:flex; flex-wrap:wrap; gap:.4rem; align-items:center; margin:.5rem 0 }
+  .chip { border:1px solid var(--border); background:var(--surface-1); color:var(--sec); padding:.28rem .7rem; border-radius:999px; font-size:.82rem; cursor:pointer }
+  .chip.on { background:var(--accent); color:var(--page); border-color:var(--accent); font-weight:700 }
+  .chip input { border:none; background:transparent; color:inherit; font:inherit; width:6.4em; outline:none }
+  .note { background:var(--surface-2); border:1px dashed var(--border); border-radius:10px; padding:.45rem .8rem; font-size:.78rem; color:var(--sec) }
+  .flag { background:var(--warn-soft); color:var(--warn); border-radius:999px; font-size:.72rem; font-weight:700; padding:.12rem .6rem; display:inline-block; margin:.15rem .2rem 0 0 }
+  .hero { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:.7rem }
+  .rek { background:var(--surface-1); border:1px solid var(--border); border-radius:16px; padding:.9rem 1rem }
+  .rek.good { border-left:5px solid var(--good) } .rek.warn { border-left:5px solid var(--warn) } .rek.bad { border-left:5px solid var(--bad) }
+  .rek b { font-size:1rem } .rek .why { font-size:.8rem; color:var(--sec); margin-top:.3rem } .rek .proof { font-size:.72rem; color:var(--muted); margin-top:.35rem }
+  .pill { display:inline-block; font-size:.68rem; font-weight:700; padding:.1rem .5rem; border-radius:999px; white-space:nowrap }
+  .p-good { background:var(--good-soft); color:var(--good) } .p-warn { background:var(--warn-soft); color:var(--warn) } .p-bad { background:var(--bad-soft); color:var(--bad) } .p-ok { background:var(--accent-soft); color:var(--sec) }
+  .btn { display:inline-block; background:var(--accent); color:var(--page); border:none; font-weight:700; padding:.5rem 1rem; border-radius:999px; font-size:.85rem; cursor:pointer }
+  .btn[disabled] { opacity:.45; cursor:not-allowed }
+  .tabs { display:flex; gap:.35rem; border-bottom:1px solid var(--border); margin:.6rem 0 .8rem; flex-wrap:wrap }
+  .tab { padding:.45rem .9rem; border-radius:10px 10px 0 0; cursor:pointer; font-size:.86rem; color:var(--sec); border:1px solid transparent; border-bottom:none }
+  .tab.on { background:var(--surface-1); border-color:var(--border); font-weight:700; color:var(--fg) }
+  .tab i { display:inline-block; width:9px; height:9px; border-radius:99px; margin-right:.35rem }
+  .sumbar { display:flex; flex-wrap:wrap; gap:1.2rem; background:var(--surface-1); border:1px solid var(--border); border-radius:12px; padding:.6rem .9rem; font-size:.82rem; margin-bottom:.7rem }
+  .sumbar b { font-variant-numeric:tabular-nums }
+  .reels { display:flex; flex-wrap:wrap; gap:.6rem }
+  .reel { width:132px; background:var(--surface-1); border:1px solid var(--border); border-radius:12px; overflow:hidden; cursor:pointer }
+  .thumb { aspect-ratio:9/16; display:flex; align-items:center; justify-content:center; font-size:2rem; position:relative; color:#fff }
+  .pb { position:absolute; top:4px; left:4px; font-size:.6rem; font-weight:700; color:#fff; padding:.06rem .4rem; border-radius:999px; text-shadow:0 1px 2px rgba(0,0,0,.4) }
+  .meta { padding:.4rem .5rem } .meta .m1 { font-weight:800; font-size:.88rem } .meta .m2 { font-size:.7rem; color:var(--sec); white-space:nowrap; overflow:hidden; text-overflow:ellipsis } .meta .m3 { font-size:.66rem; color:var(--muted) }
+  .fbwrap { background:var(--surface-1); border:1px solid var(--border); border-radius:12px; padding:.7rem .9rem; margin-bottom:.7rem; font-size:.82rem }
+  .bar { height:10px; background:var(--grid); border-radius:99px; overflow:hidden; margin-top:.35rem } .bar i { display:block; height:100%; width:72%; background:var(--fb) }
+  .drawer { position:fixed; top:0; right:0; bottom:0; width:min(430px,100vw); background:var(--surface-1); border-left:1px solid var(--border); transform:translateX(105%); transition:transform .2s; z-index:60; overflow-y:auto; padding:0 1rem 2rem }
+  .drawer.open { transform:none }
+  .dwh { display:flex; justify-content:space-between; align-items:center; padding:.8rem 0; position:sticky; top:0; background:var(--surface-1) }
+  .x { border:1px solid var(--border); background:var(--surface-2); border-radius:99px; width:30px; height:30px; cursor:pointer; color:var(--sec) }
+  .bigthumb { width:100%; aspect-ratio:9/12; border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:4rem; color:#fff }
+  blockquote { margin:.6rem 0; padding:.5rem .8rem; border-left:3px solid var(--tt); background:var(--surface-2); border-radius:8px; font-size:.86rem }
+  .dwsec { font-size:.7rem; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin:.8rem 0 .2rem }
+  .ret { display:flex; align-items:flex-end; gap:2px; height:52px; margin:.3rem 0 } .ret i { flex:1; background:var(--ig); opacity:.75; border-radius:2px 2px 0 0 }
+  .kv { display:flex; gap:1rem; flex-wrap:wrap; margin:.5rem 0 } .kv div b { display:block; font-size:.98rem } .kv div span { font-size:.68rem; color:var(--muted); text-transform:uppercase }
+  .moneybox { background:var(--good-soft); border-radius:10px; padding:.6rem .8rem; font-size:.82rem; margin-top:.6rem }
+  .bg { position:fixed; inset:0; background:rgba(0,0,0,.45); opacity:0; pointer-events:none; transition:.18s; z-index:55 } .bg.open { opacity:1; pointer-events:auto }
+  .foot { display:flex; flex-wrap:wrap; gap:.9rem; font-size:.74rem; color:var(--muted); border-top:1px solid var(--border); padding-top:.7rem; margin-top:2rem }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:99px; margin-right:.3rem }
+</style>
+</head>
+<body>
+<main>
+  <h1>Kreacje — Content Intelligence <span class="mock">MAKIETA v2</span></h1>
+  <div class="sub">tak ma wyglądać panel po przebudowie — dane przykładowe, klikalne: zakładki platform i karty rolek</div>
+
+  <!-- 1. STEROWANIE CZASEM -->
+  <div class="sect">1 · Zakres czasu <small>— presety + własny przedział + tryb metryki</small></div>
+  <div class="chips">
+    <button class="chip">4 tyg.</button><button class="chip on">8 tyg.</button><button class="chip">12 tyg.</button><button class="chip">26 tyg.</button>
+    <span class="chip">własny: <input value="12.05.2026"> → <input value="08.06.2026"></span>
+  </div>
+  <div class="chips">
+    <span style="font-size:.78rem;color:var(--muted)">metryka:</span>
+    <button class="chip on">całe życie rolek</button>
+    <button class="chip" title="dostępny tam, gdzie mamy dzienne snapshoty">przyrost w oknie (nowe rolki + IG)</button>
+    <span class="flag">⚠️ 30.07–3.08 awaria telefonu — wykluczony z korelacji</span>
+    <span class="flag">⚠️ 12–13.07 migracja — wykluczony</span>
+  </div>
+  <div class="note">📌 Pokazujemy <b>rolki opublikowane w tym oknie</b>; wyświetlenia = całe życie rolki (stan na 06.08). Okno &lt; 8 tyg. = tylko przegląd, bez werdyktów formatów.</div>
+
+  <!-- 2. HERO -->
+  <div class="sect">2 · Co nagrać w tym tygodniu <small>— hero: decyzja, nie archiwum</small></div>
+  <div class="hero">
+    <div class="rek good"><b>🟢 Rób więcej: (obiekt) + grafika</b> <span class="pill p-good">✓ sygnał zdrowy</span>
+      <div class="why">2–3 rolki/tydz. Produkt w kadrze + rysowana adnotacja. Sprzedaż idzie za tym formatem z tygodniowym poślizgiem.</div>
+      <div class="proof">dowód: korelacja +1 tydz. +0,58 · placebo −0,18 · przypadkiem 1/100 tasowań · 17 tyg. danych</div></div>
+    <div class="rek warn"><b>🟡 Testuj: ciche perły</b> <span class="pill p-warn">mała próba</span>
+      <div class="why">porównanie + green screen: mało zasięgu, wysoka „sprzedażowość". Po 2 rolki na próbę, zanim wejdą do rotacji.</div>
+      <div class="proof">dowód: wysoki szac. udział w utargu / 1000 wyśw., ale &lt;6 tyg. publikacji</div></div>
+    <div class="rek bad"><b>🔴 Ogranicz: talking head + pop-up</b> <span class="pill p-bad">przepala</span>
+      <div class="why">67% naszego zasięgu, zero pociągu sprzedażowego. Max 1/tydz. na podtrzymanie profilu.</div>
+      <div class="proof">dowód: brak korelacji w żadnym oknie (szum: 82/100 tasowań)</div></div>
+  </div>
+  <div style="margin-top:.6rem"><button class="btn" disabled>🗒 Szkic briefu na przyszły tydzień</button> <span style="font-size:.74rem;color:var(--muted)">— top formaty + hooki z najlepszych rolek; zatwierdzasz ręcznie, zapis do dziennika decyzji (etap 2)</span></div>
+
+  <!-- 3. EKSPLORATOR -->
+  <div class="sect">3 · Eksplorator rolek w przedziale <small>— o to prosiłeś: co zrobiło jaki zasięg, ze statami</small></div>
+  <div class="tabs">
+    <div class="tab" data-t="all">Wszystkie</div>
+    <div class="tab on" data-t="tt"><i style="background:var(--tt)"></i>TikTok · 14</div>
+    <div class="tab" data-t="ig"><i style="background:var(--ig)"></i>Instagram · 12</div>
+    <div class="tab" data-t="fb"><i style="background:var(--fb)"></i>Facebook · crossposty</div>
+  </div>
+  <div class="sumbar" id="sum-tt"><span>rolek w oknie: <b>14</b></span><span>wyświetlenia (całe życie): <b>128 tys.</b></span><span>śr./rolkę: <b>9,1 tys.</b></span><span>eng: <b>3,1%</b></span><span>sort: <b>zbieżność ▾</b> | zasięg | data | eng</span></div>
+  <div class="sumbar" id="sum-fb" style="display:none"><span>kreacje crosspostowane: <b>11</b></span><span style="flex:1;min-width:220px">zasięg strony FB w tym oknie (dzienny agregat): <b>890 tys.</b><span class="bar"><i></i></span></span></div>
+  <div class="note" id="note-fb" style="display:none;margin-bottom:.6rem">Meta nie oddaje zasięgu per-rolka dla crosspostów. Pokazujemy <b>kreacje</b> (metadane z TikToka/IG) na tle tygodnia strony — bez zmyślonych liczb per-rolka. FB = najsilniejsza korelacja z utargiem (+0,50, lag 1 tydz.).</div>
+  <div class="reels" id="reels"></div>
+
+  <!-- 4. KORELACJE -->
+  <div class="sect">4 · Czy zasięg robi pieniądze <small>— dla Ciebie i Angolca: dowody pod werdyktami</small></div>
+  <div class="note">Tu zostają (już zbudowane): <b>mapa kwadrantowa formatów</b> (konie pociągowe / ciche perły / wydmuszki) · <b>scatter tygodni</b> zasięg↔utarg z r liczonym bez tygodni skażonych · <b>timeline</b> ze znacznikami rolek i strefami ⚠️. Zmiana v2: „zł/1000 wyśw." → <b>„szac. udział w tygodniowym utargu"</b> + tooltipy przy placebo/tasowaniu (słowniczek dla SMM).</div>
+
+  <!-- STOPKA -->
+  <div class="foot">
+    <span><i class="dot" style="background:var(--tt)"></i>TikTok: scrape 06.08</span>
+    <span><i class="dot" style="background:var(--ig)"></i>Instagram: cron API 07.08</span>
+    <span><i class="dot" style="background:var(--fb)"></i>Facebook: cron API 07.08</span>
+    <span><i class="dot" style="background:var(--money)"></i>pieniądze: żywe</span>
+    <span>metodologia: <b>v1 (całe życie)</b> — werdykty v1 i v2 nieporównywalne</span>
+    <span>„Jak to liczymy" ↓</span>
+  </div>
+
+  <!-- DRAWER: KARTA ROLKI -->
+  <div class="bg" id="bg"></div>
+  <aside class="drawer" id="dw">
+    <div class="dwh"><b>Karta rolki</b><button class="x" id="x">✕</button></div>
+    <div class="bigthumb" style="background:linear-gradient(160deg,#0091A0,#7a5cff)">🛗</div>
+    <div class="chips" style="margin-top:.6rem"><span class="pill p-ok">(obiekt) + grafika</span><span class="pill p-ok">📅 09.07 · tydz. 06.07</span><span class="pill p-ok">⏱ 19s</span><span class="pill p-ok" style="background:var(--tt);color:#fff">TikTok</span></div>
+    <div class="kv"><div><b>19,7 tys.</b><span>wyśw. (stan 06.08)</span></div><div><b>2,4%</b><span>engagement</span></div><div><b>83%</b><span>zasięgu TT w tygodniu</span></div></div>
+    <div class="dwsec">Hook (pierwsze sekundy)</div>
+    <blockquote>„Myślisz, że montaż takiego efektu to kosmos i potrzebujesz elektryka?"</blockquote>
+    <div class="dwsec">Co się dzieje na filmie</div>
+    <div style="font-size:.85rem">Rolka o oświetleniu LED na schodach: prowadzący mówi do kamery, potem najazd na profil aluminiowy z rysowaną adnotacją ceny.</div>
+    <div class="dwsec">Jakość utrzymania uwagi <span class="pill p-warn">surowe dane IG — nie wpływają na werdykt (do backtestu)</span></div>
+    <div class="ret"><i style="height:100%"></i><i style="height:88%"></i><i style="height:74%"></i><i style="height:66%"></i><i style="height:58%"></i><i style="height:47%"></i><i style="height:41%"></i><i style="height:33%"></i></div>
+    <div class="kv"><div><b>41%</b><span>dotrwało do połowy</span></div><div><b>11,2 s</b><span>śr. czas oglądania</span></div><div><b>214</b><span>zapisań</span></div></div>
+    <div class="moneybox">W tygodniu publikacji + następnym wpadło <b>95 261 zł</b> wycen+sprzedaży. Ta rolka = <b>83%</b> zasięgu TikToka w swoim tygodniu → zbieżność <b>~78 800 zł</b> <span style="color:var(--muted)">(szacunek, NIE atrybucja)</span>.</div>
+    <div style="margin-top:.8rem"><button class="btn">Otwórz na TikToku ↗</button></div>
+  </aside>
+</main>
+<script>
+  const R = {
+    tt: [ ['🛗','TikTok','var(--tt)','(obiekt)+grafika','19,7 tys.','~78,8 tys. zł szac.'],
+          ['💡','TikTok','var(--tt)','(obiekt)+grafika','8,4 tys.','~31,2 tys. zł szac.'],
+          ['🗣','TikTok','var(--tt)','talking head+popup','86 tys.','~9,1 tys. zł szac.'],
+          ['🪜','TikTok','var(--tt)','porównanie','2,1 tys.','~6,4 tys. zł szac.'],
+          ['🎬','TikTok','var(--tt)','napis+broll','5,9 tys.','~2,2 tys. zł szac.'] ],
+    ig: [ ['🛗','Instagram','var(--ig)','(obiekt)+grafika','24,1 tys.','~64,0 tys. zł szac.'],
+          ['🌇','Instagram','var(--ig)','green screen','3,3 tys.','~5,1 tys. zł szac.'],
+          ['🗣','Instagram','var(--ig)','talking head+popup','41 tys.','~4,0 tys. zł szac.'] ],
+    fb: [ ['🛗','crosspost','var(--fb)','(obiekt)+grafika','metadane z TT','tydz. strony: 210 tys.'],
+          ['🗣','crosspost','var(--fb)','talking head+popup','metadane z TT','tydz. strony: 180 tys.'],
+          ['💡','crosspost','var(--fb)','(obiekt)+grafika','metadane z TT','tydz. strony: 145 tys.'] ],
+  };
+  R.all = [...R.tt, ...R.ig, ...R.fb];
+  function draw(t) {
+    document.getElementById('reels').innerHTML = R[t].map((r) =>
+      `<div class="reel" onclick="openDw()"><div class="thumb" style="background:linear-gradient(160deg,${r[2]},var(--money))">${r[0]}<span class="pb" style="background:${r[2]}">${r[1]}</span></div>
+       <div class="meta"><div class="m1">${r[5]}</div><div class="m2">${r[3]}</div><div class="m3">${r[4]}${t==='fb'?'':' wyśw. · stan 06.08'}</div></div></div>`).join('');
+    document.getElementById('sum-tt').style.display = t === 'fb' ? 'none' : 'flex';
+    document.getElementById('sum-fb').style.display = t === 'fb' ? 'flex' : 'none';
+    document.getElementById('note-fb').style.display = t === 'fb' ? 'block' : 'none';
+  }
+  document.querySelectorAll('.tab').forEach((el) => el.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach((x) => x.classList.remove('on')); el.classList.add('on'); draw(el.dataset.t);
+  }));
+  function openDw() { document.getElementById('dw').classList.add('open'); document.getElementById('bg').classList.add('open'); }
+  function closeDw() { document.getElementById('dw').classList.remove('open'); document.getElementById('bg').classList.remove('open'); }
+  document.getElementById('x').addEventListener('click', closeDw);
+  document.getElementById('bg').addEventListener('click', closeDw);
+  draw('tt');
+</script>
+</body>
+</html>
