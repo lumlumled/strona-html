@@ -61,6 +61,16 @@
   svg .quad-label { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; }
   svg .bubble { cursor: pointer; }
   svg .bubble:hover circle { stroke-width: 3; }
+  svg .bubble.sel circle { stroke-width: 4.5; }
+  svg .bubble.sel .sel-check { display: block; }
+  .upload-box { background: var(--surface-1); border: 1px dashed var(--border); border-radius: 12px; padding: 0.7rem 0.9rem; font-size: 0.82rem; }
+  .upload-box summary { cursor: pointer; font-weight: 700; font-size: 0.86rem; }
+  .upload-box input[type=file] { font-size: 0.8rem; margin: 0.5rem 0; }
+  .upload-box .u-btn { background: var(--accent); color: var(--page); border: none; font-weight: 700; padding: 0.4rem 0.9rem; border-radius: 999px; font-size: 0.8rem; cursor: pointer; }
+  .upload-box .u-btn[disabled] { opacity: 0.5; cursor: wait; }
+  .upload-box .u-out { margin-top: 0.5rem; font-size: 0.78rem; }
+  .upload-box .u-out div { padding: 0.1rem 0; }
+  .cmp-close { float: right; }
   .reels { display: flex; flex-wrap: wrap; gap: 0.6rem; }
   .reel { display: flex; flex-direction: column; width: 132px; background: var(--surface-1); border: 1px solid var(--border);
     border-radius: 12px; overflow: hidden; text-decoration: none; color: inherit; cursor: pointer; padding: 0; text-align: left; font: inherit; }
@@ -166,11 +176,12 @@
 
     const PLAT = { tiktok: { n: 'TikTok', c: 'var(--tt)' }, instagram: { n: 'Instagram', c: 'var(--ig)' }, facebook: { n: 'Facebook', c: 'var(--fb)' } };
     let WEEKS = 26;
+    let RANGE = null; // { from, to } — własny zakres dat (filtr po dacie publikacji)
     let DATA = null;
     let KAT_FMT = '';            // filtr formatu katalogu
     let KAT_PLAT = '';           // filtr platformy katalogu ('' | 'tiktok' | 'instagram')
     let KAT_SORT = 'sprzedaz';   // 'sprzedaz' | 'views'
-    let SEL_FMT = '';            // format wybrany na mapie (drill-down)
+    let SEL_FMTS = [];           // formaty zaznaczone na mapie (1 = drill-down, 2-4 = porównanie)
     let SC_REACH = 'tt';         // scatter: 'tt' (TikTok, świeży) | 'all' (wszystkie platformy)
     let SC_LAG = 1;              // scatter: pieniądze z tego samego tygodnia (0) czy następnego (1)
 
@@ -192,15 +203,26 @@
 
     function mountChips() {
       const el = document.getElementById('chips');
-      el.innerHTML = [8, 12, 26].map((w) => `<button class="chip ${WEEKS === w ? 'active' : ''}" data-w="${w}">${w} tyg.</button>`).join('')
-        + '<span class="muted" style="font-size:0.78rem">tydzień = pon–nd (Europe/Warsaw)</span>';
-      el.querySelectorAll('.chip').forEach((b) => b.addEventListener('click', () => { WEEKS = Number(b.dataset.w); SEL_FMT = ''; mountChips(); load(); }));
+      const r = RANGE || {};
+      el.innerHTML = [4, 8, 12, 26].map((w) => `<button class="chip ${!RANGE && WEEKS === w ? 'active' : ''}" data-w="${w}">${w} tyg.</button>`).join('')
+        + `<span class="chip ${RANGE ? 'active' : ''}" id="chip-range" style="display:inline-flex;gap:0.3rem;align-items:center">własny:
+             <input type="date" id="r-from" value="${esc(r.from || '')}" style="border:none;background:transparent;color:inherit;font:inherit">→
+             <input type="date" id="r-to" value="${esc(r.to || '')}" style="border:none;background:transparent;color:inherit;font:inherit">
+             <button class="chip" id="r-go" style="padding:0.1rem 0.55rem">OK</button></span>`
+        + '<span class="muted" style="font-size:0.78rem">tydzień = pon–nd · zakres = po dacie publikacji rolki</span>';
+      el.querySelectorAll('.chip[data-w]').forEach((b) => b.addEventListener('click', () => { WEEKS = Number(b.dataset.w); RANGE = null; SEL_FMTS = []; mountChips(); load(); }));
+      el.querySelector('#r-go').addEventListener('click', () => {
+        const from = el.querySelector('#r-from').value, to = el.querySelector('#r-to').value;
+        if (!from || !to || from > to) return;
+        RANGE = { from, to }; SEL_FMTS = []; mountChips(); load();
+      });
     }
 
     async function load() {
       const body = document.getElementById('body');
       body.innerHTML = '<div class="state">Ładuję dane…</div>';
-      try { DATA = await getJSON(`/api/kreacje?weeks=${WEEKS}`); render(DATA); }
+      const q = RANGE ? `from=${RANGE.from}&to=${RANGE.to}` : `weeks=${WEEKS}`;
+      try { DATA = await getJSON(`/api/kreacje?${q}`); render(DATA); }
       catch (err) { body.innerHTML = `<div class="state">Nie udało się pobrać danych: ${esc(err.message)}</div>`; }
     }
 
@@ -246,9 +268,11 @@
       const bubbles = pts.map((f) => {
         const r = Math.min(34, 9 + Math.sqrt(f.rolek) * 2.4);
         const dashed = (f.pewnosc !== 'orientacyjna' || f.sygnal === 'podejrzany (trend)') ? 'stroke-dasharray="4 3"' : '';
-        return `<g class="bubble" data-f="${esc(f.slug)}">
+        const sel = SEL_FMTS.includes(f.slug);
+        return `<g class="bubble ${sel ? 'sel' : ''}" data-f="${esc(f.slug)}">
           <circle cx="${x(f.avg_views).toFixed(1)}" cy="${y(f.zl_per_1k).toFixed(1)}" r="${r.toFixed(1)}"
-            fill="${werdyktCol(f)}" fill-opacity="0.28" stroke="${werdyktCol(f)}" stroke-width="2" ${dashed}></circle>
+            fill="${werdyktCol(f)}" fill-opacity="${sel ? '0.45' : '0.28'}" stroke="${werdyktCol(f)}" stroke-width="2" ${sel ? '' : dashed}></circle>
+          ${sel ? `<text x="${x(f.avg_views).toFixed(1)}" y="${(y(f.zl_per_1k) + 4.5).toFixed(1)}" text-anchor="middle" style="fill:var(--text-primary);font-weight:800;font-size:13px">✓</text>` : ''}
           <text x="${x(f.avg_views).toFixed(1)}" y="${(y(f.zl_per_1k) + r + 13).toFixed(1)}" text-anchor="middle" style="fill:var(--text-secondary);font-weight:600">${esc(f.name.length > 26 ? f.name.slice(0, 25) + '…' : f.name)}</text>
         </g>`;
       }).join('');
@@ -269,16 +293,27 @@
           <span><i class="swatch dot" style="background:var(--bad)"></i>przepala zasięg</span>
           <span><i class="swatch dot" style="background:var(--warn)"></i>niepewny (placebo ostrzega)</span>
           <span><i class="swatch dot" style="background:var(--text-muted)"></i>neutralny</span>
-          <span class="muted">przerywana obwódka = słaba pewność · rozmiar bańki = liczba rolek · klik = szczegóły formatu</span>
+          <span class="muted">przerywana obwódka = słaba pewność · rozmiar bańki = liczba rolek · klik = zaznacz (1 = szczegóły, 2-4 = porównanie)</span>
         </div>
         ${rest.length ? `<div class="muted" style="font-size:0.76rem;margin-top:0.4rem">Poza mapą (brak publikacji w oknie / za mało danych): ${rest.map((f) => esc(f.name)).join(' · ')}</div>` : ''}
       </div>`;
+    }
+    // Multi-select baniek (prośba Antoniego 07.08): 1 format = drill-down z dowodami,
+    // 2-4 formaty = tabela porównania obok siebie.
+    function toggleFmt(slug) {
+      const i = SEL_FMTS.indexOf(slug);
+      if (i >= 0) SEL_FMTS.splice(i, 1);
+      else { SEL_FMTS.push(slug); if (SEL_FMTS.length > 4) SEL_FMTS.shift(); }
+      const mapa = document.getElementById('mapa');
+      mapa.innerHTML = renderMapa(); bindMapa();
+      renderFmtDetail();
+      if (SEL_FMTS.length) document.getElementById('fmt-detail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
     function bindMapa() {
       document.querySelectorAll('#mapa .bubble').forEach((g) => {
         const f = (DATA.formaty || []).find((x) => x.slug === g.dataset.f);
         if (!f) return;
-        g.addEventListener('click', () => { SEL_FMT = f.slug; renderFmtDetail(); document.getElementById('fmt-detail').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+        g.addEventListener('click', () => toggleFmt(f.slug));
         g.addEventListener('mousemove', (e) => showTip(e, `<b>${esc(f.name)}</b><br>`
           + `${f.rolek} rolek · śr. ${fmtC(f.avg_views)} wyśw.<br>`
           + `${platBreakdown(f)}<br>`
@@ -289,11 +324,45 @@
       });
     }
 
+    // ── PORÓWNANIE 2-4 formatów obok siebie (multi-select z mapy) ──
+    // Statystyki per format ŁĄCZNIE + split zasięgu/rolek per platforma (TT/IG),
+    // bo „czasem sprzedaje film z FB, czasem z TikToka — trzeba widzieć różnicę".
+    function renderPorownanie(host) {
+      const fs = SEL_FMTS.map((s) => (DATA.formaty || []).find((x) => x.slug === s)).filter(Boolean);
+      const cell = (fn) => fs.map((f) => `<td class="num">${fn(f)}</td>`).join('');
+      const platCell = (f, p) => { const v = (f.reach_by_platform || {})[p]; const n = (f.rolek_by_platform || {})[p]; return v ? `${fmtC(v)} <span class="subt">(${n || 0} rolek)</span>` : '—'; };
+      host.innerHTML = `<div class="fmt-detail">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:0.6rem">
+          <div style="font-weight:800;font-size:1.05rem">Porównanie formatów (${fs.length})</div>
+          <button class="x-btn" id="fmt-close" title="Wyczyść zaznaczenie">✕</button>
+        </div>
+        <div class="tbl-wrap" style="margin-top:0.6rem"><table class="tbl" style="min-width:520px">
+          <thead><tr><th></th>${fs.map((f) => `<th class="num"><strong>${esc(f.name)}</strong></th>`).join('')}</tr></thead>
+          <tbody>
+            <tr><td>Werdykt</td>${fs.map((f) => `<td class="num">${werdyktPill(f)}</td>`).join('')}</tr>
+            <tr><td>Rolek (okno)</td>${cell((f) => f.rolek)}</tr>
+            <tr><td>Śr. wyśw./rolkę</td>${cell((f) => fmtC(f.avg_views))}</tr>
+            <tr><td>Zasięg <span style="color:var(--tt)">TikTok</span></td>${cell((f) => platCell(f, 'tiktok'))}</tr>
+            <tr><td>Zasięg <span style="color:var(--ig)">Instagram</span></td>${cell((f) => platCell(f, 'instagram'))}</tr>
+            <tr><td>Udział zasięgu</td>${cell((f) => f.udzial_zasiegu_pct + '%')}</tr>
+            <tr><td>zł/1000 wyśw. (szac.)</td>${cell((f) => f.zl_per_1k != null ? `<b>${fmtInt(f.zl_per_1k)} zł</b>` : '—')}</tr>
+            <tr><td>Engagement</td>${cell((f) => f.eng_rate_pct + '%')}</tr>
+            <tr><td>Korelacja / +1 tydz.</td>${cell((f) => `${korTxt(f.korelacja)} / ${korTxt(f.korelacja_lag1)}`)}</tr>
+            <tr><td>Placebo (−1 tydz.)</td>${cell((f) => korTxt(f.korelacja_placebo))}</tr>
+            <tr><td>Przypadek (tasowania)</td>${cell((f) => f.przypadek_pct != null ? '~' + f.przypadek_pct + '/100' : '—')}</tr>
+            <tr><td>N tyg. / pewność</td>${cell((f) => `${f.n_tygodni} <span class="subt">${esc(f.pewnosc)}</span>`)}</tr>
+          </tbody></table></div>
+        <div class="muted" style="font-size:0.74rem;margin-top:0.4rem">Facebook nie ma zasięgu per-rolka (crossposty) — różnicę FB↔reszta pokazuje sekcja „Platforma → sprzedaż". zł/1000 = porównanie między formatami, nie cennik.</div>
+      </div>`;
+      document.getElementById('fmt-close').addEventListener('click', () => { SEL_FMTS = []; document.getElementById('mapa').innerHTML = renderMapa(); bindMapa(); renderFmtDetail(); });
+    }
+
     // ── DRILL-DOWN formatu: dowody (przebieg tygodniowy + rolki) ──
     function renderFmtDetail() {
       const host = document.getElementById('fmt-detail');
-      if (!SEL_FMT) { host.innerHTML = ''; return; }
-      const f = (DATA.formaty || []).find((x) => x.slug === SEL_FMT);
+      if (!SEL_FMTS.length) { host.innerHTML = ''; return; }
+      if (SEL_FMTS.length > 1) { renderPorownanie(host); return; }
+      const f = (DATA.formaty || []).find((x) => x.slug === SEL_FMTS[0]);
       if (!f) { host.innerHTML = ''; return; }
       const money = DATA.timeline.wyceny_zl;
       const wk = f.weekly || [];
@@ -329,17 +398,41 @@
         <div class="muted" style="font-size:0.78rem;margin:0.6rem 0 0.4rem">Rolki tego formatu (${reels.length}) — klik otwiera kartę rolki:</div>
         <div class="reels">${reels.slice(0, 24).map(reelCard).join('') || '<div class="muted">Brak rolek.</div>'}</div>
       </div>`;
-      document.getElementById('fmt-close').addEventListener('click', () => { SEL_FMT = ''; renderFmtDetail(); });
+      document.getElementById('fmt-close').addEventListener('click', () => { SEL_FMTS = []; document.getElementById('mapa').innerHTML = renderMapa(); bindMapa(); renderFmtDetail(); });
       bindReelCards(host);
     }
 
+    // ── PLATFORMA → SPRZEDAŻ: różnica FB / IG / TikTok (korelacja zasięg↔pieniądze) ──
+    function renderPlatformy(pk) {
+      if (!pk || !pk.length) return '<div class="muted">Brak danych.</div>';
+      const best = pk.slice().sort((a, b) => Math.max(b.korelacja_lag1 ?? -9, b.korelacja ?? -9) - Math.max(a.korelacja_lag1 ?? -9, a.korelacja ?? -9))[0];
+      const dd = DATA.dane_do || {};
+      return `<div class="grid">${pk.map((p) => {
+        const pl = PLAT[p.platform] || { n: p.platform, c: 'var(--accent)' };
+        const b = Math.max(p.korelacja_lag1 ?? -9, p.korelacja ?? -9);
+        const fbNote = p.platform === 'facebook' ? `<span class="k-note">dane CSV do ${esc(dd.facebook || '—')} — wgraj świeży eksport na dole panelu</span>` : '';
+        return `<div class="card plat" style="--pc:${pl.c}">
+          <span class="k-label">${pl.n} → sprzedaż ${p === best && b >= 0.3 ? '🏆' : ''}</span>
+          <span class="k-value" style="color:${korCol(b === -9 ? null : b)}">${b === -9 ? '—' : korTxt(round2(b))}</span>
+          <span class="k-sub">korelacja ${korTxt(p.korelacja)} · +1 tydz. ${korTxt(p.korelacja_lag1)} · placebo ${korTxt(p.korelacja_placebo)}</span>
+          <span class="k-sub">przypadek: ${p.przypadek_pct != null ? '~' + p.przypadek_pct + '/100 tasowań' : '—'} · ${p.n_tygodni} pełnych tyg.</span>
+          <span class="k-note">zasięg w oknie: ${fmtC(p.reach)}</span>${fbNote}
+        </div>`;
+      }).join('')}</div>
+      <div class="muted" style="font-size:0.76rem;margin-top:0.4rem">Każda karta = czy tygodnie z zasięgiem TEJ platformy to tygodnie z pieniędzmi (tygodnie z wydarzeniami wykluczone; FB liczony tylko do ostatniego dnia danych CSV). Czasem sprzedaje film z FB, czasem z TikToka — tu widać tę różnicę.</div>`;
+    }
+    const round2 = (v) => Math.round(v * 100) / 100;
+
     // ── KATALOG rolek (karty otwierają drawer, NIE TikToka) ──
+    const evWeeksSet = () => new Set((DATA.wydarzenia || []).flatMap((e) => e.tygodnie || []));
     function reelCard(r) {
       const p = PLAT[r.platform] || { n: r.platform, c: 'var(--accent)' };
+      const ev = evWeeksSet();
+      const skazony = r.wk_idx != null && (ev.has(r.wk_idx) || ev.has(r.wk_idx + 1));
       return `<div class="reel" role="button" tabindex="0" data-plat="${esc(r.platform)}" data-vid="${esc(r.video_id)}">
         <div class="thumb">${r.cover_url ? `<img src="${esc(r.cover_url)}" loading="lazy" alt="">` : '<div class="no-cover">bez okładki</div>'}<span class="plat-badge" style="background:${p.c}">${esc(p.n)}</span></div>
         <div class="meta">
-          <div class="money">~${fmtZl(r.szac_sprzedaz)} <span class="muted" style="font-weight:400;font-size:0.65rem">szac.</span></div>
+          <div class="money">~${fmtZl(r.szac_sprzedaz)} <span class="muted" style="font-weight:400;font-size:0.65rem">szac.</span>${skazony ? ' <span title="Tydzień publikacji lub następny objęty wydarzeniem (awaria/migracja) — szacunek zniekształcony" style="cursor:help">⚠️</span>' : ''}</div>
           <div class="fmt">${esc(r.format_name)}</div>
           <div class="vw">${fmtC(r.views)} wyśw. · ${esc(r.tydzien || '—')}</div>
         </div>
@@ -665,20 +758,65 @@
         <tbody>${rows}</tbody></table></div>`;
     }
 
-    // ── Baner świeżości (dynamiczny — z dane_do zamiast na sztywno) ──
+    // ── Baner świeżości per źródło (dynamiczny — z dane_do zamiast na sztywno) ──
     function renderBanner() {
       const dd = DATA.dane_do || {};
-      const stale = staleOd();
-      if (!stale || stale >= DATA.okno_do) return '';
-      return `<div class="banner">⚠️ Zasięg Instagram w bazie kończy się ${esc(dd.instagram || '—')}, Facebook ${esc(dd.facebook || '—')} (ETL nieaktualny) — ostatnie tygodnie tych platform są zaniżone, nie myl z realnym spadkiem. TikTok świeży (do ${esc(dd.tiktok || '—')}). Re-upload eksportów odświeży FB/IG.</div>`;
+      const cutoff = new Date(Date.parse(DATA.okno_do) - 7 * 86400000).toISOString().slice(0, 10);
+      const stare = ['tiktok', 'instagram', 'facebook'].filter((p) => dd[p] && dd[p] < cutoff);
+      if (!stare.length) return '';
+      return `<div class="banner">⚠️ Nieświeże dane: ${stare.map((p) => `${PLAT[p].n} do ${esc(dd[p])}`).join(' · ')} — tygodnie po tej dacie wyglądają na zerowe, ale to brak danych, nie spadek.${stare.includes('facebook') ? ' Facebooka odświeżysz eksportem CSV na dole panelu (sekcja „Dane Facebooka").' : ''}</div>`;
+    }
+
+    // ── Upload ręcznych eksportów CSV Facebooka (Business Suite) ──
+    // Graph API v21 nie oddaje treściowych metryk strony FB — wchodzą tylko przez
+    // eksport, który Antoni/SMM wrzuca tutaj (bez terminala).
+    function renderUpload() {
+      return `<details class="upload-box" id="fbup">
+        <summary>📥 Wgraj dzienne eksporty CSV z Facebooka (Business Suite → Statystyki)</summary>
+        <div class="muted" style="margin-top:0.4rem">Wyświetlenia · Widzowie · Interakcje z zawartością · Kliknięcia linku — metryka rozpoznawana po nagłówku pliku (nazwy bez znaczenia, można wrzucić kilka naraz; pliki „…na Instagramie" zostaną pominięte, bo IG leci automatem z API). Zapis dokłada TYLKO te metryki do dni FB — nic nie nadpisuje danych z API.</div>
+        <input type="file" id="fbup-files" multiple accept=".csv,text/csv">
+        <button class="u-btn" id="fbup-go">Wyślij</button>
+        <div class="u-out" id="fbup-out"></div>
+      </details>`;
+    }
+    function bindUpload() {
+      const btn = document.getElementById('fbup-go');
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        const inp = document.getElementById('fbup-files');
+        const out = document.getElementById('fbup-out');
+        if (!inp.files.length) { out.innerHTML = '<span class="muted">Wybierz pliki .csv.</span>'; return; }
+        btn.disabled = true; out.innerHTML = 'Wysyłam…';
+        try {
+          const fd = new FormData();
+          [...inp.files].forEach((f) => fd.append('files', f, f.name));
+          const res = await fetch(`${API_BASE}/api/fb-csv`, { method: 'POST', body: fd });
+          const j = await res.json();
+          if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+          const KEY_PL = { views: 'Wyświetlenia', reach: 'Widzowie (zasięg)', interactions: 'Interakcje', link_clicks: 'Kliknięcia linku' };
+          out.innerHTML = (j.raporty || []).map((r) => r.status === 'ok'
+            ? `<div>✅ <b>${esc(KEY_PL[r.metryka] || r.metryka)}</b> ← ${esc(r.plik)} (${r.dni} dni, ${esc(r.od)} → ${esc(r.do)})</div>`
+            : r.status === 'instagram' ? `<div>↷ pominięto (Instagram — leci z API): ${esc(r.plik)}</div>`
+            : `<div>⚠️ nierozpoznany nagłówek: ${esc(r.plik)} — „${esc(r.title || '')}"</div>`).join('')
+            + (j.dni ? `<div style="margin-top:0.3rem"><b>Zapisano ${j.dni} dni FB</b> (${(j.metryki || []).map((m) => KEY_PL[m] || m).join(', ')}${j.zakres ? `; ${esc(j.zakres.od)} → ${esc(j.zakres.do)}` : ''}). Odświeżam panel…</div>` : '<div style="margin-top:0.3rem">Nic nie zapisano.</div>');
+          if (j.dni) setTimeout(load, 1200);
+        } catch (err) { out.innerHTML = `<span style="color:var(--bad)">Błąd: ${esc(err.message)}</span>`; }
+        btn.disabled = false;
+      });
     }
 
     function render(d) {
       const wn = (d.wnioski || []).map((w) => `<div class="insight">${esc(w)}</div>`).join('');
+      const zakresInfo = RANGE
+        ? `<div class="note" style="background:var(--accent-soft);border:1px solid var(--border);border-radius:10px;padding:0.45rem 0.8rem;font-size:0.8rem;margin-bottom:0.6rem">📌 Własny zakres: pokazujemy rolki <b>opublikowane</b> ${esc(d.okno_od)} → ${esc(d.okno_do)}; wyświetlenia = całe życie rolki (stan z ostatniego pobrania), nie tylko z tego okna.</div>` : '';
+      const krotkie = d.okno_krotkie
+        ? `<div class="banner">⏱️ Okno krótsze niż 8 tygodni — to przegląd rolek, <b>bez werdyktów formatów</b> (za mało punktów tygodniowych na uczciwą korelację). Werdykty zobaczysz na 8+ tygodniach.</div>` : '';
       document.getElementById('body').innerHTML = `
-        ${renderBanner()}
+        ${renderBanner()}${zakresInfo}${krotkie}
         <div class="section-title">Mapa formatów <span class="muted">— co robić, żeby zarabiać (okno ${d.weeks} tyg.: ${esc(d.okno_od)} → ${esc(d.okno_do)})</span></div>
         <div id="mapa">${renderMapa()}</div>
+        <div class="section-title">Platforma → sprzedaż <span class="muted">— czasem sprzedaje film z FB, czasem z TikToka</span></div>
+        ${renderPlatformy(d.platformy_korelacja)}
         <div class="section-title">Wnioski</div>
         <div class="insights">${wn || '<div class="muted">Za mało danych.</div>'}</div>
         <div id="fmt-detail"></div>
@@ -702,17 +840,21 @@
             <li><b>zł/1000 wyśw. służy do PORÓWNANIA formatów, nie jako cennik</b> — pieniądze płyną też z telefonu/FB, więc wartości absolutne są zawyżone; różnice między formatami są miarodajne.</li>
             <li><b>Placebo:</b> liczymy też „korelację" z pieniędzmi z POPRZEDNIEGO tygodnia (treść nie może powodować przeszłej sprzedaży). Jeśli wychodzi podobna — to trend, nie efekt; format dostaje 🟠.</li>
             <li><b>Test tasowania:</b> mieszamy tygodnie pieniędzy 200 razy i patrzymy, jak często korelacja wychodzi „sama z siebie". ~1/100 = mocny sygnał, ~50/100 = szum.</li>
-            <li><b>Tygodnie z wydarzeniami</b> (migracja systemu, awaria telefonu) są oznaczone ⚠️ i wyłączone z korelacji tygodniowej na wykresie punktowym.</li>
+            <li><b>Tygodnie z wydarzeniami</b> (migracja systemu, awaria telefonu) są oznaczone ⚠️ i WYKLUCZONE ze wszystkich korelacji: formatów, platform i wykresu punktowego. Rolki publikowane w tych tygodniach mają ⚠️ przy szacunku.</li>
+            <li><b>Własny zakres dat</b> filtruje po dacie PUBLIKACJI rolki; wyświetlenia zawsze są z całego życia rolki. Okno krótsze niż 8 tygodni nie dostaje werdyktów formatów.</li>
           </ul>
           <div class="muted" style="margin-top:0.5rem;font-size:0.72rem">${esc(d.metoda || '')}</div>
         </div>
-        <div class="muted" style="margin-top:1rem;font-size:0.76rem">TikTok ${(d.inwentarz || {}).tiktok_rolek_okno ?? '—'} + Instagram ${(d.inwentarz || {}).instagram_rolek_okno ?? '—'} rolek w oknie (IG format+okładka z bliźniaka TikTok — Faza 2). Facebook: żywe metryki per-post + świeży zasięg przez Meta Graph API (Faza 3).</div>`;
+        <div class="section-title">Dane Facebooka <span class="muted">— ręczne eksporty (API ich nie oddaje)</span></div>
+        ${renderUpload()}
+        <div class="muted" style="margin-top:1rem;font-size:0.76rem">TikTok ${(d.inwentarz || {}).tiktok_rolek_okno ?? '—'} + Instagram ${(d.inwentarz || {}).instagram_rolek_okno ?? '—'} rolek w oknie (IG format+okładka z bliźniaka TikTok — Faza 2). IG per-post + dzienne serie lecą automatem z Meta Graph API (pon/śr/pt 20:00). Facebook: treściowe metryki tylko z eksportu CSV powyżej.</div>`;
       bindMapa();
       renderFmtDetail();
       bindKatalog();
       bindHooks();
       bindScatter();
       bindTimelineHover(d.timeline);
+      bindUpload();
     }
 
     mountChips();

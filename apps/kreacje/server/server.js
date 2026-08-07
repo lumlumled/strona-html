@@ -45,7 +45,24 @@ const sesyjny = (fn) => async (req, res) => {
   catch (err) { console.error('kreacje error:', err.message); res.status(502).json({ error: err.message }); }
 };
 const int = (v, d) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : d; };
-app.get('/api/kreacje', sesyjny((db, req) => Q.kreacje(db, { weeks: int(req.query.weeks, 26) })));
+const dayRe = /^\d{4}-\d{2}-\d{2}$/;
+app.get('/api/kreacje', sesyjny((db, req) => Q.kreacje(db, {
+  weeks: int(req.query.weeks, 26),
+  from: dayRe.test(req.query.from || '') ? req.query.from : undefined,
+  to: dayRe.test(req.query.to || '') ? req.query.to : undefined,
+})));
+
+// Upload ręcznych eksportów dziennych FB (Business Suite → CSV) — Graph API v21
+// nie oddaje treściowych metryk strony, więc Antoni/SMM wrzuca je z panelu.
+// Za bramką sesji (auth.register wyżej); logika w apps/shared/server/fb-csv-ingest.js.
+const fbCsv = require('../../shared/server/fb-csv-ingest');
+app.post('/api/fb-csv', express.raw({ type: 'multipart/form-data', limit: '40mb' }), async (req, res) => {
+  try {
+    const files = fbCsv.parseMultipart(req.body, req.headers['content-type']);
+    if (!files.length) return res.status(400).json({ error: 'Brak plików w żądaniu.' });
+    res.json(await fbCsv.ingest(getClient(), files));
+  } catch (err) { console.error('kreacje fb-csv error:', err.message); res.status(502).json({ error: err.message }); }
+});
 
 const PORT = process.env.PORT || 3016;
 if (require.main === module) {

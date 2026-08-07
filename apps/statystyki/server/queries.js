@@ -1107,6 +1107,62 @@ function keyMinusDays(key, days) {
 }
 const keyLabel = (key) => `${key.slice(8, 10)}.${key.slice(5, 7)}`;
 
+// WYDARZENIA zakłócające SERIĘ PIENIĘDZY (werdykt Rady AI 07.08: flagi w DANYCH,
+// nie dekoracja na osi) — tygodnie objęte incydentem są WYKLUCZANE z korelacji
+// formatów/platform (Pearson, placebo, tasowanie). Dopisywać kolejne incydenty.
+const WYDARZENIA = [
+  { od: '2026-07-12', do: '2026-07-13', label: 'Migracja wycen z Make — tydzień może być zawyżony kumulacją' },
+  { od: '2026-07-30', do: '2026-08-03', label: 'Awaria przekierowania telefonu — sprzedaż stłumiona (nie przez content)' },
+];
+function wydarzeniaTygodnie(weekKeys) {
+  return WYDARZENIA.map((e) => {
+    const weeks = [];
+    for (let i = 0; i < weekKeys.length; i++) {
+      const wkStart = weekKeys[i], wkEnd = keyMinusDays(weekKeys[i], -6);
+      if (e.od <= wkEnd && e.do >= wkStart) weeks.push(i);
+    }
+    return { ...e, tygodnie: weeks };
+  }).filter((e) => e.tygodnie.length);
+}
+// Pary (xs[i], ys[i+shift]) z pominięciem par, których TYDZIEŃ PIENIĘDZY (ys)
+// jest skażony wydarzeniem — skażona jest seria money, nie zasięg.
+function paryBezSkazonych(xs, ys, shift, badY) {
+  const a = [], b = [];
+  for (let i = 0; i < xs.length; i++) {
+    const j = i + shift;
+    if (j < 0 || j >= ys.length || (badY && badY.has(j))) continue;
+    a.push(xs[i]); b.push(ys[j]);
+  }
+  return [a, b];
+}
+
+// Siatka tygodni pon–nd (Europe/Warsaw). Domyślnie: W ostatnich tygodni od dziś.
+// Z {from,to} = WŁASNY zakres dat (panel /kreacje): kotwica = tydzień z `to`
+// (przycięty do dziś), długość = pełne tygodnie od `from`; cap 56 tyg.
+function siatkaTygodni({ weeks = 12, from, to } = {}, now = Date.now()) {
+  const dzisKey = warsawWall(now).day;
+  const mondayOf = (key) => {
+    const [y, m, d] = key.split('-').map(Number);
+    const dow = (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
+    return keyMinusDays(key, dow);
+  };
+  let mondayKey, W;
+  const dayOk = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  if (dayOk(from) && dayOk(to) && from <= to) {
+    mondayKey = mondayOf(to < dzisKey ? to : dzisKey);
+    W = Math.round((Date.parse(mondayKey) - Date.parse(mondayOf(from))) / (7 * 86400000)) + 1;
+    W = Math.max(2, Math.min(56, W));
+  } else {
+    mondayKey = mondayOf(dzisKey);
+    W = Math.max(2, Math.min(56, Number(weeks) || 12));
+  }
+  const weekKeys = Array.from({ length: W }, (_, i) => keyMinusDays(mondayKey, 7 * (W - 1 - i)));
+  const bounds = weekKeys.map((k) => utcAtWarsaw(k, 0));
+  bounds.push(utcAtWarsaw(keyMinusDays(mondayKey, -7), 0));
+  const idx = (ts) => { if (ts == null || ts < bounds[0] || ts >= bounds[W]) return -1; let i = 0; while (i < W - 1 && ts >= bounds[i + 1]) i++; return i; };
+  return { W, mondayKey, weekKeys, bounds, idx };
+}
+
 async function przeglad(db, { weeks = 12 } = {}) {
   const W = Math.max(2, Math.min(26, Number(weeks) || 12));
   const now = Date.now();
@@ -1223,8 +1279,7 @@ async function przeglad(db, { weeks = 12 } = {}) {
 //  • ANTY-ZŁUDZENIOWA: placebo (zasięg t ↔ pieniądze t-1 — treść nie może
 //    powodować przeszłej sprzedaży; placebo ≈ korelacja ⇒ trend, nie efekt)
 //    + test tasowania (w ilu % losowych permutacji |r| wychodzi ≥ obserwowanego).
-async function formatEfekt(db, { weeks = 12, platforms = ['tiktok'] } = {}) {
-  const W = Math.max(2, Math.min(26, Number(weeks) || 12));
+async function formatEfekt(db, { weeks = 12, platforms = ['tiktok'], from, to } = {}) {
   const plats = Array.isArray(platforms) && platforms.length ? platforms : ['tiktok'];
   const now = Date.now();
   const [vaR, postsR, wycR, fmtR] = await Promise.all([
@@ -1244,15 +1299,11 @@ async function formatEfekt(db, { weeks = 12, platforms = ['tiktok'] } = {}) {
   }));
   const fmtName = new Map((fmtR.data || []).map((f) => [f.slug, f.name]));
 
-  // Tygodnie kalendarzowe pon–nd (Europe/Warsaw) — identycznie jak przeglad().
-  const dzisKey = warsawWall(now).day;
-  const [yy, mm, dd] = dzisKey.split('-').map(Number);
-  const isoDow = (new Date(Date.UTC(yy, mm - 1, dd)).getUTCDay() + 6) % 7;
-  const mondayKey = keyMinusDays(dzisKey, isoDow);
-  const weekKeys = Array.from({ length: W }, (_, i) => keyMinusDays(mondayKey, 7 * (W - 1 - i)));
-  const bounds = weekKeys.map((k) => utcAtWarsaw(k, 0));
-  bounds.push(utcAtWarsaw(keyMinusDays(mondayKey, -7), 0));
-  const idx = (ts) => { if (ts == null || ts < bounds[0] || ts >= bounds[W]) return -1; let i = 0; while (i < W - 1 && ts >= bounds[i + 1]) i++; return i; };
+  // Tygodnie kalendarzowe pon–nd (Europe/Warsaw) — wspólna siatka (presety/custom zakres).
+  const { W, mondayKey, weekKeys, idx } = siatkaTygodni({ weeks, from, to }, now);
+  const oknoKrotkie = W < 8; // za mało punktów na werdykty (4 tyg. = 4 punkty = horoskop)
+  const wyd = wydarzeniaTygodnie(weekKeys);
+  const skazone = new Set(wyd.flatMap((e) => e.tygodnie)); // tygodnie pieniędzy poza korelacją
 
   // Pieniądze per tydzień: WYCENY+SPRZEDAŻE (moneyWk) i sama sprzedaż (salesWk), po created_at.
   // Import wchodzi (prawdziwe daty historyczne) — patrz nagłówek funkcji.
@@ -1283,9 +1334,10 @@ async function formatEfekt(db, { weeks = 12, platforms = ['tiktok'] } = {}) {
     const slug = r.format || 'inne';
     const views = num(m.views);
     let g = byFmt.get(slug);
-    if (!g) { g = { slug, name: fmtName.get(slug) || (slug === 'inne' ? 'inne / niesklasyfikowane' : slug), rolek: 0, views: 0, eng: 0, weekly: Array(W).fill(0), byPlat: {} }; byFmt.set(slug, g); }
+    if (!g) { g = { slug, name: fmtName.get(slug) || (slug === 'inne' ? 'inne / niesklasyfikowane' : slug), rolek: 0, views: 0, eng: 0, weekly: Array(W).fill(0), byPlat: {}, byPlatN: {} }; byFmt.set(slug, g); }
     g.rolek += 1; g.views += views; g.eng += num(m.eng);
     g.byPlat[r.platform] = (g.byPlat[r.platform] || 0) + views;
+    g.byPlatN[r.platform] = (g.byPlatN[r.platform] || 0) + 1;
     g.weekly[i] += views; weekReach[i] += views;
     totalViews += views;
     reelEntries.push({ platform: r.platform, video_id: r.video_id, url: r.url || m.url, cover_url: r.cover_url, format: slug, name: g.name, views, wk: i });
@@ -1304,25 +1356,28 @@ async function formatEfekt(db, { weeks = 12, platforms = ['tiktok'] } = {}) {
   }
 
   const formaty = [...byFmt.values()].map((g) => {
-    const corr = pearson(g.weekly, moneyWk);
-    const corrLag = pearson(g.weekly.slice(0, -1), moneyWk.slice(1)); // zasięg t → wyceny+sprzedaż t+1
-    const corrPlacebo = pearson(g.weekly.slice(1), moneyWk.slice(0, -1)); // zasięg t → pieniądze t-1 (nie może być przyczyną)
+    // Pary bez tygodni skażonych wydarzeniami (skażona jest strona pieniędzy).
+    const [cx0, cy0] = paryBezSkazonych(g.weekly, moneyWk, 0, skazone);
+    const [cxL, cyL] = paryBezSkazonych(g.weekly, moneyWk, 1, skazone);  // zasięg t → pieniądze t+1
+    const [cxP, cyP] = paryBezSkazonych(g.weekly, moneyWk, -1, skazone); // placebo: zasięg t → pieniądze t-1
+    const corr = pearson(cx0, cy0);
+    const corrLag = pearson(cxL, cyL);
+    const corrPlacebo = pearson(cxP, cyP);
     const nObs = g.weekly.filter((v) => v > 0).length; // tygodni z publikacją tego formatu (w oknie W)
     const bestIdx = (corrLag != null && (corr == null || corrLag > corr)) ? 1 : 0;
     const best = bestIdx === 1 ? corrLag : corr;
-    const przypadek_pct = bestIdx === 1
-      ? permutacjaPct(g.weekly.slice(0, -1), moneyWk.slice(1), best)
-      : permutacjaPct(g.weekly, moneyWk, best);
+    const przypadek_pct = bestIdx === 1 ? permutacjaPct(cxL, cyL, best) : permutacjaPct(cx0, cy0, best);
     const udzial = totalViews ? round(g.views / totalViews * 100) : 0;
     const pewnosc = nObs < 3 ? 'za mało danych' : (nObs < 6 ? 'słaba (mała próba)' : 'orientacyjna');
     // Sygnał zdrowy = placebo wyraźnie niższe od właściwej korelacji; placebo w tej
     // samej lidze co korelacja ⇒ obie mierzą trend tła, nie efekt treści.
-    const sygnal = (best == null || nObs < 3) ? null
+    const sygnal = (best == null || nObs < 3 || oknoKrotkie) ? null
       : (corrPlacebo != null && corrPlacebo >= Math.max(0.15, best - 0.1)) ? 'podejrzany (trend)' : 'zdrowy';
     // Werdykt: dużo zasięgu + brak/ujemna zbieżność = PRZEPALA; dodatnia zbieżność
-    // = CIĄGNIE, ale tylko gdy przeżyje placebo.
+    // = CIĄGNIE, ale tylko gdy przeżyje placebo. Okno <8 tyg. = bez werdyktów.
     let werdykt = 'neutralny';
-    if (nObs >= 3) {
+    if (oknoKrotkie) werdykt = 'okno za krótkie';
+    else if (nObs >= 3) {
       if (best != null && best >= 0.3) werdykt = sygnal === 'podejrzany (trend)' ? 'niepewny (trend?)' : 'ciągnie sprzedaż';
       else if (udzial >= 10 && (best == null || best < 0.1)) werdykt = 'przepala zasięg';
     } else werdykt = 'za mało danych';
@@ -1337,7 +1392,8 @@ async function formatEfekt(db, { weeks = 12, platforms = ['tiktok'] } = {}) {
       views_okno: proxy ? Math.round(proxy.views) : 0,
       zl_per_1k: proxy && proxy.views > 0 ? round(proxy.szac / proxy.views * 1000) : null,
       weekly: g.weekly.map((v) => Math.round(v)),
-      reach_by_platform: g.byPlat, // {tiktok: X, instagram: Y} — split zasięgu formatu per platforma
+      reach_by_platform: g.byPlat,  // {tiktok: X, instagram: Y} — split zasięgu formatu per platforma
+      rolek_by_platform: g.byPlatN, // {tiktok: n, instagram: m} — do porównywarki formatów
     };
   }).sort((a, b) => b.views - a.views);
 
@@ -1375,9 +1431,11 @@ async function formatEfekt(db, { weeks = 12, platforms = ['tiktok'] } = {}) {
   wnioski.push(`Wyceny+sprzedaże w oknie ${W} tyg.: ${Math.round(moneyTotal).toLocaleString('pl-PL')} zł (w tym sprzedaż ${Math.round(salesTotal).toLocaleString('pl-PL')} zł; pełna seria z importem — daty prawdziwe). ⚠️ Brak atrybucji per-rolka — to zbieżność w czasie, nie dowód; patrz „N tyg. / pewność".`);
 
   return {
-    metoda: `format ← video_id=post_id → views (${plats.join('+')}); korelacja tygodniowa (pon–nd Warsaw) zasięgu formatu ↔ WYCENY+SPRZEDAŻE (typ IN WYCENA,ZAMÓWIENIE po created_at, Z importem — prawdziwe daty historyczne); okno ${W} tyg. BEZ atrybucji per-rolka. Kontrole: placebo (zasięg t ↔ pieniądze t-1) + test tasowania (200 permutacji, stały seed). zł/1000 wyśw. i ranking rolek = proxy: udział zasięgu w tygodniu × pieniądze (tydzień+następny).`,
+    metoda: `format ← video_id=post_id → views (${plats.join('+')}); korelacja tygodniowa (pon–nd Warsaw) zasięgu formatu ↔ WYCENY+SPRZEDAŻE (typ IN WYCENA,ZAMÓWIENIE po created_at, Z importem — prawdziwe daty historyczne); okno ${W} tyg. BEZ atrybucji per-rolka. Tygodnie z wydarzeniami (${skazone.size}) WYKLUCZONE z korelacji/placebo/tasowania. Kontrole: placebo (zasięg t ↔ pieniądze t-1) + test tasowania (200 permutacji, stały seed). zł/1000 wyśw. i ranking rolek = proxy: udział zasięgu w tygodniu × pieniądze (tydzień+następny).`,
     platforms: plats,
     weeks: W,
+    okno_krotkie: oknoKrotkie,
+    skazone_tygodnie: wyd,
     tydzien_labels: weekKeys.map((k) => keyLabel(k)),
     pieniadze_tyg: moneyWk.map((v) => Math.round(v)),
     pieniadze_suma: Math.round(moneyTotal),
@@ -1395,10 +1453,9 @@ async function formatEfekt(db, { weeks = 12, platforms = ['tiktok'] } = {}) {
 //    dokłada zasięg Instagram (per-post) i Facebook (daily agregat), timeline tygodniowy
 //    3 platform nałożony na wyceny+sprzedaże, split platformowy i pełny katalog rolek.
 //    UWAGA: format/okładki ma na razie TYLKO TikTok — IG/FB w Fazie 2/3 (patrz inwentarz).
-async function kreacje(db, { weeks = 26 } = {}) {
-  const W = Math.max(2, Math.min(26, Number(weeks) || 12));
+async function kreacje(db, { weeks = 26, from, to } = {}) {
   // Format→sprzedaż liczymy z TikTok+IG (Faza 2 dała IG formaty) — więcej danych.
-  const fe = await formatEfekt(db, { weeks: W, platforms: ['tiktok', 'instagram'] });
+  const fe = await formatEfekt(db, { weeks, from, to, platforms: ['tiktok', 'instagram'] });
   const now = Date.now();
   const [vaR, postsR, dailyR, wycR] = await Promise.all([
     db.from('marketing_video_analysis').select('platform,video_id,format,format_source,published_at,cover_url,url,hook,caption,duration_s,summary:visual->>summary').in('platform', ['tiktok', 'instagram']).eq('status', 'done'),
@@ -1409,15 +1466,9 @@ async function kreacje(db, { weeks = 26 } = {}) {
   if (vaR.error) throw vaR.error;
   if (postsR.error) throw postsR.error;
 
-  // Tygodnie kalendarzowe pon–nd (Europe/Warsaw) — jak przeglad()/formatEfekt().
-  const dzisKey = warsawWall(now).day;
-  const [yy, mm, dd] = dzisKey.split('-').map(Number);
-  const isoDow = (new Date(Date.UTC(yy, mm - 1, dd)).getUTCDay() + 6) % 7;
-  const mondayKey = keyMinusDays(dzisKey, isoDow);
-  const weekKeys = Array.from({ length: W }, (_, i) => keyMinusDays(mondayKey, 7 * (W - 1 - i)));
-  const bounds = weekKeys.map((k) => utcAtWarsaw(k, 0));
-  bounds.push(utcAtWarsaw(keyMinusDays(mondayKey, -7), 0));
-  const idx = (ts) => { if (ts == null || ts < bounds[0] || ts >= bounds[W]) return -1; let i = 0; while (i < W - 1 && ts >= bounds[i + 1]) i++; return i; };
+  // Tygodnie kalendarzowe pon–nd (Europe/Warsaw) — TA SAMA siatka co w formatEfekt
+  // (te same parametry weeks/from/to ⇒ identyczne weekKeys).
+  const { W, mondayKey, weekKeys, idx } = siatkaTygodni({ weeks, from, to }, now);
 
   const posts = postsR.data || [];
   const daily = dailyR.data || [];
@@ -1480,20 +1531,36 @@ async function kreacje(db, { weeks = 26 } = {}) {
     facebook: maxKey(daily.filter((r) => r.platform === 'facebook' && num(r.metrics && r.metrics.views) > 0).map((r) => r.date)),
   };
 
-  // WYDARZENIA zakłócające odczyt (nakładka na timeline/scatter — żeby nikt nie
-  // czytał tych tygodni dosłownie). Lista ręczna, dopisywać kolejne incydenty.
-  const WYDARZENIA = [
-    { od: '2026-07-12', do: '2026-07-13', label: 'Migracja wycen z Make — tydzień może być zawyżony kumulacją' },
-    { od: '2026-07-30', do: '2026-08-03', label: 'Awaria przekierowania telefonu — sprzedaż stłumiona (nie przez content)' },
-  ];
-  const wydarzenia = WYDARZENIA.map((e) => {
-    const weeks = [];
-    for (let i = 0; i < W; i++) {
-      const wkStart = weekKeys[i], wkEnd = keyMinusDays(weekKeys[i], -6);
-      if (e.od <= wkEnd && e.do >= wkStart) weeks.push(i);
-    }
-    return { ...e, tygodnie: weeks };
-  }).filter((e) => e.tygodnie.length);
+  // WYDARZENIA zakłócające serię pieniędzy — lista modułowa (WYDARZENIA na górze
+  // pliku, tam dopisywać incydenty). Tu: indeksy tygodni pod nakładki UI, a niżej
+  // wykluczenie z korelacji platform (formaty wykluczają w formatEfekt).
+  const wydarzenia = wydarzeniaTygodnie(weekKeys);
+  const skazone = new Set(wydarzenia.flatMap((e) => e.tygodnie));
+
+  // PLATFORMA → SPRZEDAŻ (prośba Antoniego 07.08: „czasem sprzedaje film z FB,
+  // czasem z TikToka — musimy zobaczyć tę różnicę"). Korelacja tygodniowego
+  // zasięgu KAŻDEJ platformy z pieniędzmi, bez tygodni skażonych; FB dodatkowo
+  // bez tygodni po ostatnim dniu danych CSV (braki ≠ zera).
+  const badFB = new Set(skazone);
+  for (let i = 0; i < W; i++) { const wkEnd = keyMinusDays(weekKeys[i], -6); if (!dane_do.facebook || wkEnd > dane_do.facebook) badFB.add(i); }
+  const platformy_korelacja = [
+    { platform: 'tiktok', weekly: reachTT, bad: skazone },
+    { platform: 'instagram', weekly: reachIG, bad: skazone },
+    { platform: 'facebook', weekly: reachFB, bad: badFB },
+  ].map(({ platform, weekly, bad }) => {
+    const [a0, b0] = paryBezSkazonych(weekly, moneyWk, 0, bad);
+    const [aL, bL] = paryBezSkazonych(weekly, moneyWk, 1, bad);
+    const [aP, bP] = paryBezSkazonych(weekly, moneyWk, -1, bad);
+    const corr = pearson(a0, b0), lag = pearson(aL, bL), placebo = pearson(aP, bP);
+    const bestIdx = (lag != null && (corr == null || lag > corr)) ? 1 : 0;
+    const best = bestIdx === 1 ? lag : corr;
+    const przypadek_pct = bestIdx === 1 ? permutacjaPct(aL, bL, best) : permutacjaPct(a0, b0, best);
+    return {
+      platform, reach: Math.round(weekly.reduce((x, y) => x + y, 0)),
+      korelacja: corr, korelacja_lag1: lag, korelacja_placebo: placebo, przypadek_pct,
+      n_tygodni: a0.length,
+    };
+  });
 
   return {
     weeks: W,
@@ -1512,6 +1579,8 @@ async function kreacje(db, { weeks = 26 } = {}) {
     sprzedaz_suma: fe.sprzedaz_suma,
     wnioski: fe.wnioski,
     metoda: fe.metoda,
+    okno_krotkie: fe.okno_krotkie,
+    platformy_korelacja,
     dane_do,
     wydarzenia,
     inwentarz: { tiktok_rolek_okno: nTT, instagram_rolek_okno: nIG, facebook: 'tylko dzienny zasięg (brak per-rolka)', format_dla: 'TikTok + Instagram (FB w Fazie 3)' },
