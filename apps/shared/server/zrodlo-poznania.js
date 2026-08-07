@@ -40,10 +40,14 @@ Wypełnij TYLKO, gdy klient WPROST powiedział, skąd zna firmę / gdzie ją zob
 - google — wyszukiwarka, "wygooglowałem"
 - polecenie — znajomy, rodzina, elektryk, wykonawca, projektant polecił
 - reklama — klient mówi wprost o reklamie
-- inne — inne jawnie nazwane źródło
+- inne — inne jawnie NAZWANE źródło poznania (targi, artykuł, forum, ogłoszenie)
 Brak deklaracji → null. NIE zgaduj z kontekstu — to, że klient zna produkt,
 NIE znaczy, że powiedział skąd. Odpowiedź klienta ma pierwszeństwo przed
 sugestią handlowca w pytaniu.
+UWAGA: kanał ZGŁOSZENIA to NIE źródło poznania. "Zgłaszał się pan przez
+formularz", "wypełniłem formularz", "na stronie poczytałem", "wysłałem maila"
+mówią JAK klient się skontaktował, nie SKĄD nas zna → zrodlo_poznania = null
+(chyba że pada też, skąd trafił na stronę/formularz — wtedy koduj TAMTO źródło).
 
 zrodlo_obserwuje: true TYLKO gdy klient mówi, że OBSERWUJE / śledzi profil
 ("obserwuję was", "śledzę wasze filmiki", "oglądam was od dawna"). Inaczej false.
